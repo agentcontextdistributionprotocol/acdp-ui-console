@@ -8,7 +8,7 @@ import { KpiCard } from '@/components/dashboard/kpi-card';
 import { RecentRunsTable } from '@/components/dashboard/recent-runs-table';
 import { EventTicker } from '@/components/dashboard/event-ticker';
 import { RegistryHealthBar } from '@/components/dashboard/registry-health-bar';
-import { BarChartCard } from '@/components/charts/bar-chart-card';
+import dynamic from 'next/dynamic';
 import { LoadingPanel } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +16,12 @@ import { useDashboard } from '@/lib/hooks/use-dashboard';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { useGlobalEvents } from '@/lib/hooks/use-global-events';
 import { formatNumber } from '@/lib/utils/format';
+
+// recharts is heavy; keep it out of the initial bundle.
+const BarChartCard = dynamic(
+  () => import('@/components/charts/bar-chart-card').then((m) => m.BarChartCard),
+  { ssr: false, loading: () => <div className="skeleton" style={{ height: 200 }} /> },
+);
 
 export default function DashboardPage() {
   const dash = useDashboard('24h');
@@ -60,10 +66,10 @@ export default function DashboardPage() {
       <SectionTitle icon={LayoutGrid} title="Dashboard" sub="Last 24 h · auto-refreshes every 30 s" />
 
       <div className="kpi-grid">
-        <KpiCard label="Total Runs" value={formatNumber(d.totalRuns)} delta="↑ live demo" accent="var(--brand)" icon={<Layers size={28} />} />
-        <KpiCard label="Contexts Published" value={formatNumber(d.totalContexts)} delta="↑ growing" accent="var(--info)" icon={<Boxes size={28} />} />
-        <KpiCard label="Active Agents" value={formatNumber(d.totalAgents)} delta="— stable" deltaTone="muted" accent="var(--purple)" icon={<Users size={28} />} />
-        <KpiCard label="Registries" value={formatNumber(d.totalRegistries)} delta="● all healthy" accent="var(--warning)" icon={<Database size={28} />} />
+        <KpiCard label="Total Runs" value={formatNumber(d.totalRuns)} delta={`window ${d.window}`} deltaTone="muted" accent="var(--brand)" icon={<Layers size={28} />} />
+        <KpiCard label="Contexts Published" value={formatNumber(d.totalContexts)} accent="var(--info)" icon={<Boxes size={28} />} />
+        <KpiCard label="Active Agents" value={formatNumber(d.totalAgents)} accent="var(--purple)" icon={<Users size={28} />} />
+        <KpiCard label="Registries" value={formatNumber(d.byRegistry.length)} delta="● all healthy" accent="var(--warning)" icon={<Database size={28} />} />
       </div>
 
       <div className="grid-2" style={{ marginBottom: 12 }}>

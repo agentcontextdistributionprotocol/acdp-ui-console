@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { timeAgo } from '@/lib/utils/format';
+import { pressable } from '@/lib/utils/a11y';
 import type { CpRun } from '@/lib/types';
 
 export function RecentRunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName: (id: string) => string }) {
@@ -21,7 +22,7 @@ export function RecentRunsTable({ runs, scenarioName }: { runs: CpRun[]; scenari
       </thead>
       <tbody>
         {runs.map((run) => (
-          <tr key={run.runId} onClick={() => router.push(`/runs/${run.runId}`)}>
+          <tr key={run.runId} {...pressable(() => router.push(`/runs/${run.runId}`), `Open run ${run.runId}`)}>
             <td>{scenarioName(run.scenarioId)}</td>
             <td>
               <StatusBadge status={run.status} />

@@ -683,6 +683,19 @@ textarea {
 .btn-secondary:hover { color: var(--text); border-color: var(--border-2); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.icon-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 5px 6px;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.12s;
+}
+.icon-btn:hover { border-color: var(--border-2); color: var(--text); }
+
 /* ── Misc layout ── */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
@@ -779,6 +792,57 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+}
+
+/* ── Accessibility ── */
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* Inputs already render their own focus border. */
+.form-input:focus-visible { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── Responsive ── */
+@media (max-width: 1100px) {
+  .workbench { grid-template-columns: 1fr; height: auto; }
+  .workbench .event-feed-panel { min-height: 360px; }
+  .workbench .dag-panel { min-height: 420px; }
+}
+
+@media (max-width: 980px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .scenario-grid { grid-template-columns: repeat(2, 1fr); }
+  .health-grid { grid-template-columns: repeat(2, 1fr); }
+  .grid-2 { grid-template-columns: 1fr; }
+  .grid-3 { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  :root { --sidebar-w: 56px; }
+  .logo-text,
+  .nav-section,
+  .nav-item .nav-badge,
+  .sidebar-footer .conn-pill span { display: none; }
+  .nav-item { justify-content: center; gap: 0; padding: 9px 0; }
+  .sidebar-logo { padding: 14px 0; justify-content: center; }
+  .topbar-breadcrumb { font-size: 12px; }
+  .kpi-grid { grid-template-columns: 1fr; }
+  .scenario-grid { grid-template-columns: 1fr; }
+  .health-grid { grid-template-columns: 1fr; }
+  .page { padding: 14px; }
+  .form-row { grid-template-columns: 1fr; gap: 4px; }
+  .form-label { text-align: left; }
 }
 
 /* ── React Flow theming ── */

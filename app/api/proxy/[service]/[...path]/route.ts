@@ -8,6 +8,20 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+// Only forward a known-safe set of request headers upstream. Notably this
+// excludes the browser's cookies and any client-supplied `authorization`, so a
+// client can't borrow the proxy's trust (confused-deputy). The control-plane
+// bearer token is injected server-side below.
+const FORWARD_HEADERS = new Set([
+  'content-type',
+  'accept',
+  'accept-language',
+  'idempotency-key',
+  'x-tenant-id',
+  'x-run-id',
+  'x-acdp-event-id',
+]);
+
 async function forward(
   request: NextRequest,
   context: { params: Promise<{ service: string; path?: string[] }> },
@@ -25,11 +39,12 @@ async function forward(
 
   const headers = new Headers();
   request.headers.forEach((value, key) => {
-    if (['host', 'connection', 'content-length'].includes(key.toLowerCase())) return;
-    headers.set(key, value);
+    if (FORWARD_HEADERS.has(key.toLowerCase())) headers.set(key, value);
   });
 
-  if (config.authToken && config.authHeaderName === 'authorization') {
+  // Authorization is set deterministically per service — never inherited from
+  // the client. Only the control-plane gets the server-side bearer token.
+  if (config.authHeaderName === 'authorization' && config.authToken) {
     headers.set('authorization', `Bearer ${config.authToken}`);
   }
 
@@ -47,7 +62,10 @@ async function forward(
 
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set('x-acdp-ui-proxy', service);
+    // The body is re-streamed decoded, so length/encoding framing no longer applies.
     responseHeaders.delete('content-encoding');
+    responseHeaders.delete('content-length');
+    responseHeaders.delete('transfer-encoding');
 
     return new Response(response.body, {
       status: response.status,

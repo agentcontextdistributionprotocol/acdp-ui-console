@@ -8,12 +8,21 @@ import type { CpContextEvent } from '@/lib/types';
 const MAX = 100;
 
 function normalize(raw: Record<string, unknown>): CpContextEvent {
+  const eventType = String(raw.eventType ?? raw.type ?? 'event');
+  const eventTs = String(raw.eventTs ?? raw.created_at ?? raw.ts ?? new Date().toISOString());
+  const runId = (raw.runId ?? raw.run_id) as string | undefined;
+  const ctxId = (raw.ctxId ?? raw.ctx_id) as string | undefined;
+  // Prefer a server id; otherwise derive a stable key from identifying fields so
+  // the same logical event dedups across SSE + history and React keys are stable.
+  const id = String(
+    raw.id ?? raw.event_id ?? `${runId ?? ''}:${ctxId ?? ''}:${eventTs}:${eventType}`,
+  );
   return {
-    id: String(raw.id ?? raw.event_id ?? Math.random().toString(36).slice(2)),
-    eventType: String(raw.eventType ?? raw.type ?? 'event'),
-    eventTs: String(raw.eventTs ?? raw.created_at ?? raw.ts ?? new Date().toISOString()),
-    runId: (raw.runId ?? raw.run_id) as string | undefined,
-    ctxId: (raw.ctxId ?? raw.ctx_id) as string | undefined,
+    id,
+    eventType,
+    eventTs,
+    runId,
+    ctxId,
     lineageId: (raw.lineageId ?? raw.lineage_id) as string | undefined,
     agentId: String(raw.agentId ?? raw.agent_id ?? ''),
     contextType: (raw.contextType ?? raw.context_type) as string | undefined,

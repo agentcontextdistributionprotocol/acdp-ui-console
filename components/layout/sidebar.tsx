@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { useMounted } from '@/lib/hooks/use-mounted';
 
 interface NavItem {
   href: string;
@@ -62,7 +63,11 @@ const NAV: NavGroup[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const mounted = useMounted();
+  // Default to demo mode until the persisted store has rehydrated, so SSR and
+  // the first client paint agree.
   const demoMode = usePreferencesStore((s) => s.demoMode);
+  const showDemo = !mounted || demoMode;
 
   return (
     <aside className="sidebar">
@@ -101,8 +106,8 @@ export function Sidebar() {
 
       <div className="sidebar-footer">
         <div className="conn-pill">
-          <div className={`dot ${demoMode ? 'warn' : 'ok'} pulse`} />
-          <span>{demoMode ? 'Demo mode' : 'Live backend'}</span>
+          <div className={`dot ${showDemo ? 'warn' : 'ok'} pulse`} />
+          <span>{showDemo ? 'Demo mode' : 'Live backend'}</span>
         </div>
       </div>
     </aside>

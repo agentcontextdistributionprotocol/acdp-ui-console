@@ -5,6 +5,7 @@ import { StatusBadge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { shortId, timeAgo, elapsed } from '@/lib/utils/format';
 import { shortAuthority } from '@/lib/utils/acdp';
+import { pressable } from '@/lib/utils/a11y';
 import type { CpRun } from '@/lib/types';
 
 export function RunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName: (id: string) => string }) {
@@ -25,7 +26,7 @@ export function RunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName:
       </thead>
       <tbody>
         {runs.map((run) => (
-          <tr key={run.runId} onClick={() => router.push(`/runs/${run.runId}`)}>
+          <tr key={run.runId} {...pressable(() => router.push(`/runs/${run.runId}`), `Open run ${run.runId}`)}>
             <td className="did">{shortId(run.runId, 12, 4)}</td>
             <td>{scenarioName(run.scenarioId)}</td>
             <td>

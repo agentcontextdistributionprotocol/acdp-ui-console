@@ -9,10 +9,11 @@ import { Modal } from '@/components/ui/modal';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
-import { listAgents } from '@/lib/api/client';
+import { listAgents, listCpEvents } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import { formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
+import { formatAgentDid, formatCtxId, shortAuthority } from '@/lib/utils/acdp';
 import { timeAgo } from '@/lib/utils/format';
+import { pressable } from '@/lib/utils/a11y';
 import { C } from '@/lib/colors';
 import type { KnownAgent } from '@/lib/types';
 
@@ -23,6 +24,13 @@ export default function AgentsPage() {
     queryFn: () => listAgents(demoMode),
   });
   const [selected, setSelected] = useState<KnownAgent | null>(null);
+
+  // Drill-down: the selected agent's recent context events.
+  const agentEvents = useQuery({
+    queryKey: ['agent-events', selected?.agentDid, demoMode],
+    queryFn: () => listCpEvents({ agentId: selected!.agentDid, limit: 20 }, demoMode),
+    enabled: !!selected,
+  });
 
   return (
     <div className="page">
@@ -45,7 +53,7 @@ export default function AgentsPage() {
             </thead>
             <tbody>
               {data.map((a) => (
-                <tr key={a.agentDid} onClick={() => setSelected(a)}>
+                <tr key={a.agentDid} {...pressable(() => setSelected(a), `View agent ${a.agentDid}`)}>
                   <td className="did" style={{ maxWidth: 320 }}>
                     {a.agentDid}
                   </td>
@@ -60,14 +68,46 @@ export default function AgentsPage() {
         </Card>
       )}
 
-      <Modal open={!!selected} onClose={() => setSelected(null)} title={selected ? formatAgentDid(selected.agentDid) : 'Agent'}>
+      <Modal
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        title={selected ? formatAgentDid(selected.agentDid) : 'Agent'}
+      >
         {selected && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <Row label="DID" value={selected.agentDid} mono />
-            <Row label="Registry" value={shortAuthority(selected.registryAuthority) || '—'} />
-            <Row label="Contexts published" value={String(selected.contextCount)} />
-            <Row label="First seen" value={timeAgo(selected.firstSeen)} />
-            <Row label="Last active" value={timeAgo(selected.lastSeen)} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <Row label="DID" value={selected.agentDid} mono />
+              <Row label="Registry" value={shortAuthority(selected.registryAuthority) || '—'} />
+              <Row label="Contexts published" value={String(selected.contextCount)} />
+              <Row label="First seen" value={timeAgo(selected.firstSeen)} />
+              <Row label="Last active" value={timeAgo(selected.lastSeen)} />
+            </div>
+
+            <div>
+              <div style={{ fontSize: 11, color: C.muted, letterSpacing: '0.06em', marginBottom: 8, fontWeight: 600 }}>
+                RECENT ACTIVITY
+              </div>
+              {agentEvents.isLoading && <div style={{ fontSize: 11, color: C.faint }}>Loading…</div>}
+              {agentEvents.data && agentEvents.data.data.length === 0 && (
+                <div style={{ fontSize: 11, color: C.faint }}>No recorded events.</div>
+              )}
+              {agentEvents.data && agentEvents.data.data.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {agentEvents.data.data.slice(0, 8).map((ev) => (
+                    <div
+                      key={ev.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: C.text }}
+                    >
+                      <span className="chip">{ev.eventType.replace(/_/g, '.')}</span>
+                      <span className="did" style={{ flex: 1 }}>
+                        {ev.ctxId ? formatCtxId(ev.ctxId) : '—'}
+                      </span>
+                      <span style={{ color: C.muted }}>{timeAgo(ev.eventTs)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </Modal>
@@ -79,7 +119,15 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
   return (
     <div className="metric-row">
       <span className="metric-name">{label}</span>
-      <span style={{ fontSize: 11, color: C.text, fontFamily: mono ? 'var(--font-mono)' : undefined, wordBreak: 'break-all', textAlign: 'right' }}>
+      <span
+        style={{
+          fontSize: 11,
+          color: C.text,
+          fontFamily: mono ? 'var(--font-mono)' : undefined,
+          wordBreak: 'break-all',
+          textAlign: 'right',
+        }}
+      >
         {value}
       </span>
     </div>

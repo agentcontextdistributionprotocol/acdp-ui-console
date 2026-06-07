@@ -146,7 +146,6 @@ export interface CpDashboardOverview {
   totalRuns: number;
   totalContexts: number;
   totalAgents: number;
-  totalRegistries: number;
   recentRuns: CpRun[];
   byScenario: Array<{ scenario_id: string; run_count: number }>;
   byRegistry: Array<{ registry_authority: string; event_count: number }>;
@@ -215,6 +214,8 @@ export interface SearchResponse {
   matches: SearchHit[];
   total_estimate?: number;
   next_cursor?: string;
+  /** Set when a multi-registry search had at least one registry fail. */
+  partial?: boolean;
 }
 
 export interface RegistryCapabilities {

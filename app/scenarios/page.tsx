@@ -38,13 +38,15 @@ export default function ScenariosPage() {
         right={
           <div className="topbar-pills">
             {MODE_FILTERS.map((f) => (
-              <div
+              <button
                 key={f.id}
+                type="button"
                 className={`pill${modeFilter === f.id ? ' active-pill' : ''}`}
+                aria-pressed={modeFilter === f.id}
                 onClick={() => setModeFilter(f.id)}
               >
                 {f.label}
-              </div>
+              </button>
             ))}
           </div>
         }
