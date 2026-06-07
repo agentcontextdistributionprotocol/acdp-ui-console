@@ -13,6 +13,7 @@ import {
   Activity,
   Settings,
   GitBranch,
+  ShieldCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
@@ -50,6 +51,7 @@ const NAV: NavGroup[] = [
       { href: '/lineage', label: 'Lineage', icon: GitBranch },
       { href: '/agents', label: 'Agents', icon: Users },
       { href: '/registries', label: 'Registries', icon: Database },
+      { href: '/security', label: 'Security', icon: ShieldCheck },
     ],
   },
   {

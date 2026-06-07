@@ -6,6 +6,7 @@ import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { RegistryCard } from '@/components/registries/registry-card';
+import { Enrollments } from '@/components/registries/enrollments';
 import { useRegistries, useRegistryCapabilities } from '@/lib/hooks/use-registries';
 
 export default function RegistriesPage() {
@@ -31,6 +32,9 @@ export default function RegistriesPage() {
           ))}
         </div>
       )}
+
+      <div style={{ height: 18 }} />
+      <Enrollments />
     </div>
   );
 }

@@ -28,7 +28,16 @@ export function RunSummary({
     return () => clearInterval(t);
   }, [running]);
 
-  const status = liveStatus === 'error' ? 'failed' : liveStatus === 'complete' ? 'completed' : run.status;
+  // A persisted terminal run shows its true status; only a still-running run
+  // reflects the live SSE transition to complete/error.
+  const status =
+    run.status !== 'running'
+      ? run.status
+      : liveStatus === 'error'
+        ? 'failed'
+        : liveStatus === 'complete'
+          ? 'completed'
+          : run.status;
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>

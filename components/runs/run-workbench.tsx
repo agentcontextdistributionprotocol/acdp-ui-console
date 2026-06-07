@@ -18,7 +18,7 @@ export function RunWorkbench({
   scenarioName: string;
   fallbackLineage?: LineageGraph;
 }) {
-  const { events, status, lineage } = useLiveRun(run.runId);
+  const { events, status, lineage } = useLiveRun(run.runId, run.status);
   const [activeCtx, setActiveCtx] = useState<string | null>(null);
 
   const graph: LineageGraph = useMemo(() => {

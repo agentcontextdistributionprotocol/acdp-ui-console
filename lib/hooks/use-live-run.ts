@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { getMockRunEvents } from '@/lib/api/client';
+import { getCpRunEvents, getMockRunEvents } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import type { LineageGraph, StepEvent } from '@/lib/types';
+import type { CpContextEvent, LineageGraph, RunStatus, StepEvent, StepEventType } from '@/lib/types';
 
 export type LiveStatus = 'connecting' | 'live' | 'complete' | 'error';
 
@@ -17,12 +17,39 @@ function terminal(type: string): LiveStatus | null {
   return null;
 }
 
+const isTerminalRun = (status?: RunStatus) =>
+  status === 'completed' || status === 'failed' || status === 'cancelled';
+
+// Persisted control-plane event types → playground step types so the existing
+// EventRow icons/colors render the historical timeline the same as a live one.
+const CP_EVENT_TYPE: Record<string, StepEventType> = {
+  context_published: 'acdp.publish',
+  context_retrieved: 'acdp.retrieve',
+  search_executed: 'acdp.search',
+};
+
+function cpEventToStep(e: CpContextEvent): StepEvent {
+  return {
+    type: CP_EVENT_TYPE[e.eventType] ?? (e.eventType as StepEventType),
+    run_id: e.runId ?? '',
+    ts: e.eventTs,
+    agent_id: e.agentId || undefined,
+    ctx_id: e.ctxId ?? undefined,
+    derived_from: e.derivedFrom ?? [],
+    registry_authority: e.registryAuthority || undefined,
+    event_id: e.id,
+  };
+}
+
 /**
- * Subscribes to a run's event stream. Demo mode replays the recorded mock
- * stream; real mode connects to the SSE relay with exponential-backoff
- * reconnect.
+ * Subscribes to a run's event stream.
+ *
+ * - **Active runs** tail the SSE relay (demo replays the recorded mock stream).
+ * - **Terminal runs** (completed/failed/cancelled) finished before we connected,
+ *   so we hydrate the full persisted timeline from the control-plane
+ *   `/runs/{id}/events` history instead of opening a stream that no longer exists.
  */
-export function useLiveRun(runId: string) {
+export function useLiveRun(runId: string, runStatus?: RunStatus) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [status, setStatus] = useState<LiveStatus>('connecting');
@@ -44,7 +71,29 @@ export function useLiveRun(runId: string) {
       if (t) setStatus(t);
     };
 
-    // ── Demo replay ──────────────────────────────────────────────────
+    // ── Terminal run: hydrate the persisted history, no stream ────────────
+    if (isTerminalRun(runStatus)) {
+      let cancelled = false;
+      const ended: LiveStatus = runStatus === 'failed' ? 'error' : 'complete';
+      getCpRunEvents(runId, demoMode)
+        .then((res) => {
+          if (cancelled) return;
+          // Demo keeps the richer recorded step stream; real mode maps CP events.
+          const frames = demoMode ? getMockRunEvents(runId) : res.data.map(cpEventToStep);
+          setEvents(frames.slice(-MAX_EVENTS));
+          const carry = [...frames].reverse().find((f) => f.lineage_graph)?.lineage_graph;
+          if (carry) setLineage(carry);
+          setStatus(ended);
+        })
+        .catch(() => {
+          if (!cancelled) setStatus(ended);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // ── Demo replay (active run) ─────────────────────────────────────────
     if (demoMode) {
       const frames = getMockRunEvents(runId);
       setStatus('live');
@@ -58,7 +107,7 @@ export function useLiveRun(runId: string) {
       };
     }
 
-    // ── Real SSE ─────────────────────────────────────────────────────
+    // ── Real SSE (active run) ────────────────────────────────────────────
     let closed = false; // set on unmount
     let done = false; // set when the run ended cleanly (don't reconnect)
     let reconnecting = false; // guards against EventSource firing onerror repeatedly
@@ -116,7 +165,7 @@ export function useLiveRun(runId: string) {
       timersRef.current.forEach(clearTimeout);
       timersRef.current = [];
     };
-  }, [runId, demoMode]);
+  }, [runId, runStatus, demoMode]);
 
   return { events, status, lineage };
 }

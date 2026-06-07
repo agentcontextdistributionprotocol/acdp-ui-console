@@ -1,19 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Boxes } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
-import { JsonViewer } from '@/components/ui/json-viewer';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ContextCard } from '@/components/contexts/context-card';
+import { ContextDetail } from '@/components/contexts/context-detail';
 import { searchContexts, getContext } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import type { RegistryAuthority } from '@/lib/types';
+import { C } from '@/lib/colors';
+import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
 
 const REGISTRIES: { id: RegistryAuthority | 'both'; label: string }[] = [
   { id: 'a', label: 'Registry A' },
@@ -21,17 +22,31 @@ const REGISTRIES: { id: RegistryAuthority | 'both'; label: string }[] = [
   { id: 'both', label: 'Both' },
 ];
 
+const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert'];
+
+interface Criteria extends ContextSearchParams {
+  authority: RegistryAuthority | 'both';
+}
+
+const EMPTY: Criteria = { authority: 'a', q: '', type: '', domain: '', tags: '', visibility: 'all', status: '' };
+
 export default function ContextsPage() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
-  const [query, setQuery] = useState('');
-  const [submitted, setSubmitted] = useState('');
-  const [authority, setAuthority] = useState<RegistryAuthority | 'both'>('a');
-  const [visibility, setVisibility] = useState('all');
+  const [form, setForm] = useState<Criteria>(EMPTY);
+  const [applied, setApplied] = useState<Criteria>(EMPTY);
   const [openCtx, setOpenCtx] = useState<string | null>(null);
 
-  const search = useQuery({
-    queryKey: ['context-search', submitted, authority, visibility, demoMode],
-    queryFn: () => searchContexts(authority, submitted, visibility, demoMode),
+  const set = <K extends keyof Criteria>(key: K, value: Criteria[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const search = useInfiniteQuery({
+    queryKey: ['context-search', applied, demoMode],
+    queryFn: ({ pageParam }) => {
+      const { authority, ...params } = applied;
+      return searchContexts(authority, { ...params, cursor: pageParam }, demoMode);
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_cursor,
   });
 
   const detail = useQuery({
@@ -40,26 +55,30 @@ export default function ContextsPage() {
     enabled: !!openCtx,
   });
 
-  const runSearch = () => setSubmitted(query);
+  const matches = search.data?.pages.flatMap((p) => p.matches) ?? [];
+  const partial = search.data?.pages.some((p) => p.partial) ?? false;
+  const total = search.data?.pages[0]?.total_estimate;
+
+  const runSearch = () => setApplied(form);
 
   return (
     <div className="page">
       <SectionTitle icon={Boxes} title="Contexts" sub="Search across registries" />
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         <input
           className="form-input"
           placeholder="Search contexts…"
           style={{ flex: 1 }}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={form.q}
+          onChange={(e) => set('q', e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && runSearch()}
         />
         <select
           className="form-input"
           style={{ width: 130 }}
-          value={authority}
-          onChange={(e) => setAuthority(e.target.value as RegistryAuthority | 'both')}
+          value={form.authority}
+          onChange={(e) => set('authority', e.target.value as RegistryAuthority | 'both')}
         >
           {REGISTRIES.map((r) => (
             <option key={r.id} value={r.id}>
@@ -67,45 +86,89 @@ export default function ContextsPage() {
             </option>
           ))}
         </select>
-        <select
-          className="form-input"
-          style={{ width: 130 }}
-          value={visibility}
-          onChange={(e) => setVisibility(e.target.value)}
-        >
-          <option value="all">All visibility</option>
-          <option value="public">public</option>
-          <option value="restricted">restricted</option>
-        </select>
         <Button variant="primary" onClick={runSearch}>
           Search
         </Button>
       </div>
 
+      {/* Facets */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+        <select className="form-input" style={{ width: 150 }} value={form.type} onChange={(e) => set('type', e.target.value)}>
+          <option value="">Any type</option>
+          {TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <select
+          className="form-input"
+          style={{ width: 140 }}
+          value={form.visibility}
+          onChange={(e) => set('visibility', e.target.value)}
+        >
+          <option value="all">All visibility</option>
+          <option value="public">public</option>
+          <option value="restricted">restricted</option>
+          <option value="private">private</option>
+        </select>
+        <input
+          className="form-input"
+          style={{ width: 150 }}
+          placeholder="domain"
+          value={form.domain}
+          onChange={(e) => set('domain', e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+        />
+        <input
+          className="form-input"
+          style={{ flex: 1, minWidth: 180 }}
+          placeholder="tags (comma-separated)"
+          value={form.tags}
+          onChange={(e) => set('tags', e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+        />
+      </div>
+
+      {partial && (
+        <div style={{ fontSize: 11, color: C.warning, marginBottom: 10 }}>
+          ⚠ One registry did not respond — results may be incomplete.
+        </div>
+      )}
+
       {search.isLoading && <LoadingSkeleton rows={4} height={84} />}
       {search.error && <ErrorPanel message={String(search.error)} />}
-      {search.data && search.data.matches.length === 0 && <EmptyState title="No contexts found" />}
-      {search.data && search.data.matches.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {search.data.matches.map((hit) => (
-            <ContextCard key={hit.ctx_id} hit={hit} onOpen={setOpenCtx} />
-          ))}
-        </div>
+      {search.data && matches.length === 0 && <EmptyState title="No contexts found" />}
+      {matches.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
+            {matches.length}
+            {typeof total === 'number' && total > matches.length ? ` of ~${total}` : ''} context
+            {matches.length === 1 ? '' : 's'}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {matches.map((hit) => (
+              <ContextCard key={hit.ctx_id} hit={hit} onOpen={setOpenCtx} />
+            ))}
+          </div>
+          {search.hasNextPage && (
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+              <Button
+                variant="secondary"
+                onClick={() => search.fetchNextPage()}
+                disabled={search.isFetchingNextPage}
+              >
+                {search.isFetchingNextPage ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          )}
+        </>
       )}
 
       <Modal open={!!openCtx} onClose={() => setOpenCtx(null)} title={detail.data?.body.title ?? 'Context'}>
         {detail.isLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</div>}
-        {detail.data && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <span className="chip">{detail.data.body.type}</span>
-              <span className="chip">{detail.data.body.visibility}</span>
-              <span className="chip ok">{detail.data.registry_state.status}</span>
-              <span className="chip">v{detail.data.body.version}</span>
-            </div>
-            <JsonViewer data={detail.data.body} style={{ maxHeight: 380 }} />
-          </div>
-        )}
+        {detail.error && <ErrorPanel message="Could not load context." />}
+        {detail.data && <ContextDetail ctx={detail.data} />}
       </Modal>
     </div>
   );
