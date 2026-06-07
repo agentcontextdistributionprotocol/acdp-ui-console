@@ -1,0 +1,44 @@
+{
+  "name": "acdp-ui-console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js orchestration and observability console for the Agent Context Description Protocol (ACDP).",
+  "scripts": {
+    "dev": "next dev",
+    "dev:demo": "NEXT_PUBLIC_ACDP_UI_DEMO_MODE=true next dev",
+    "dev:real": "NEXT_PUBLIC_ACDP_UI_DEMO_MODE=false next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "@xyflow/react": "^12.10.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.541.0",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.1.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  }
+}
