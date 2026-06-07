@@ -27,6 +27,13 @@ export function ConnectionPanel() {
     setDemoMode,
   } = usePreferencesStore();
   const [results, setResults] = useState<Record<string, boolean | 'pending'>>({});
+  const [saved, setSaved] = useState(false);
+
+  // Inputs already persist live via the store; Save is an explicit acknowledgement.
+  const save = () => {
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1800);
+  };
 
   const testAll = async () => {
     const pending: Record<string, boolean | 'pending'> = {};
@@ -47,10 +54,16 @@ export function ConnectionPanel() {
         <div className="config-form">
           <div className="form-row">
             <span className="form-label">Demo mode</span>
-            <div className="pill" style={{ width: 'fit-content', cursor: 'pointer' }} onClick={() => setDemoMode(!demoMode)}>
+            <button
+              type="button"
+              className="pill"
+              aria-pressed={demoMode}
+              style={{ width: 'fit-content' }}
+              onClick={() => setDemoMode(!demoMode)}
+            >
               <span className={`dot ${demoMode ? 'warn' : 'ok'}`} />
               {demoMode ? 'On — using mock data' : 'Off — live backend'}
-            </div>
+            </button>
           </div>
           {ROWS.map((r) => (
             <div key={r.service} className="form-row">
@@ -86,6 +99,9 @@ export function ConnectionPanel() {
           </div>
         </div>
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <Button variant="primary" onClick={save}>
+            {saved ? 'Saved ✓' : 'Save'}
+          </Button>
           <Button variant="secondary" onClick={testAll}>
             Test All
           </Button>

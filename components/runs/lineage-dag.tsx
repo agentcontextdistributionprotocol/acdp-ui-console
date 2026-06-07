@@ -45,8 +45,16 @@ const nodeTypes = { lineage: LineageNodeCard };
 
 /** Lay out nodes by step (rows) and spread same-step nodes across columns. */
 function layout(graph: LineageGraph, activeCtx?: string): { nodes: Node[]; edges: Edge[] } {
-  const byStep = new Map<number, typeof graph.nodes>();
-  for (const n of graph.nodes) {
+  // Dedup by ctx_id (supersession/idempotency can repeat ids → React Flow warns).
+  const seen = new Set<string>();
+  const uniqueNodes = graph.nodes.filter((n) => {
+    if (!n.ctx_id || seen.has(n.ctx_id)) return false;
+    seen.add(n.ctx_id);
+    return true;
+  });
+
+  const byStep = new Map<number, typeof uniqueNodes>();
+  for (const n of uniqueNodes) {
     const arr = byStep.get(n.step) ?? [];
     arr.push(n);
     byStep.set(n.step, arr);
@@ -68,13 +76,16 @@ function layout(graph: LineageGraph, activeCtx?: string): { nodes: Node[]; edges
       });
     });
   }
-  const edges: Edge[] = graph.edges.map((e, i) => ({
-    id: `e-${i}`,
-    source: e.src,
-    target: e.dst,
-    animated: true,
-    style: { stroke: 'rgba(0,232,198,0.4)', strokeDasharray: '4 3' },
-  }));
+  // Drop edges whose endpoints aren't both present as nodes.
+  const edges: Edge[] = graph.edges
+    .filter((e) => seen.has(e.src) && seen.has(e.dst))
+    .map((e, i) => ({
+      id: `e-${i}-${e.src}-${e.dst}`,
+      source: e.src,
+      target: e.dst,
+      animated: true,
+      style: { stroke: 'rgba(0,232,198,0.4)', strokeDasharray: '4 3' },
+    }));
   return { nodes, edges };
 }
 

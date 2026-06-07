@@ -42,9 +42,15 @@ export function EventFeed({
       </div>
       <div className="feed-list" ref={listRef}>
         {events.length === 0 ? (
-          <EmptyState title="Waiting for events…" />
+          <EmptyState title={live ? 'Waiting for events…' : 'No events recorded for this run'} />
         ) : (
-          events.map((ev, i) => <EventRow key={`${ev.type}-${ev.ts}-${i}`} event={ev} onSelectCtx={onSelectCtx} />)
+          events.map((ev, i) => (
+            <EventRow
+              key={ev.event_id ?? `${ev.type}-${ev.ts}-${ev.ctx_id ?? i}`}
+              event={ev}
+              onSelectCtx={onSelectCtx}
+            />
+          ))
         )}
       </div>
     </div>

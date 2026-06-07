@@ -7,7 +7,7 @@ import { SectionTitle } from '@/components/ui/section-title';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
-import { LineageDag } from '@/components/runs/lineage-dag';
+import { LineageDag } from '@/components/runs/lineage-dag-lazy';
 import { ContextInspector } from '@/components/runs/context-inspector';
 import { useRuns } from '@/lib/hooks/use-runs';
 import { useScenarios } from '@/lib/hooks/use-scenarios';

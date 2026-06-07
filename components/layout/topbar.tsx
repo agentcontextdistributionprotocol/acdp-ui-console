@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
+import { useIsFetching, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { C } from '@/lib/colors';
 import { ConnectionStatus } from './connection-status';
@@ -34,6 +34,7 @@ function breadcrumb(pathname: string): React.ReactNode {
 export function Topbar() {
   const pathname = usePathname();
   const qc = useQueryClient();
+  const fetching = useIsFetching() > 0;
 
   return (
     <header className="topbar">
@@ -46,10 +47,11 @@ export function Topbar() {
         <button
           className="pill"
           title="Refresh all data"
+          aria-label="Refresh all data"
           onClick={() => qc.invalidateQueries()}
           style={{ color: C.muted }}
         >
-          <RefreshCw size={12} />
+          <RefreshCw size={12} className={fetching ? 'spin' : ''} aria-hidden />
         </button>
       </div>
     </header>

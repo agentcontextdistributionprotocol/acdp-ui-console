@@ -243,10 +243,72 @@ export async function getCpMetrics(demoMode: boolean): Promise<PrometheusMetric[
   return parsePrometheus(text);
 }
 
+export interface WebhookInput {
+  url: string;
+  events: string[];
+  secret: string;
+}
+
+// Mutable in-memory store so demo-mode CRUD actually reflects changes.
+let demoWebhooks: Webhook[] | null = null;
+function demoWebhookStore(): Webhook[] {
+  if (!demoWebhooks) demoWebhooks = MOCK_WEBHOOKS.map((w) => ({ ...w }));
+  return demoWebhooks;
+}
+let demoWebhookSeq = 100;
+
 export async function listWebhooks(demoMode: boolean): Promise<Webhook[]> {
-  if (demoMode) return delay(MOCK_WEBHOOKS);
-  const res = await fetchJson<{ data: Webhook[] }>('control-plane', '/webhooks');
-  return res.data ?? [];
+  if (demoMode) return delay(demoWebhookStore().map((w) => ({ ...w })));
+  // Control plane returns a bare array (no { data } envelope).
+  const data = await fetchJson<Webhook[]>('control-plane', '/webhooks');
+  return data ?? [];
+}
+
+export async function createWebhook(input: WebhookInput, demoMode: boolean): Promise<Webhook> {
+  if (demoMode) {
+    const ts = new Date().toISOString();
+    const wh: Webhook = {
+      id: `wh-${++demoWebhookSeq}`,
+      url: input.url,
+      events: input.events,
+      active: true,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+    demoWebhookStore().unshift(wh);
+    return delay(wh);
+  }
+  return fetchJson<Webhook>('control-plane', '/webhooks', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateWebhook(
+  id: string,
+  patch: Partial<WebhookInput & { active: boolean }>,
+  demoMode: boolean,
+): Promise<Webhook> {
+  if (demoMode) {
+    const store = demoWebhookStore();
+    const wh = store.find((w) => w.id === id);
+    if (!wh) throw new Error(`Unknown webhook: ${id}`);
+    Object.assign(wh, patch, { updatedAt: new Date().toISOString() });
+    return delay({ ...wh });
+  }
+  return fetchJson<Webhook>('control-plane', `/webhooks/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function deleteWebhook(id: string, demoMode: boolean): Promise<void> {
+  if (demoMode) {
+    demoWebhooks = demoWebhookStore().filter((w) => w.id !== id);
+    await delay(null);
+    return;
+  }
+  await fetchJson<void>('control-plane', `/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 // ── Registry ──────────────────────────────────────────────────────────
@@ -271,11 +333,14 @@ export async function searchContexts(
   if (q) params.set('q', q);
   if (visibility && visibility !== 'all') params.set('visibility', visibility);
   if (authority === 'both') {
-    const [a, b] = await Promise.all([
+    // A single down registry must not blank the combined view.
+    const settled = await Promise.allSettled([
       fetchJson<SearchResponse>('registry-a', `/contexts/search?${params.toString()}`),
       fetchJson<SearchResponse>('registry-b', `/contexts/search?${params.toString()}`),
     ]);
-    return { matches: [...(a.matches ?? []), ...(b.matches ?? [])] };
+    const matches = settled.flatMap((r) => (r.status === 'fulfilled' ? (r.value.matches ?? []) : []));
+    const partial = settled.some((r) => r.status === 'rejected');
+    return { matches, total_estimate: matches.length, ...(partial ? { partial: true } : {}) };
   }
   return fetchJson<SearchResponse>(authToService(authority), `/contexts/search?${params.toString()}`);
 }
@@ -294,7 +359,7 @@ export async function getRegistryCapabilities(
   demoMode: boolean,
 ): Promise<RegistryCapabilities> {
   if (demoMode) return delay(MOCK_CAPABILITIES[authority]);
-  return fetchJson<RegistryCapabilities>(authToService(authority), '/.well-known/acdp-capabilities');
+  return fetchJson<RegistryCapabilities>(authToService(authority), '/.well-known/acdp.json');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -305,8 +370,8 @@ function parsePrometheus(text: string): PrometheusMetric[] {
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
     if (trimmed.startsWith('# TYPE ')) {
-      const [, name, type] = trimmed.split(/\s+/);
-      types.set(name, type);
+      const parts = trimmed.split(/\s+/); // ['#', 'TYPE', <name>, <type>]
+      types.set(parts[2], parts[3]);
     } else if (trimmed.startsWith('# HELP ')) {
       const parts = trimmed.split(/\s+/);
       const name = parts[2];
@@ -315,7 +380,11 @@ function parsePrometheus(text: string): PrometheusMetric[] {
       const match = trimmed.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+([0-9.eE+-]+)/);
       if (match) {
         const name = match[1];
-        if (!values.has(name)) values.set(name, Number(match[3]));
+        const n = Number(match[3]);
+        if (Number.isFinite(n)) {
+          // Aggregate across label series so multi-series metrics aren't dropped.
+          values.set(name, (values.get(name) ?? 0) + n);
+        }
       }
     }
   }

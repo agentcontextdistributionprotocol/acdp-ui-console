@@ -423,7 +423,6 @@ export const MOCK_DASHBOARD: CpDashboardOverview = {
   totalRuns: 47,
   totalContexts: 312,
   totalAgents: 12,
-  totalRegistries: 2,
   recentRuns: MOCK_RUNS.slice(0, 5),
   byScenario: [
     { scenario_id: 's1_single_publish', run_count: 14 },

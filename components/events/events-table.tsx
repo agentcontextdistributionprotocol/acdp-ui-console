@@ -5,6 +5,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { eventTypeColor } from '@/lib/colors';
 import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { shortId, timeAgo } from '@/lib/utils/format';
+import { pressable } from '@/lib/utils/a11y';
 import type { CpContextEvent } from '@/lib/types';
 
 function colorKey(eventType: string): string {
@@ -33,7 +34,7 @@ export function EventsTable({ events }: { events: CpContextEvent[] }) {
         {events.map((ev) => {
           const color = eventTypeColor(colorKey(ev.eventType));
           return (
-            <tr key={ev.id} onClick={() => ev.runId && router.push(`/runs/${ev.runId}`)}>
+            <tr key={ev.id} {...(ev.runId ? pressable(() => router.push(`/runs/${ev.runId}`), `Open run ${ev.runId}`) : {})}>
               <td>
                 <span
                   className="badge"

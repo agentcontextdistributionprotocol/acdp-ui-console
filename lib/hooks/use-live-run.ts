@@ -59,9 +59,13 @@ export function useLiveRun(runId: string) {
     }
 
     // ── Real SSE ─────────────────────────────────────────────────────
-    let closed = false;
+    let closed = false; // set on unmount
+    let done = false; // set when the run ended cleanly (don't reconnect)
+    let reconnecting = false; // guards against EventSource firing onerror repeatedly
+
     const connect = () => {
-      if (closed) return;
+      if (closed || done) return;
+      reconnecting = false;
       const es = new EventSource(`/api/stream/runs/${encodeURIComponent(runId)}`);
       esRef.current = es;
 
@@ -70,33 +74,36 @@ export function useLiveRun(runId: string) {
         setStatus('live');
       };
 
-      const onData = (e: MessageEvent) => {
+      es.onmessage = (e: MessageEvent) => {
         try {
-          const ev = JSON.parse(e.data) as StepEvent;
-          append(ev);
+          append(JSON.parse(e.data) as StepEvent);
         } catch {
           /* ignore non-JSON keepalive frames */
         }
       };
-      es.onmessage = onData;
 
       es.addEventListener('end', () => {
+        done = true;
+        es.onerror = null; // a clean close must not be read as an error → reconnect
         setStatus((s) => (s === 'live' || s === 'connecting' ? 'complete' : s));
         es.close();
+        esRef.current = null;
       });
 
       es.onerror = () => {
+        es.onerror = null; // a closed socket can fire onerror repeatedly — detach
         es.close();
         esRef.current = null;
-        if (closed) return;
+        if (closed || done || reconnecting) return;
+        reconnecting = true;
         if (retriesRef.current >= MAX_RECONNECT) {
           setStatus('error');
           return;
         }
-        const delay = Math.min(1000 * 2 ** retriesRef.current, 15_000);
+        const backoff = Math.min(1000 * 2 ** retriesRef.current, 15_000);
         retriesRef.current += 1;
-        const timer = setTimeout(connect, delay);
-        timersRef.current.push(timer);
+        setStatus('connecting');
+        timersRef.current.push(setTimeout(connect, backoff));
       };
     };
 

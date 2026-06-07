@@ -8,6 +8,7 @@ import { MetricsPanel } from '@/components/observability/metrics-panel';
 import { useRuns } from '@/lib/hooks/use-runs';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { elapsed } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
 
 export default function ObservabilityPage() {
@@ -16,6 +17,8 @@ export default function ObservabilityPage() {
   const { data: scenarios } = useScenarios();
   const scenarioName = (id: string) => scenarios?.find((s) => s.id === id)?.name ?? id;
   const recent = (runsData?.data ?? []).slice(0, 5);
+  const duration = (run: { startedAt: string; completedAt?: string | null }) =>
+    run.completedAt ? elapsed(run.startedAt, run.completedAt) : 'running';
 
   return (
     <div className="page">
@@ -56,7 +59,9 @@ export default function ObservabilityPage() {
                 >
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12, color: C.text }}>{run.runId}</div>
-                    <div className="did">{scenarioName(run.scenarioId)}</div>
+                    <div className="did">
+                      {scenarioName(run.scenarioId)} · {duration(run)}
+                    </div>
                   </div>
                   <ArrowRight size={12} color={C.muted} />
                 </a>

@@ -22,6 +22,7 @@ export function timeAgo(input: string | number | Date | null | undefined): strin
 export function elapsed(startedAt: string | number | Date, endedAt?: string | number | Date | null): string {
   const start = new Date(startedAt).getTime();
   const end = endedAt ? new Date(endedAt).getTime() : Date.now();
+  if (Number.isNaN(start) || Number.isNaN(end)) return '—';
   let s = Math.max(0, Math.floor((end - start) / 1000));
   const h = Math.floor(s / 3600);
   s -= h * 3600;
@@ -47,7 +48,7 @@ export function formatNumber(n: number | null | undefined): string {
 
 /** Human byte sizes. */
 export function formatBytes(bytes: number | null | undefined): string {
-  if (!bytes) return '0 B';
+  if (!bytes || Number.isNaN(bytes) || bytes < 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;

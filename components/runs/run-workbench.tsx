@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { EventFeed } from './event-feed';
-import { LineageDag } from './lineage-dag';
+import { LineageDag } from './lineage-dag-lazy';
 import { ContextInspector } from './context-inspector';
 import { RunSummary } from './run-summary';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
