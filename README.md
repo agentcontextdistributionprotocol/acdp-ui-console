@@ -1,6 +1,6 @@
 # ACDP UI Console
 
-Orchestration and observability console for the **Agent Context Description Protocol (ACDP)**.
+Orchestration and observability console for the **Agent Context Distribution Protocol (ACDP)**.
 Launch playground scenarios, watch context publication/retrieval flow live, explore cross-registry
 lineage DAGs, and monitor the control plane — all from one console.
 

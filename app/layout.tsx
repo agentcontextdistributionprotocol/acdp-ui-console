@@ -20,7 +20,7 @@ const jetBrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: 'ACDP Console',
-  description: 'Orchestration and observability console for the Agent Context Description Protocol.',
+  description: 'Orchestration and observability console for the Agent Context Distribution Protocol.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
