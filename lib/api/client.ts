@@ -393,7 +393,7 @@ export async function searchContexts(
     }
     if (search.visibility && search.visibility !== 'all')
       hits = hits.filter((h) => h.visibility === search.visibility);
-    if (search.type) hits = hits.filter((h) => h.context_type === search.type);
+    if (search.type) hits = hits.filter((h) => h.type === search.type);
     if (search.agentId) hits = hits.filter((h) => h.agent_id?.includes(search.agentId!));
     // domain/tags live on the full body, not the search hit — look them up.
     const bodyOf = (ctxId: string) => MOCK_CONTEXTS.find((c) => c.body.ctx_id === ctxId)?.body;

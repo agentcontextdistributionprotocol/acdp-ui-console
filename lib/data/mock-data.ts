@@ -684,13 +684,15 @@ export const MOCK_JWKS: Record<RegistryAuthority, JwkSet> = {
 
 export const MOCK_SEARCH_HITS: SearchHit[] = MOCK_CONTEXTS.map((c) => ({
   ctx_id: c.body.ctx_id,
-  title: c.body.title,
+  lineage_id: c.body.lineage_id,
   agent_id: c.body.agent_id,
-  context_type: c.body.type,
-  visibility: c.body.visibility,
+  title: c.body.title,
+  type: c.body.type,
+  created_at: c.body.created_at,
+  status: c.registry_state?.status ?? 'active',
   summary: c.body.summary,
-  registry_authority: c.body.origin_registry,
-  version: c.body.version,
+  domain: c.body.domain,
+  visibility: c.body.visibility,
 }));
 
 // ── Prometheus metrics ────────────────────────────────────────────────

@@ -251,15 +251,26 @@ export interface FullContext {
   registry_state: { status: string };
 }
 
+/**
+ * A single search result — the `match_summary` projection per
+ * `acdp-common.schema.json` (RFC-ACDP-0005 §2.2). Required fields are always
+ * present on the wire; `summary`/`domain`/`visibility` are optional (the
+ * registry omits `visibility` for restricted/private results the caller can't
+ * see). The full body (`content_hash`, `tags`, `data_refs`, …) is NOT in this
+ * projection — fetch it via `getContext`. The origin registry authority is not
+ * carried here; derive it from `ctx_id` (`acdp://<authority>/<id>`).
+ */
 export interface SearchHit {
   ctx_id: string;
-  title?: string;
-  agent_id?: string;
-  context_type?: string;
-  visibility?: string;
+  lineage_id: string;
+  agent_id: string;
+  title: string;
+  type: string;
+  created_at: string;
+  status: string;
   summary?: string;
-  registry_authority?: string;
-  version?: number;
+  domain?: string;
+  visibility?: string;
 }
 
 export interface SearchResponse {
