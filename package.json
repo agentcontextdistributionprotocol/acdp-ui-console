@@ -2,7 +2,7 @@
   "name": "acdp-ui-console",
   "version": "0.1.0",
   "private": true,
-  "description": "Next.js orchestration and observability console for the Agent Context Description Protocol (ACDP).",
+  "description": "Next.js orchestration and observability console for the Agent Context Distribution Protocol (ACDP).",
   "scripts": {
     "dev": "next dev",
     "dev:demo": "NEXT_PUBLIC_ACDP_UI_DEMO_MODE=true next dev",
