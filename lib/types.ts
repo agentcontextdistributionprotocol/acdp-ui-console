@@ -176,7 +176,47 @@ export interface Webhook {
   updatedAt: string;
 }
 
+/** A registry authority enrolled with the control plane (secret omitted). */
+export interface RegistryEnrollment {
+  authority: string;
+  tenantId: string;
+  baseUrl?: string | null;
+  registryDid?: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
+export interface EnrollRegistryInput {
+  authority: string;
+  tenantId?: string;
+  baseUrl?: string;
+  registryDid?: string;
+  webhookSecret?: string;
+  enabled?: boolean;
+}
+
 // ── Registry types ────────────────────────────────────────────────────
+/** Producer signature over the canonicalized (JCS) body. */
+export interface Signature {
+  algorithm: string; // 'ed25519' | 'ecdsa-p256' | …
+  key_id: string; // did:web:…#key-1
+  value: string; // base64
+}
+
+/** Pointer to out-of-band data backing a context. */
+export interface DataRef {
+  type: string;
+  location: string;
+  encoding?: string;
+}
+
+/** Inclusive [start, end] window the context's data describes. */
+export interface DataPeriod {
+  start: string;
+  end: string;
+}
+
 export interface ContextBody {
   ctx_id: string;
   lineage_id: string;
@@ -192,6 +232,18 @@ export interface ContextBody {
   summary?: string;
   tags?: string[];
   domain?: string;
+  // Richer protocol fields (acdp-rs Body) — all optional for forward-compat.
+  signature?: Signature;
+  supersedes?: string | null;
+  contributors?: string[];
+  description?: string;
+  audience?: string[];
+  expires_at?: string;
+  data_period?: DataPeriod;
+  schema_uri?: string;
+  data_refs?: DataRef[];
+  acdp_version?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface FullContext {
@@ -232,6 +284,38 @@ export interface RegistryCapabilities {
   };
 }
 
+// ── Security: revocations + signing keys ──────────────────────────────
+export interface RevocationEntry {
+  jti: string;
+  sub: string; // subject DID of the revoked token
+  iss: string; // issuer
+  exp: number; // original expiry (unix seconds)
+  revoked_at_ms: number; // when it was revoked (unix ms)
+}
+
+export interface RevocationFeed {
+  entries: RevocationEntry[];
+  next_cursor: number | null;
+}
+
+/** A single JSON Web Key (subset of RFC 7517 fields the UI surfaces). */
+export interface Jwk {
+  kty: string;
+  kid?: string;
+  crv?: string;
+  alg?: string;
+  use?: string;
+  x?: string;
+  y?: string;
+  n?: string;
+  e?: string;
+  [key: string]: unknown;
+}
+
+export interface JwkSet {
+  keys: Jwk[];
+}
+
 // ── Misc ──────────────────────────────────────────────────────────────
 export type RegistryAuthority = 'a' | 'b';
 
@@ -253,6 +337,19 @@ export interface ListRunsQuery {
   scenarioId?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface ContextSearchParams {
+  q?: string;
+  type?: string;
+  domain?: string;
+  /** Comma-separated tag list (AND semantics). */
+  tags?: string;
+  agentId?: string;
+  status?: string;
+  visibility?: string;
+  cursor?: string;
+  limit?: number;
 }
 
 export interface EventFilter {

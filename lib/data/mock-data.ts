@@ -8,11 +8,15 @@ import type {
   CpDashboardOverview,
   CpRun,
   FullContext,
+  JwkSet,
   KnownAgent,
   KnownRegistry,
   LineageGraph,
   PrometheusMetric,
+  RegistryAuthority,
   RegistryCapabilities,
+  RegistryEnrollment,
+  RevocationEntry,
   ScenarioDef,
   SearchHit,
   StepEvent,
@@ -452,6 +456,27 @@ export const MOCK_REGISTRIES: KnownRegistry[] = [
   { authority: AUTH_B, baseUrl: 'http://localhost:8200', eventCount: 125, firstSeen: iso(432000), lastSeen: iso(3) },
 ];
 
+export const MOCK_ENROLLMENTS: RegistryEnrollment[] = [
+  {
+    authority: AUTH_A,
+    tenantId: 'default',
+    baseUrl: 'http://localhost:8100',
+    registryDid: `did:web:${AUTH_A}`,
+    enabled: true,
+    createdAt: iso(86400 * 30),
+    updatedAt: iso(3600),
+  },
+  {
+    authority: AUTH_B,
+    tenantId: 'default',
+    baseUrl: 'http://localhost:8200',
+    registryDid: `did:web:${AUTH_B}`,
+    enabled: true,
+    createdAt: iso(86400 * 30),
+    updatedAt: iso(7200),
+  },
+];
+
 export const MOCK_CAPABILITIES: Record<'a' | 'b', RegistryCapabilities> = {
   a: {
     acdp_version: '0.1.0',
@@ -489,8 +514,24 @@ export const MOCK_CONTEXTS: FullContext[] = [
       visibility: 'public',
       derived_from: [],
       summary: 'Geopolitical and logistical assessment of emerging Arctic shipping corridors.',
+      description:
+        'Composite snapshot fusing AIS vessel traffic, ice-coverage telemetry, and port throughput for the 2024 navigation season.',
       tags: ['geopolitics', 'logistics'],
       domain: 'geopolitics',
+      acdp_version: '0.1.0',
+      signature: {
+        algorithm: 'ed25519',
+        key_id: `${DID_A}#key-1`,
+        value: 'z3MqA8m1c0Vd7xkR2pYbnLwQf6sТ4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP9qR0',
+      },
+      supersedes: null,
+      contributors: [DID_A],
+      data_refs: [
+        { type: 'data_snapshot', location: 's3://acdp-demo/arctic/ais-2024.parquet', encoding: 'application/parquet' },
+      ],
+      data_period: { start: iso(86400 * 120), end: iso(16) },
+      expires_at: iso(-86400 * 30),
+      schema_uri: 'https://schemas.acdp.dev/data_snapshot/v1.json',
     },
     registry_state: { status: 'active' },
   },
@@ -508,8 +549,22 @@ export const MOCK_CONTEXTS: FullContext[] = [
       visibility: 'public',
       derived_from: [LIVE_LINEAGE.nodes[0].ctx_id],
       summary: 'Investment implications derived from the Arctic shipping snapshot.',
+      description: 'Risk-weighted investment thesis across shipping, insurance, and port-infrastructure equities.',
       tags: ['investment', 'analysis'],
       domain: 'finance',
+      acdp_version: '0.1.0',
+      signature: {
+        algorithm: 'ecdsa-p256',
+        key_id: `${DID_B}#key-2`,
+        value: 'zP256bQc1dWe8ylS3qZcoMxRg7tU5vK0iH1fY2bC3dE4fG5hI6jK7lM8nO9pQ0rS1',
+      },
+      supersedes: null,
+      contributors: [DID_B, DID_A],
+      audience: [DID_A],
+      data_refs: [
+        { type: 'report', location: 'https://reports.acdp-demo/arctic-investment.pdf', encoding: 'application/pdf' },
+      ],
+      schema_uri: 'https://schemas.acdp.dev/analysis/v1.json',
     },
     registry_state: { status: 'active' },
   },
@@ -527,12 +582,105 @@ export const MOCK_CONTEXTS: FullContext[] = [
       visibility: 'public',
       derived_from: [],
       summary: 'Snapshot of quarterly operating cash flow figures.',
+      description: 'Operating, investing, and financing cash flows for the trailing quarter.',
       tags: ['finance'],
       domain: 'finance',
+      acdp_version: '0.1.0',
+      signature: {
+        algorithm: 'ed25519',
+        key_id: `${DID_SOLO}#key-1`,
+        value: 'zCa5hF1ow2sN3apShOt4qWeRtYuIoP5aSdFgHjKlZxCvBnM6qWeRtYuIoP7aSdFg',
+      },
+      supersedes: null,
+      contributors: [DID_SOLO],
+      data_refs: [
+        { type: 'data_snapshot', location: 's3://acdp-demo/finance/cashflow-q.json', encoding: 'application/json' },
+      ],
+      data_period: { start: iso(86400 * 90), end: iso(272) },
     },
     registry_state: { status: 'active' },
   },
 ];
+
+// ── Lineage chains (by lineage_id) ────────────────────────────────────
+// A v2 that supersedes the cashflow snapshot, so the chain view has a real
+// multi-version example to render.
+const CASHFLOW_V1 = MOCK_CONTEXTS[2];
+const CASHFLOW_V2: FullContext = {
+  body: {
+    ...CASHFLOW_V1.body,
+    ctx_id: `acdp://${AUTH_A}/2e78f01a-solo-v2`,
+    version: 2,
+    supersedes: CASHFLOW_V1.body.ctx_id,
+    created_at: iso(86400),
+    title: 'Quarterly cash flow snapshot (revised)',
+    summary: 'Revised quarterly operating cash flow figures after reconciliation.',
+    content_hash: 'sha256:bb22c8a3f2e1d4b5a6c7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0',
+  },
+  registry_state: { status: 'active' },
+};
+
+/** Full version chain keyed by lineage_id, oldest → newest. */
+export const MOCK_LINEAGE_CHAINS: Record<string, FullContext[]> = {
+  [CASHFLOW_V1.body.lineage_id]: [CASHFLOW_V1, CASHFLOW_V2],
+  [MOCK_CONTEXTS[0].body.lineage_id]: [MOCK_CONTEXTS[0]],
+  [MOCK_CONTEXTS[1].body.lineage_id]: [MOCK_CONTEXTS[1]],
+};
+
+// ── Security: revocations + signing keys ──────────────────────────────
+const nowSec = Math.floor(now / 1000);
+
+export const MOCK_REVOCATIONS: RevocationEntry[] = [
+  {
+    jti: 'tok-9f2a1c4e-rotated',
+    sub: DID_B,
+    iss: `did:web:${AUTH_A}`,
+    exp: nowSec + 3600,
+    revoked_at_ms: now - 42 * 60 * 1000,
+  },
+  {
+    jti: 'tok-3b7d8e90-compromised',
+    sub: DID_SOLO,
+    iss: `did:web:${AUTH_A}`,
+    exp: nowSec + 1800,
+    revoked_at_ms: now - 5 * 60 * 60 * 1000,
+  },
+  {
+    jti: 'tok-c1a44f02-keyrotation',
+    sub: DID_A,
+    iss: `did:web:${AUTH_B}`,
+    exp: nowSec + 7200,
+    revoked_at_ms: now - 26 * 60 * 60 * 1000,
+  },
+];
+
+export const MOCK_JWKS: Record<RegistryAuthority, JwkSet> = {
+  a: {
+    keys: [
+      {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        kid: 'key-1',
+        use: 'sig',
+        alg: 'EdDSA',
+        x: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo',
+      },
+    ],
+  },
+  b: {
+    keys: [
+      {
+        kty: 'EC',
+        crv: 'P-256',
+        kid: 'key-2',
+        use: 'sig',
+        alg: 'ES256',
+        x: 'f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU',
+        y: 'x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0',
+      },
+    ],
+  },
+};
 
 export const MOCK_SEARCH_HITS: SearchHit[] = MOCK_CONTEXTS.map((c) => ({
   ctx_id: c.body.ctx_id,

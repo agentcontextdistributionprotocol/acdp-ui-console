@@ -7,6 +7,11 @@ import {
   searchContexts,
   getCpDashboard,
   startRun,
+  listRevocations,
+  getRegistryJwks,
+  listEnrollments,
+  enrollRegistry,
+  getLineage,
 } from '@/lib/api/client';
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
@@ -52,6 +57,41 @@ describe('real-mode proxy paths', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/playground/runs');
     expect(fetchMock.mock.calls[0][1]?.method).toBe('POST');
   });
+
+  it('listRevocations → /auth/revocations with since + limit', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ entries: [], next_cursor: null }));
+    await listRevocations({ since: 123, limit: 25 }, false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain('/api/proxy/control-plane/auth/revocations?');
+    expect(url).toContain('since=123');
+    expect(url).toContain('limit=25');
+  });
+
+  it('getRegistryJwks → /.well-known/jwks.json on the registry', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ keys: [] }));
+    await getRegistryJwks('b', false);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/registry-b/.well-known/jwks.json');
+  });
+
+  it('listEnrollments → reads { data } from /registries/enrollments', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ data: [{ authority: 'r-a', tenantId: 'default', enabled: true, createdAt: '' }], total: 1 }));
+    const rows = await listEnrollments(false);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/registries/enrollments');
+    expect(rows[0].authority).toBe('r-a');
+  });
+
+  it('enrollRegistry → POST /registries/enroll', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'r-a', tenantId: 'default', enabled: true, createdAt: '' }));
+    await enrollRegistry({ authority: 'r-a', enabled: true }, false);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/registries/enroll');
+    expect(fetchMock.mock.calls[0][1]?.method).toBe('POST');
+  });
+
+  it('getLineage → /lineages/{id} on the registry', async () => {
+    const fetchMock = mockFetch(() => jsonResponse([]));
+    await getLineage('lin-cashflow-001', 'a', false);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/registry-a/lineages/lin-cashflow-001');
+  });
 });
 
 describe('listWebhooks', () => {
@@ -93,8 +133,19 @@ describe('searchContexts both', () => {
       if (url.includes('registry-a')) return jsonResponse({ matches: [{ ctx_id: 'a1' }] });
       return jsonResponse('boom', false, 500); // registry-b fails
     });
-    const res = await searchContexts('both', 'q', undefined, false);
+    const res = await searchContexts('both', { q: 'q' }, false);
     expect(res.matches.map((m) => m.ctx_id)).toEqual(['a1']);
     expect(res.partial).toBe(true);
+  });
+
+  it('threads facet params + cursor into the registry query string', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ matches: [], next_cursor: null }));
+    await searchContexts('a', { q: 'arctic', type: 'analysis', domain: 'finance', tags: 'a,b', cursor: '20' }, false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain('/api/proxy/registry-a/contexts/search?');
+    expect(url).toContain('q=arctic');
+    expect(url).toContain('type=analysis');
+    expect(url).toContain('domain=finance');
+    expect(url).toContain('cursor=20');
   });
 });

@@ -13,10 +13,14 @@ import {
   MOCK_CONTEXTS,
   MOCK_CONTEXT_EVENTS,
   MOCK_DASHBOARD,
+  MOCK_JWKS,
   MOCK_LINEAGE,
+  MOCK_LINEAGE_CHAINS,
   MOCK_METRICS,
   MOCK_METRICS_TEXT,
+  MOCK_ENROLLMENTS,
   MOCK_REGISTRIES,
+  MOCK_REVOCATIONS,
   MOCK_RUNS,
   MOCK_RUN_EVENTS,
   MOCK_SCENARIOS,
@@ -27,10 +31,13 @@ import type {
   CpContextEvent,
   CpDashboardOverview,
   CpLineageDag,
+  ContextSearchParams,
   CpRun,
+  EnrollRegistryInput,
   EventFilter,
   FullContext,
   HealthResult,
+  JwkSet,
   KnownAgent,
   KnownRegistry,
   LineageGraph,
@@ -41,6 +48,8 @@ import type {
   ProxyService,
   RegistryAuthority,
   RegistryCapabilities,
+  RegistryEnrollment,
+  RevocationFeed,
   ScenarioDef,
   SearchResponse,
   StepEvent,
@@ -237,6 +246,60 @@ export async function listRegistries(demoMode: boolean): Promise<KnownRegistry[]
   return res.data ?? [];
 }
 
+// ── Registry enrollments ──────────────────────────────────────────────
+// Mutable in-memory store so demo-mode enroll/toggle reflects changes.
+let demoEnrollments: RegistryEnrollment[] | null = null;
+function demoEnrollmentStore(): RegistryEnrollment[] {
+  if (!demoEnrollments) demoEnrollments = MOCK_ENROLLMENTS.map((e) => ({ ...e }));
+  return demoEnrollments;
+}
+
+export async function listEnrollments(demoMode: boolean): Promise<RegistryEnrollment[]> {
+  if (demoMode) return delay(demoEnrollmentStore().map((e) => ({ ...e })));
+  const res = await fetchJson<{ data: RegistryEnrollment[]; total: number }>(
+    'control-plane',
+    '/registries/enrollments',
+  );
+  return res.data ?? [];
+}
+
+/** Enroll (or upsert) a registry authority. Admin-only on the control plane. */
+export async function enrollRegistry(
+  input: EnrollRegistryInput,
+  demoMode: boolean,
+): Promise<RegistryEnrollment> {
+  if (demoMode) {
+    const store = demoEnrollmentStore();
+    const ts = new Date().toISOString();
+    const existing = store.find((e) => e.authority === input.authority);
+    if (existing) {
+      Object.assign(existing, {
+        tenantId: input.tenantId ?? existing.tenantId,
+        baseUrl: input.baseUrl ?? existing.baseUrl,
+        registryDid: input.registryDid ?? existing.registryDid,
+        enabled: input.enabled ?? existing.enabled,
+        updatedAt: ts,
+      });
+      return delay({ ...existing });
+    }
+    const row: RegistryEnrollment = {
+      authority: input.authority,
+      tenantId: input.tenantId ?? 'default',
+      baseUrl: input.baseUrl ?? null,
+      registryDid: input.registryDid ?? null,
+      enabled: input.enabled ?? true,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+    store.unshift(row);
+    return delay({ ...row });
+  }
+  return fetchJson<RegistryEnrollment>('control-plane', '/registries/enroll', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export async function getCpMetrics(demoMode: boolean): Promise<PrometheusMetric[]> {
   if (demoMode) return delay(MOCK_METRICS);
   const text = await fetchText('control-plane', '/metrics');
@@ -312,28 +375,63 @@ export async function deleteWebhook(id: string, demoMode: boolean): Promise<void
 }
 
 // ── Registry ──────────────────────────────────────────────────────────
+const DEFAULT_SEARCH_LIMIT = 20;
+
 export async function searchContexts(
   authority: RegistryAuthority | 'both',
-  q: string,
-  visibility: string | undefined,
+  search: ContextSearchParams,
   demoMode: boolean,
 ): Promise<SearchResponse> {
+  const limit = search.limit ?? DEFAULT_SEARCH_LIMIT;
   if (demoMode) {
     let hits = MOCK_SEARCH_HITS;
+    const q = search.q?.toLowerCase();
     if (q) {
-      const lower = q.toLowerCase();
       hits = hits.filter(
-        (h) => h.title?.toLowerCase().includes(lower) || h.summary?.toLowerCase().includes(lower),
+        (h) => h.title?.toLowerCase().includes(q) || h.summary?.toLowerCase().includes(q),
       );
     }
-    if (visibility && visibility !== 'all') hits = hits.filter((h) => h.visibility === visibility);
-    return delay({ matches: hits, total_estimate: hits.length });
+    if (search.visibility && search.visibility !== 'all')
+      hits = hits.filter((h) => h.visibility === search.visibility);
+    if (search.type) hits = hits.filter((h) => h.context_type === search.type);
+    if (search.agentId) hits = hits.filter((h) => h.agent_id?.includes(search.agentId!));
+    // domain/tags live on the full body, not the search hit — look them up.
+    const bodyOf = (ctxId: string) => MOCK_CONTEXTS.find((c) => c.body.ctx_id === ctxId)?.body;
+    if (search.domain) hits = hits.filter((h) => bodyOf(h.ctx_id)?.domain === search.domain);
+    if (search.tags) {
+      const want = search.tags
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean);
+      hits = hits.filter((h) => {
+        const have = (bodyOf(h.ctx_id)?.tags ?? []).map((t) => t.toLowerCase());
+        return want.every((w) => have.includes(w));
+      });
+    }
+    // Simulate keyset pagination: the cursor is an offset into the filtered set.
+    const start = search.cursor ? Number(search.cursor) || 0 : 0;
+    const page = hits.slice(start, start + limit);
+    const nextStart = start + limit;
+    const next_cursor = nextStart < hits.length ? String(nextStart) : undefined;
+    return delay({
+      matches: page,
+      total_estimate: hits.length,
+      ...(next_cursor ? { next_cursor } : {}),
+    });
   }
   const params = new URLSearchParams();
-  if (q) params.set('q', q);
-  if (visibility && visibility !== 'all') params.set('visibility', visibility);
+  if (search.q) params.set('q', search.q);
+  if (search.type) params.set('type', search.type);
+  if (search.domain) params.set('domain', search.domain);
+  if (search.tags) params.set('tags', search.tags);
+  if (search.agentId) params.set('agent_id', search.agentId);
+  if (search.status) params.set('status', search.status);
+  if (search.visibility && search.visibility !== 'all') params.set('visibility', search.visibility);
+  if (search.cursor) params.set('cursor', search.cursor);
+  params.set('limit', String(limit));
   if (authority === 'both') {
-    // A single down registry must not blank the combined view.
+    // A single down registry must not blank the combined view. Merged results
+    // can't be keyset-paginated coherently, so no next_cursor is returned.
     const settled = await Promise.allSettled([
       fetchJson<SearchResponse>('registry-a', `/contexts/search?${params.toString()}`),
       fetchJson<SearchResponse>('registry-b', `/contexts/search?${params.toString()}`),
@@ -354,12 +452,62 @@ export async function getContext(ctxId: string, demoMode: boolean): Promise<Full
   return fetchJson<FullContext>('control-plane', `/contexts/${encodeURIComponent(ctxId)}`);
 }
 
+/** Full version chain for a lineage_id (oldest → newest), from a registry. */
+export async function getLineage(
+  lineageId: string,
+  authority: RegistryAuthority,
+  demoMode: boolean,
+): Promise<FullContext[]> {
+  if (demoMode) return delay(MOCK_LINEAGE_CHAINS[lineageId] ?? []);
+  return fetchJson<FullContext[]>(authToService(authority), `/lineages/${encodeURIComponent(lineageId)}`);
+}
+
+/** The current (non-superseded) context for a lineage_id. */
+export async function getLineageCurrent(
+  lineageId: string,
+  authority: RegistryAuthority,
+  demoMode: boolean,
+): Promise<FullContext | null> {
+  if (demoMode) {
+    const chain = MOCK_LINEAGE_CHAINS[lineageId] ?? [];
+    return delay(chain.length ? chain[chain.length - 1] : null);
+  }
+  return fetchJson<FullContext>(authToService(authority), `/lineages/${encodeURIComponent(lineageId)}/current`);
+}
+
 export async function getRegistryCapabilities(
   authority: RegistryAuthority,
   demoMode: boolean,
 ): Promise<RegistryCapabilities> {
   if (demoMode) return delay(MOCK_CAPABILITIES[authority]);
   return fetchJson<RegistryCapabilities>(authToService(authority), '/.well-known/acdp.json');
+}
+
+// ── Security: revocations + signing keys ──────────────────────────────
+export async function listRevocations(
+  params: { since?: number; limit?: number },
+  demoMode: boolean,
+): Promise<RevocationFeed> {
+  const limit = params.limit ?? 50;
+  if (demoMode) {
+    const since = params.since ?? 0;
+    // Feed is newest-first; cursor pages forward through older entries.
+    const sorted = [...MOCK_REVOCATIONS].sort((a, b) => b.revoked_at_ms - a.revoked_at_ms);
+    const rest = since ? sorted.filter((e) => e.revoked_at_ms < since) : sorted;
+    const page = rest.slice(0, limit);
+    const next_cursor = page.length === limit && page.length < rest.length ? page[page.length - 1].revoked_at_ms : null;
+    return delay({ entries: page, next_cursor });
+  }
+  const sp = new URLSearchParams();
+  sp.set('since', String(params.since ?? 0));
+  sp.set('limit', String(limit));
+  return fetchJson<RevocationFeed>('control-plane', `/auth/revocations?${sp.toString()}`);
+}
+
+/** A registry's published signing keys (RFC 7517 JWK Set). */
+export async function getRegistryJwks(authority: RegistryAuthority, demoMode: boolean): Promise<JwkSet> {
+  if (demoMode) return delay(MOCK_JWKS[authority]);
+  return fetchJson<JwkSet>(authToService(authority), '/.well-known/jwks.json');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
