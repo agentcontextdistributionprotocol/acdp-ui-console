@@ -2,6 +2,9 @@ import { NextRequest } from 'next/server';
 import { buildUpstreamUrl } from '@/lib/server/integrations';
 
 export const dynamic = 'force-dynamic';
+// Keep the SSE relay alive past Vercel's default function timeout. Only
+// exercised in real mode; demo mode replays the recorded stream client-side.
+export const maxDuration = 60;
 
 /** Relays the control-plane global SSE firehose (/events/stream). */
 export async function GET(request: NextRequest) {
