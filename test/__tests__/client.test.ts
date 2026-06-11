@@ -125,6 +125,23 @@ describe('getCpMetrics', () => {
     expect(m?.value).toBe(7);
     expect(m?.type).toBe('counter');
   });
+
+  it('captures HELP text and defaults the type to "untyped"', async () => {
+    const text = ['# HELP acdp_pool_size Database connection pool size', 'acdp_pool_size 5'].join('\n');
+    mockFetch(() => jsonResponse(text));
+    const m = (await getCpMetrics(false)).find((x) => x.name === 'acdp_pool_size');
+    expect(m?.value).toBe(5);
+    expect(m?.type).toBe('untyped');
+    expect(m?.help).toBe('Database connection pool size');
+  });
+
+  it('skips comments and non-finite samples', async () => {
+    const text = ['# some unrelated comment', 'acdp_bad NaN', 'acdp_good 12', ''].join('\n');
+    mockFetch(() => jsonResponse(text));
+    const names = (await getCpMetrics(false)).map((m) => m.name);
+    expect(names).toContain('acdp_good');
+    expect(names).not.toContain('acdp_bad');
+  });
 });
 
 describe('searchContexts both', () => {

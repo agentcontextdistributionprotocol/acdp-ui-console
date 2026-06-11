@@ -8,6 +8,13 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./test/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['lib/**/*.ts'],
+      // Pure type modules and React-only hooks (covered by integration, not unit).
+      exclude: ['lib/types.ts', 'lib/colors.ts', 'lib/hooks/**'],
+    },
   },
   resolve: {
     alias: {

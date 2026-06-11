@@ -29,6 +29,15 @@ describe('formatCtxId', () => {
   it('shortens authority and id', () => {
     expect(formatCtxId('acdp://registry-a.playground.local/f4a2c9e1-1234')).toBe('acdp://registry-a…/f4a2c9e1');
   });
+
+  it('returns an empty string for empty/nullish input', () => {
+    expect(formatCtxId('')).toBe('');
+    expect(formatCtxId(null)).toBe('');
+  });
+
+  it('returns just the short id when there is no authority', () => {
+    expect(formatCtxId('not-a-ctx')).toBe('not-a-ctx');
+  });
 });
 
 describe('formatAgentDid', () => {
@@ -39,15 +48,30 @@ describe('formatAgentDid', () => {
   it('returns non-did values unchanged', () => {
     expect(formatAgentDid('plain')).toBe('plain');
   });
+
+  it('returns an empty string for empty/nullish input', () => {
+    expect(formatAgentDid('')).toBe('');
+    expect(formatAgentDid(undefined)).toBe('');
+  });
 });
 
 describe('authorityFromDid', () => {
   it('extracts the authority host', () => {
     expect(authorityFromDid('did:web:registry-a.local:agents:cross-a')).toBe('registry-a.local');
   });
+
+  it('returns an empty string for non-did or nullish input', () => {
+    expect(authorityFromDid('plain')).toBe('');
+    expect(authorityFromDid(null)).toBe('');
+  });
 });
 
 describe('shortAuthority', () => {
+  it('returns an empty string for nullish input', () => {
+    expect(shortAuthority(undefined)).toBe('');
+    expect(shortAuthority('')).toBe('');
+  });
+
   it('takes the first host segment', () => {
     expect(shortAuthority('registry-a.playground.local')).toBe('registry-a');
   });
