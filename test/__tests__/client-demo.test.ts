@@ -144,6 +144,34 @@ describe('listCpEvents (demo)', () => {
     const byAgent = await listCpEvents({ agentId: someAgent }, DEMO);
     expect(byAgent.data.every((e) => e.agentId.includes(someAgent))).toBe(true);
   });
+
+  it('paginates newest-first via a beforeTs keyset cursor', async () => {
+    const total = MOCK_CONTEXT_EVENTS.length;
+    const limit = 3;
+    expect(total).toBeGreaterThan(limit); // guard: dataset must span >1 page
+
+    const first = await listCpEvents({ limit }, DEMO);
+    expect(first.data.length).toBe(limit);
+    expect(first.total).toBe(total); // total ignores the cursor window
+    // Newest-first ordering.
+    expect(first.data[0].eventTs >= first.data[limit - 1].eventTs).toBe(true);
+    expect(first.nextCursor).toBe(first.data[limit - 1].eventTs);
+
+    // Walk the cursor to the end; every row is strictly older and never repeats.
+    const seen = new Set(first.data.map((e) => e.id));
+    let cursor = first.nextCursor;
+    let pages = 1;
+    while (cursor) {
+      const next = await listCpEvents({ limit, beforeTs: cursor }, DEMO);
+      expect(next.data.every((e) => e.eventTs < cursor!)).toBe(true);
+      expect(next.data.every((e) => !seen.has(e.id))).toBe(true);
+      next.data.forEach((e) => seen.add(e.id));
+      cursor = next.nextCursor;
+      pages += 1;
+    }
+    expect(seen.size).toBe(total); // exhaustive: every event surfaced exactly once
+    expect(pages).toBe(Math.ceil(total / limit));
+  });
 });
 
 // ── listCpRuns (demo filtering) ────────────────────────────────────────

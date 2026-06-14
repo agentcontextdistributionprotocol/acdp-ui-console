@@ -213,7 +213,8 @@ export async function getCpRunEvents(runId: string, demoMode: boolean): Promise<
 export async function listCpEvents(
   filter: EventFilter,
   demoMode: boolean,
-): Promise<{ data: CpContextEvent[]; total: number }> {
+): Promise<{ data: CpContextEvent[]; total: number; nextCursor?: string | null }> {
+  const limit = filter.limit ?? 200;
   if (demoMode) {
     let events = [...MOCK_CONTEXT_EVENTS];
     if (filter.runId) events = events.filter((e) => e.runId === filter.runId);
@@ -221,7 +222,15 @@ export async function listCpEvents(
     if (filter.agentId) events = events.filter((e) => e.agentId.includes(filter.agentId!));
     if (filter.registryAuthority)
       events = events.filter((e) => e.registryAuthority.includes(filter.registryAuthority!));
-    return delay({ data: events, total: events.length });
+    // Newest-first keyset pagination mirroring the control plane: the cursor is
+    // the oldest row's timestamp, replayed as `beforeTs` for the next (older) page.
+    events.sort((a, b) => (a.eventTs < b.eventTs ? 1 : a.eventTs > b.eventTs ? -1 : 0));
+    const total = events.length;
+    if (filter.beforeTs) events = events.filter((e) => e.eventTs < filter.beforeTs!);
+    const page = events.slice(0, limit);
+    const nextCursor =
+      page.length === limit && page.length < events.length ? page[page.length - 1].eventTs : null;
+    return delay({ data: page, total, nextCursor });
   }
   const params = new URLSearchParams();
   if (filter.runId) params.set('runId', filter.runId);
@@ -230,8 +239,11 @@ export async function listCpEvents(
   if (filter.registryAuthority) params.set('registryAuthority', filter.registryAuthority);
   if (filter.afterTs) params.set('afterTs', filter.afterTs);
   if (filter.beforeTs) params.set('beforeTs', filter.beforeTs);
-  params.set('limit', String(filter.limit ?? 200));
-  return fetchJson<{ data: CpContextEvent[]; total: number }>('control-plane', `/events?${params.toString()}`);
+  params.set('limit', String(limit));
+  return fetchJson<{ data: CpContextEvent[]; total: number; nextCursor?: string | null }>(
+    'control-plane',
+    `/events?${params.toString()}`,
+  );
 }
 
 export async function listAgents(demoMode: boolean): Promise<KnownAgent[]> {
