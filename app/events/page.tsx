@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { ListTree } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Card } from '@/components/ui/card';
@@ -24,7 +24,6 @@ export default function EventsPage() {
   const [registry, setRegistry] = useState('');
   const [type, setType] = useState('All types');
   const [liveOn, setLiveOn] = useState(false);
-  const [visible, setVisible] = useState(PAGE);
 
   const agentQ = useDebounced(agent);
   const registryQ = useDebounced(registry);
@@ -34,28 +33,37 @@ export default function EventsPage() {
       agentId: agentQ || undefined,
       registryAuthority: registryQ || undefined,
       eventType: type === 'All types' ? undefined : type,
-      limit: 200,
+      limit: PAGE,
     }),
     [agentQ, registryQ, type],
   );
 
-  // Reset the visible window whenever the filter changes.
-  useEffect(() => setVisible(PAGE), [filter]);
-
-  const history = useQuery({
+  const history = useInfiniteQuery({
     queryKey: ['events', filter, demoMode],
-    queryFn: () => listCpEvents(filter, demoMode),
+    queryFn: ({ pageParam }) => listCpEvents({ ...filter, beforeTs: pageParam }, demoMode),
+    initialPageParam: undefined as string | undefined,
+    // Keyset cursor: the oldest row's timestamp becomes the next page's `beforeTs`.
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 
   const { events: liveEvents, live } = useGlobalEvents(liveOn);
 
+  // Flatten every fetched page, deduping by id (the boundary row of a keyset page
+  // can repeat) and folding the live SSE feed on top of the persisted history.
   const merged = useMemo(() => {
-    if (!liveOn) return history.data?.data ?? [];
-    const seen = new Set(liveEvents.map((e) => e.id));
-    return [...liveEvents, ...(history.data?.data ?? []).filter((e) => !seen.has(e.id))];
+    const seen = new Set<string>();
+    const out = [];
+    const stream = liveOn ? liveEvents : [];
+    for (const e of [...stream, ...(history.data?.pages.flatMap((p) => p.data) ?? [])]) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+    }
+    return out;
   }, [liveOn, liveEvents, history.data]);
 
-  const shown = merged.slice(0, visible);
+  const total = history.data?.pages[0]?.total;
+  const shown = merged;
 
   return (
     <div className="page">
@@ -110,14 +118,21 @@ export default function EventsPage() {
           <Card>
             <EventsTable events={shown} />
           </Card>
-          {visible < merged.length && (
+          {(history.hasNextPage || total != null) && (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 12 }}>
               <span style={{ fontSize: 11, color: C.muted }}>
-                Showing {shown.length} of {merged.length}
+                Showing {shown.length}
+                {total != null ? ` of ${total}` : ''}
               </span>
-              <Button variant="secondary" onClick={() => setVisible((v) => v + PAGE)}>
-                Load more
-              </Button>
+              {history.hasNextPage && (
+                <Button
+                  variant="secondary"
+                  disabled={history.isFetchingNextPage}
+                  onClick={() => history.fetchNextPage()}
+                >
+                  {history.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                </Button>
+              )}
             </div>
           )}
         </>
