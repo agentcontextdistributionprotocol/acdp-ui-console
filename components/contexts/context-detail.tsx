@@ -1,12 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { ShieldCheck, Clock, Database, GitBranch, FileJson, ChevronRight, ChevronDown } from 'lucide-react';
+import { ShieldCheck, Clock, Database, GitBranch, FileJson, ChevronRight, ChevronDown, BadgeCheck } from 'lucide-react';
 import { JsonViewer } from '@/components/ui/json-viewer';
 import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { clockTime, timeAgo, shortId } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
 import type { FullContext } from '@/lib/types';
+
+/** A structural cross-field check between the receipt and the served body. */
+function BindingChip({ label, ok }: { label: string; ok: boolean }) {
+  return <span className={ok ? 'chip ok' : 'chip bad'}>{ok ? '✓' : '✗'} {label}</span>;
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   if (children === null || children === undefined || children === '') return null;
@@ -122,6 +127,38 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
           </>
         )}
       </Group>
+
+      {/* Registry receipt (RFC-ACDP-0010) */}
+      {ctx.registry_receipt && (
+        <Group icon={BadgeCheck} title="Registry receipt">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+            <BindingChip label="ctx" ok={ctx.registry_receipt.ctx_id === b.ctx_id} />
+            <BindingChip label="lineage" ok={ctx.registry_receipt.lineage_id === b.lineage_id} />
+            <BindingChip label="origin" ok={ctx.registry_receipt.origin_registry === b.origin_registry} />
+            <BindingChip label="content hash" ok={ctx.registry_receipt.content_hash === b.content_hash} />
+          </div>
+          <Field label="registry">
+            <span className="did" style={{ fontSize: 10.5 }}>
+              {ctx.registry_receipt.registry_did}
+            </span>
+          </Field>
+          <Field label="fingerprint">
+            <span className="did" style={{ fontSize: 10.5 }} title={ctx.registry_receipt.key_fingerprint}>
+              {ctx.registry_receipt.key_fingerprint}
+            </span>
+          </Field>
+          <Field label="issued">{clockTime(ctx.registry_receipt.created_at)}</Field>
+          <Field label="sig">
+            <span className="chip ok" style={{ marginRight: 4 }}>{ctx.registry_receipt.signature.algorithm}</span>
+            <span className="did" style={{ fontSize: 10.5 }}>
+              {shortId(ctx.registry_receipt.signature.value, 16, 8)}
+            </span>
+          </Field>
+          <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
+            Structural field bindings — not a client-side cryptographic verification.
+          </div>
+        </Group>
+      )}
 
       {/* Lifecycle */}
       <Group icon={Clock} title="Lifecycle">

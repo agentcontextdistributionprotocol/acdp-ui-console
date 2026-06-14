@@ -38,6 +38,8 @@ function cpEventToStep(e: CpContextEvent): StepEvent {
     derived_from: e.derivedFrom ?? [],
     registry_authority: e.registryAuthority || undefined,
     event_id: e.id,
+    key_fingerprint: e.keyFingerprint ?? undefined,
+    receipt_present: e.receiptPresent ?? undefined,
   };
 }
 

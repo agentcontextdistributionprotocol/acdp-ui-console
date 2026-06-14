@@ -432,6 +432,8 @@ textarea {
 .chip.mode-dual { border-color: rgba(96, 165, 250, 0.3); color: var(--info); background: rgba(96, 165, 250, 0.06); }
 .chip.mode-cross { border-color: rgba(167, 139, 250, 0.3); color: var(--purple); background: rgba(167, 139, 250, 0.06); }
 .chip.ok { border-color: rgba(34, 212, 143, 0.3); color: var(--success); background: rgba(34, 212, 143, 0.06); }
+.chip.warn { border-color: rgba(245, 166, 35, 0.3); color: var(--warning); background: rgba(245, 166, 35, 0.06); }
+.chip.bad { border-color: rgba(240, 93, 122, 0.3); color: var(--danger); background: rgba(240, 93, 122, 0.06); }
 .sc-run-btn {
   position: absolute;
   right: 14px;

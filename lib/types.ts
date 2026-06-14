@@ -50,6 +50,9 @@ export interface StepEvent {
   registry_authority?: string;
   tenant_id?: string;
   event_id?: string;
+  // ACDP 0.2 trust signals carried on the playground step stream (snake_case).
+  key_fingerprint?: string;
+  receipt_present?: boolean;
 }
 
 export interface PlaygroundRunResponse {
@@ -98,6 +101,40 @@ export interface PlaygroundRunStatus {
 // ── Control plane types ───────────────────────────────────────────────
 export type RunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
+/**
+ * Receipt-audit verdict for a single context event (RFC-ACDP-0010).
+ * `verified` = crypto-verified against a current registry key;
+ * `verified_historical` = crypto-verified, but the receipt's registry key is
+ * retired (§9 historically authorized) — valid, yet worth surfacing;
+ * `structural` = shape-only (no crypto); `discrepancy` = a real trust violation;
+ * `no_receipt` = registry returned none; `error` = environmental
+ * (unreachable/timeout), NOT a trust flag.
+ */
+export type TrustVerdictStatus =
+  | 'verified'
+  | 'verified_historical'
+  | 'structural'
+  | 'discrepancy'
+  | 'no_receipt'
+  | 'error';
+
+/** Aggregate receipt-audit summary the control plane attaches to a run. */
+export interface RunTrustSummary {
+  audited: number;
+  verified: number;
+  // Crypto-verified against a *retired* registry key (RFC-ACDP-0010 §9).
+  verifiedHistorical: number;
+  structural: number;
+  noReceipt: number;
+  errors: number;
+  flagged: Array<{
+    eventId: string;
+    ctxId: string | null;
+    status: string; // 'discrepancy'
+    discrepancies: string[]; // prefix-coded flag strings, e.g. 'content_hash_mismatch:…'
+  }>;
+}
+
 export interface CpRun {
   runId: string;
   tenantId: string;
@@ -110,6 +147,8 @@ export interface CpRun {
   inputs?: Record<string, unknown> | null;
   result?: Record<string, unknown> | null;
   updatedAt?: string;
+  // ACDP 0.2: nullable until the audit sweep produces a verdict for the run.
+  trust?: RunTrustSummary | null;
 }
 
 export interface CpContextEvent {
@@ -126,6 +165,9 @@ export interface CpContextEvent {
   derivedFrom?: string[];
   registryAuthority: string;
   scenarioId?: string | null;
+  // ACDP 0.2 trust signals (optional; absent on 0.1.0 traffic).
+  keyFingerprint?: string | null;
+  receiptPresent?: boolean | null;
 }
 
 export interface CpLineageDag {
@@ -149,6 +191,9 @@ export interface CpDashboardOverview {
   recentRuns: CpRun[];
   byScenario: Array<{ scenario_id: string; run_count: number }>;
   byRegistry: Array<{ registry_authority: string; event_count: number }>;
+  // ACDP 0.2: per-registry receipt coverage + producer DID-method breakdown.
+  receiptCoverage?: Array<{ registry_authority: string; publish_count: number; receipt_count: number }>;
+  didMethods?: Array<{ method: 'did:web' | 'did:key' | 'other'; publish_count: number }>;
 }
 
 export interface KnownAgent {
@@ -246,9 +291,27 @@ export interface ContextBody {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Registry receipt (RFC-ACDP-0010) — the serving registry's signed attestation
+ * that it accepted and stored a context. `key_fingerprint` records the producer's
+ * publish-time signing key, enabling historical-key verification after rotation.
+ */
+export interface RegistryReceipt {
+  registry_did: string; // e.g. 'did:web:registry-c.playground.local'
+  ctx_id: string;
+  lineage_id: string;
+  origin_registry: string; // authority string
+  created_at: string; // canonical RFC3339, ms precision
+  content_hash: string; // 'sha256:…'
+  key_fingerprint: string; // 'sha256:…' of the producer's publish-time key
+  signature: Signature;
+}
+
 export interface FullContext {
   body: ContextBody;
   registry_state: { status: string };
+  // ACDP 0.2: present when the serving registry runs the receipts profile.
+  registry_receipt?: RegistryReceipt | null;
 }
 
 /**
