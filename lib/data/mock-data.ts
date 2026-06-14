@@ -34,9 +34,11 @@ export const FAILED_RUN_ID = 'run-9d8e7f6a';
 
 const AUTH_A = 'registry-a.playground.local';
 const AUTH_B = 'registry-b.playground.local';
+const AUTH_C = 'registry-c.playground.local'; // ACDP 0.2 receipts-profile registry
 const DID_A = 'did:web:registry-a.local:agents:cross-a';
 const DID_B = 'did:web:registry-b.local:agents:cross-b';
 const DID_SOLO = 'did:web:registry-a.local:agents:solo';
+const DID_KEY = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'; // ephemeral agent
 
 // ── Scenarios (mirrors playground catalog, S1–S20) ────────────────────
 export const MOCK_SCENARIOS: ScenarioDef[] = [
@@ -220,6 +222,52 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
     framework: 'langchain',
     default_inputs: { topic: 'tenant onboarding' },
   },
+  // ── ACDP 0.2 trust & hardening scenarios (S22–S26) ──────────────────
+  {
+    id: 's22_receipts',
+    name: 'Registry Receipts',
+    description: 'did:key publish → receipts registry → Require-policy receipt verify (RFC-ACDP-0010 happy path).',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'attested disclosure' },
+  },
+  {
+    id: 's23_receipt_tamper',
+    name: 'Receipt Tamper (fail-closed)',
+    description: 'Six adversarial receipts (missing, mutated, rebound, mismatched, forged) — all must fail closed, fully offline.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'tamper matrix' },
+  },
+  {
+    id: 's24_historical_key',
+    name: 'Historical Key Verification',
+    description: 'Key rotation: a pre-rotation context stays HistoricallyAuthorized via the receipt-pinned publish key.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'rotated signing key' },
+  },
+  {
+    id: 's25_did_key',
+    name: 'did:key Ephemeral Agents',
+    description: 'Three ephemeral did:key agents publish + verify offline; a rotated key is a new identity that cannot supersede.',
+    registry_mode: 'single',
+    agent_count: 3,
+    framework: 'langchain',
+    default_inputs: { topic: 'ephemeral identities' },
+  },
+  {
+    id: 's26_divergence',
+    name: 'Divergence Diagnostics',
+    description: 'A non-reproducing content_hash is localized via canonical preimage diff; the registry rejects it as hash_mismatch.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'canonicalization drift' },
+  },
 ];
 
 export const SCENARIO_COUNT = MOCK_SCENARIOS.length;
@@ -353,6 +401,8 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 1,
     registries: [AUTH_A, AUTH_B],
     inputs: { topic: 'Arctic shipping routes' },
+    // Still running — the audit sweep hasn't produced a verdict yet.
+    trust: null,
   },
   {
     runId: COMPLETED_RUN_ID,
@@ -364,6 +414,7 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 1,
     registries: [AUTH_A],
     inputs: { topic: 'quarterly cash flow' },
+    trust: { audited: 1, verified: 1, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
   {
     runId: 'run-c4d5e6f7',
@@ -375,6 +426,9 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 1,
     registries: [AUTH_A],
     inputs: { topic: 'customer PII summary' },
+    // Receipt shape verified, but the registry isn't on the receipts profile so
+    // there's no crypto receipt to verify — structural-only.
+    trust: { audited: 1, verified: 0, verifiedHistorical: 0, structural: 1, noReceipt: 0, errors: 0, flagged: [] },
   },
   {
     runId: FAILED_RUN_ID,
@@ -386,6 +440,8 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 1,
     registries: [AUTH_A],
     inputs: { topic: 'forecast model' },
+    // Environmental: the registry was unreachable during the sweep — not a flag.
+    trust: { audited: 1, verified: 0, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 1, flagged: [] },
   },
   {
     runId: 'run-fan-3',
@@ -397,6 +453,7 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 4,
     registries: [AUTH_A],
     inputs: { topic: 'market sentiment', consumers: 3 },
+    trust: { audited: 4, verified: 2, verifiedHistorical: 0, structural: 0, noReceipt: 2, errors: 0, flagged: [] },
   },
   {
     runId: 'run-cross-org-1',
@@ -408,17 +465,53 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 2,
     registries: [AUTH_A, AUTH_B],
     inputs: { topic: 'joint venture terms' },
+    // One context's receipt content_hash diverges from the served body — a real
+    // trust violation surfaced by the audit.
+    trust: {
+      audited: 2,
+      verified: 1,
+      verifiedHistorical: 0,
+      structural: 0,
+      noReceipt: 0,
+      errors: 0,
+      flagged: [
+        {
+          eventId: 'ev-cross-org-2',
+          ctxId: `acdp://${AUTH_B}/joint-venture-002`,
+          status: 'discrepancy',
+          discrepancies: [
+            'content_hash_mismatch: receipt sha256:bb22c8a3… ≠ served body sha256:9c11a7f2…',
+          ],
+        },
+      ],
+    },
+  },
+  {
+    runId: 'run-historical-1',
+    tenantId: 'default',
+    scenarioId: 's24_historical_key',
+    status: 'completed',
+    startedAt: iso(150),
+    completedAt: iso(138),
+    contextsCount: 1,
+    registries: [AUTH_C],
+    inputs: { topic: 'rotated signing key' },
+    // The producer rotated its key after publishing; the pre-rotation context
+    // still verifies against the retired key pinned by the receipt (RFC-ACDP-0010
+    // §9 historically authorized) — cryptographically valid, just not current.
+    trust: { audited: 1, verified: 0, verifiedHistorical: 1, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
 ];
 
 // ── Context events (global firehose / history) ────────────────────────
 export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
-  { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry' },
+  { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
   { id: 'ev-2', eventType: 'context_retrieved', eventTs: iso(11), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_B, registryAuthority: AUTH_B, scenarioId: 's5_cross_registry' },
-  { id: 'ev-3', eventType: 'context_published', eventTs: iso(3), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[1].ctx_id, agentId: DID_B, contextType: 'analysis', visibility: 'public', version: 1, derivedFrom: [LIVE_LINEAGE.nodes[0].ctx_id], registryAuthority: AUTH_B, scenarioId: 's5_cross_registry' },
-  { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
+  { id: 'ev-3', eventType: 'context_published', eventTs: iso(3), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[1].ctx_id, agentId: DID_B, contextType: 'analysis', visibility: 'public', version: 1, derivedFrom: [LIVE_LINEAGE.nodes[0].ctx_id], registryAuthority: AUTH_B, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:a07c5d1b9e22', receiptPresent: false },
+  { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
   { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/tenant-a-001`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
+  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_C}/attested-001`, agentId: DID_KEY, contextType: 'attestation', visibility: 'public', version: 1, registryAuthority: AUTH_C, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
 ];
 
 // ── Dashboard overview ────────────────────────────────────────────────
@@ -441,6 +534,16 @@ export const MOCK_DASHBOARD: CpDashboardOverview = {
     { registry_authority: AUTH_A, event_count: 187 },
     { registry_authority: AUTH_B, event_count: 125 },
   ],
+  receiptCoverage: [
+    { registry_authority: AUTH_C, publish_count: 54, receipt_count: 54 },
+    { registry_authority: AUTH_A, publish_count: 187, receipt_count: 142 },
+    { registry_authority: AUTH_B, publish_count: 125, receipt_count: 71 },
+  ],
+  didMethods: [
+    { method: 'did:web', publish_count: 248 },
+    { method: 'did:key', publish_count: 58 },
+    { method: 'other', publish_count: 6 },
+  ],
 };
 
 // ── Agents ────────────────────────────────────────────────────────────
@@ -448,12 +551,14 @@ export const MOCK_AGENTS: KnownAgent[] = [
   { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
   { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(21) },
   { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(240) },
+  { agentDid: DID_KEY, registryAuthority: AUTH_C, contextCount: 1, firstSeen: iso(140), lastSeen: iso(140) },
 ];
 
 // ── Registries ────────────────────────────────────────────────────────
 export const MOCK_REGISTRIES: KnownRegistry[] = [
   { authority: AUTH_A, baseUrl: 'http://localhost:8100', eventCount: 187, firstSeen: iso(432000), lastSeen: iso(8) },
   { authority: AUTH_B, baseUrl: 'http://localhost:8200', eventCount: 125, firstSeen: iso(432000), lastSeen: iso(3) },
+  { authority: AUTH_C, baseUrl: 'http://localhost:8300', eventCount: 54, firstSeen: iso(86400 * 4), lastSeen: iso(140) },
 ];
 
 export const MOCK_ENROLLMENTS: RegistryEnrollment[] = [
@@ -534,6 +639,21 @@ export const MOCK_CONTEXTS: FullContext[] = [
       schema_uri: 'https://schemas.acdp.dev/data_snapshot/v1.json',
     },
     registry_state: { status: 'active' },
+    // RFC-ACDP-0010 receipt — bindings all match the served body (clean verify).
+    registry_receipt: {
+      registry_did: `did:web:${AUTH_C}`,
+      ctx_id: LIVE_LINEAGE.nodes[0].ctx_id,
+      lineage_id: 'lin-arctic-001',
+      origin_registry: AUTH_A,
+      created_at: iso(16),
+      content_hash: 'sha256:f170150d8c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8',
+      key_fingerprint: 'sha256:1f4a90c2e7b3d5089a6c4e21f7b0d9c8a3e5f6071b2c4d8e9f0a1b2c3d4e5f6a7',
+      signature: {
+        algorithm: 'ed25519',
+        key_id: `did:web:${AUTH_C}#receipt-key-1`,
+        value: 'zRcptA8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP9qR0',
+      },
+    },
   },
   {
     body: {
@@ -599,6 +719,48 @@ export const MOCK_CONTEXTS: FullContext[] = [
       data_period: { start: iso(86400 * 90), end: iso(272) },
     },
     registry_state: { status: 'active' },
+  },
+  {
+    body: {
+      ctx_id: `acdp://${AUTH_C}/attested-001`,
+      lineage_id: 'lin-attested-001',
+      origin_registry: AUTH_C,
+      created_at: iso(140),
+      content_hash: 'sha256:bd61f88a4c70e2139f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
+      version: 1,
+      agent_id: DID_KEY,
+      title: 'Attested disclosure — did:key ephemeral agent',
+      type: 'attestation',
+      visibility: 'public',
+      derived_from: [],
+      summary: 'Offline-verifiable disclosure published by an ephemeral did:key agent to the receipts registry.',
+      description: 'Demonstrates the RFC-ACDP-0010 receipts profile: the producer key is embedded in the did:key identifier and pinned by the registry receipt.',
+      tags: ['attestation', 'did:key'],
+      domain: 'compliance',
+      acdp_version: '0.2.0',
+      signature: {
+        algorithm: 'ed25519',
+        key_id: `${DID_KEY}#key-1`,
+        value: 'zDidKeyA8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP9',
+      },
+      supersedes: null,
+      contributors: [DID_KEY],
+    },
+    registry_state: { status: 'active' },
+    registry_receipt: {
+      registry_did: `did:web:${AUTH_C}`,
+      ctx_id: `acdp://${AUTH_C}/attested-001`,
+      lineage_id: 'lin-attested-001',
+      origin_registry: AUTH_C,
+      created_at: iso(140),
+      content_hash: 'sha256:bd61f88a4c70e2139f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
+      key_fingerprint: 'sha256:bd61f88a4c70e2139f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
+      signature: {
+        algorithm: 'ed25519',
+        key_id: `did:web:${AUTH_C}#receipt-key-1`,
+        value: 'zRcptKeyB8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP',
+      },
+    },
   },
 ];
 
@@ -704,6 +866,9 @@ export const MOCK_METRICS: PrometheusMetric[] = [
   { name: 'acdp_db_pool_size', type: 'gauge', value: 5, help: 'Database connection pool size' },
   { name: 'acdp_context_published_total', type: 'counter', value: 312, help: 'Contexts observed as published' },
   { name: 'acdp_context_retrieved_total', type: 'counter', value: 198, help: 'Contexts observed as retrieved' },
+  { name: 'acdp_publish_receipts_total', type: 'counter', value: 267, help: 'Publishes carrying a registry receipt' },
+  { name: 'acdp_producer_did_method_total', type: 'counter', value: 312, help: 'Publishes by producer DID method' },
+  { name: 'acdp_receipt_audits_total', type: 'counter', value: 9, help: 'Receipt-audit verdicts recorded' },
 ];
 
 export const MOCK_METRICS_TEXT = MOCK_METRICS.map(
@@ -722,6 +887,6 @@ export const MOCK_SDK_MATRIX = [
   { component: 'acdp-py binding', version: '0.1.0', status: 'ok' },
   { component: 'acdp-node binding', version: '0.1.0', status: 'ok' },
   { component: 'Registry (Rust/axum)', version: '0.1.0', status: 'ok' },
-  { component: 'Control Plane (NestJS)', version: '0.1.0', status: 'ok' },
-  { component: 'Playground (FastAPI)', version: '0.1.0', status: 'ok' },
+  { component: 'Control Plane (NestJS)', version: '0.2.0', status: 'ok' },
+  { component: 'Playground (FastAPI)', version: '0.2.0', status: 'ok' },
 ];

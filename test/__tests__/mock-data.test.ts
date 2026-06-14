@@ -111,3 +111,61 @@ describe('enrollment mocks', () => {
     }
   });
 });
+
+describe('trust mocks (ACDP 0.2)', () => {
+  it('includes the S22–S26 trust scenarios', () => {
+    const ids = new Set(MOCK_SCENARIOS.map((s) => s.id));
+    for (const id of ['s22_receipts', 's23_receipt_tamper', 's24_historical_key', 's25_did_key', 's26_divergence']) {
+      expect(ids.has(id)).toBe(true);
+    }
+  });
+
+  it('every registry receipt binds cleanly to its served body', () => {
+    const withReceipt = MOCK_CONTEXTS.filter((c) => c.registry_receipt);
+    expect(withReceipt.length).toBeGreaterThan(0);
+    for (const c of withReceipt) {
+      const r = c.registry_receipt!;
+      expect(r.ctx_id).toBe(c.body.ctx_id);
+      expect(r.lineage_id).toBe(c.body.lineage_id);
+      expect(r.origin_registry).toBe(c.body.origin_registry);
+      expect(r.content_hash).toBe(c.body.content_hash);
+      expect(r.key_fingerprint).toMatch(/^sha256:/);
+      expect(r.signature.algorithm).toBeTruthy();
+    }
+  });
+
+  it('a running run has no verdict yet and exactly one run is flagged', () => {
+    const live = MOCK_RUNS.find((r) => r.runId === LIVE_RUN_ID);
+    expect(live?.trust).toBeNull();
+    const flagged = MOCK_RUNS.filter((r) => (r.trust?.flagged.length ?? 0) > 0);
+    expect(flagged.length).toBe(1);
+    expect(flagged[0].trust!.flagged[0].discrepancies[0]).toContain('content_hash_mismatch');
+  });
+
+  it('surfaces a historically-authorized verdict (RFC-ACDP-0010 §9)', () => {
+    const historical = MOCK_RUNS.find((r) => r.scenarioId === 's24_historical_key');
+    expect(historical?.trust?.verifiedHistorical).toBe(1);
+    expect(historical?.trust?.verified).toBe(0);
+    expect(historical?.trust?.flagged.length).toBe(0);
+  });
+
+  it('every trust verdict accounts for all audited events', () => {
+    for (const r of MOCK_RUNS) {
+      const t = r.trust;
+      if (!t) continue;
+      const tallied =
+        t.verified + t.verifiedHistorical + t.structural + t.noReceipt + t.errors + t.flagged.length;
+      expect(tallied).toBe(t.audited);
+    }
+  });
+
+  it('the dashboard exposes receipt coverage and DID-method breakdowns', () => {
+    expect(MOCK_DASHBOARD.receiptCoverage?.length).toBeGreaterThan(0);
+    for (const r of MOCK_DASHBOARD.receiptCoverage ?? []) {
+      expect(r.receipt_count).toBeLessThanOrEqual(r.publish_count);
+    }
+    const methods = new Set((MOCK_DASHBOARD.didMethods ?? []).map((m) => m.method));
+    expect(methods.has('did:web')).toBe(true);
+    expect(methods.has('did:key')).toBe(true);
+  });
+});

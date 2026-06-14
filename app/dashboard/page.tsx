@@ -8,6 +8,7 @@ import { KpiCard } from '@/components/dashboard/kpi-card';
 import { RecentRunsTable } from '@/components/dashboard/recent-runs-table';
 import { EventTicker } from '@/components/dashboard/event-ticker';
 import { RegistryHealthBar } from '@/components/dashboard/registry-health-bar';
+import { ReceiptCoverageBars, DidMethodBars } from '@/components/trust/coverage-bars';
 import dynamic from 'next/dynamic';
 import { LoadingPanel } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
@@ -97,6 +98,23 @@ export default function DashboardPage() {
           </CardBody>
         </Card>
       </div>
+
+      {(d.receiptCoverage || d.didMethods) && (
+        <div className="grid-2" style={{ marginTop: 12 }}>
+          <Card>
+            <CardHeader title="Receipt Coverage" sub="RFC-ACDP-0010 · receipts per publish" />
+            <CardBody>
+              <ReceiptCoverageBars coverage={d.receiptCoverage ?? []} />
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Producer DID Methods" sub="did:web vs did:key adoption" />
+            <CardBody>
+              <DidMethodBars methods={d.didMethods ?? []} />
+            </CardBody>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

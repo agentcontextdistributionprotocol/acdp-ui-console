@@ -30,6 +30,8 @@ function normalize(raw: Record<string, unknown>): CpContextEvent {
     version: raw.version as number | undefined,
     registryAuthority: String(raw.registryAuthority ?? raw.registry_authority ?? ''),
     scenarioId: (raw.scenarioId ?? raw.scenario_id) as string | undefined,
+    keyFingerprint: (raw.keyFingerprint ?? raw.key_fingerprint) as string | undefined,
+    receiptPresent: (raw.receiptPresent ?? raw.receipt_present) as boolean | undefined,
   };
 }
 

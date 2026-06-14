@@ -44,7 +44,18 @@ export function EventsTable({ events }: { events: CpContextEvent[] }) {
                 </span>
               </td>
               <td className="did">{formatAgentDid(ev.agentId) || '—'}</td>
-              <td className="did">{ev.ctxId ? formatCtxId(ev.ctxId) : '—'}</td>
+              <td className="did">
+                {ev.ctxId ? formatCtxId(ev.ctxId) : '—'}
+                {ev.receiptPresent && (
+                  <span
+                    className="chip ok"
+                    style={{ marginLeft: 6 }}
+                    title={ev.keyFingerprint ? `receipt · key ${ev.keyFingerprint}` : 'registry receipt present'}
+                  >
+                    receipt
+                  </span>
+                )}
+              </td>
               <td>{shortAuthority(ev.registryAuthority) || '—'}</td>
               <td className="did">{ev.runId ? shortId(ev.runId, 8, 4) : '—'}</td>
               <td style={{ color: 'var(--muted)' }}>{timeAgo(ev.eventTs)}</td>

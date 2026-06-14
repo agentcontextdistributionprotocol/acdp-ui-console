@@ -14,6 +14,7 @@ import {
   Settings,
   GitBranch,
   ShieldCheck,
+  BadgeCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
@@ -39,7 +40,7 @@ const NAV: NavGroup[] = [
   {
     section: 'Playground',
     items: [
-      { href: '/scenarios', label: 'Scenarios', icon: FlaskConical, badge: '20' },
+      { href: '/scenarios', label: 'Scenarios', icon: FlaskConical, badge: '25' },
       { href: '/runs', label: 'Runs', icon: Play },
     ],
   },
@@ -51,6 +52,7 @@ const NAV: NavGroup[] = [
       { href: '/lineage', label: 'Lineage', icon: GitBranch },
       { href: '/agents', label: 'Agents', icon: Users },
       { href: '/registries', label: 'Registries', icon: Database },
+      { href: '/trust', label: 'Trust', icon: BadgeCheck },
       { href: '/security', label: 'Security', icon: ShieldCheck },
     ],
   },

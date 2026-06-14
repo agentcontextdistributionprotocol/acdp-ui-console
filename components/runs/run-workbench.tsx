@@ -5,6 +5,7 @@ import { EventFeed } from './event-feed';
 import { LineageDag } from './lineage-dag-lazy';
 import { ContextInspector } from './context-inspector';
 import { RunSummary } from './run-summary';
+import { RunTrustPanel } from './run-trust-panel';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { useLiveRun } from '@/lib/hooks/use-live-run';
 import type { CpRun, LineageGraph } from '@/lib/types';
@@ -46,6 +47,7 @@ export function RunWorkbench({
   return (
     <>
       <RunSummary run={run} scenarioName={scenarioName} liveStatus={status} contextsCount={contextsCount} />
+      {run.trust && <RunTrustPanel trust={run.trust} />}
       <div className="workbench">
         <ErrorBoundary>
           <EventFeed events={events} status={status} onSelectCtx={setActiveCtx} />
