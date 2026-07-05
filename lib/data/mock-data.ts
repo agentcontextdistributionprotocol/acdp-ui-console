@@ -4,6 +4,7 @@
 // ══════════════════════════════════════════════════════════════════════
 
 import type {
+  CapabilityAuthority,
   CpContextEvent,
   CpDashboardOverview,
   CpRun,
@@ -304,7 +305,8 @@ const FANOUT_LINEAGE: LineageGraph = {
   nodes: [
     { ctx_id: `acdp://${AUTH_A}/src-100`, agent_id: DID_SOLO, title: 'Market sentiment source', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1 },
     { ctx_id: `acdp://${AUTH_A}/d-101`, agent_id: 'did:web:registry-a.local:agents:c1', title: 'Equities take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
-    { ctx_id: `acdp://${AUTH_A}/d-102`, agent_id: 'did:web:registry-a.local:agents:c2', title: 'FX take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
+    // Retracted after publication (RFC-ACDP-0013) — renders dashed/danger in the DAG.
+    { ctx_id: `acdp://${AUTH_A}/d-102`, agent_id: 'did:web:registry-a.local:agents:c2', title: 'FX take', context_type: 'analysis', registry_authority: AUTH_A, step: 2, status: 'retracted' },
     { ctx_id: `acdp://${AUTH_A}/d-103`, agent_id: 'did:web:registry-a.local:agents:c3', title: 'Commodities take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
   ],
   edges: [
@@ -512,6 +514,14 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
   { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/tenant-a-001`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
   { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_C}/attested-001`, agentId: DID_KEY, contextType: 'attestation', visibility: 'public', version: 1, registryAuthority: AUTH_C, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
+  // ── RFC-ACDP-0013 lifecycle events (ACDP 0.3) ─────────────────────────
+  // Registry-initiated hold + restore on the attested context (a pair).
+  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_C}/attested-001`, agentId: `did:web:${AUTH_C}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_C },
+  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_C}/attested-001`, agentId: `did:web:${AUTH_C}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_C },
+  // Producer-initiated retraction of the non-head cashflow v1.
+  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
+  // Retraction of the fan-out FX derivative (renders retracted in the run DAG).
+  { id: 'ev-11', eventType: 'context_retracted', eventTs: iso(3500), runId: 'run-fan-3', ctxId: `acdp://${AUTH_A}/d-102`, agentId: 'did:web:registry-a.local:agents:c2', contextType: 'analysis', version: 1, registryAuthority: AUTH_A, scenarioId: 's3_fanout' },
 ];
 
 // ── Dashboard overview ────────────────────────────────────────────────
@@ -582,7 +592,7 @@ export const MOCK_ENROLLMENTS: RegistryEnrollment[] = [
   },
 ];
 
-export const MOCK_CAPABILITIES: Record<'a' | 'b', RegistryCapabilities> = {
+export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities> = {
   a: {
     acdp_version: '0.1.0',
     registry_did: 'did:web:registry-a.playground.local',
@@ -598,6 +608,24 @@ export const MOCK_CAPABILITIES: Record<'a' | 'b', RegistryCapabilities> = {
     authority: AUTH_B,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
     profiles: ['acdp-consumer', 'acdp-federated'],
+    anonymous_public_reads: true,
+    limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
+  },
+  // The receipts registry advertises the full ACDP 0.3.0 trust-profile stack
+  // (RFC-ACDP-0011 head receipts, RFC-ACDP-0012 transparency log,
+  // RFC-ACDP-0013 lifecycle) on top of the 0.2.0 receipts profile.
+  c: {
+    acdp_version: '0.3.0',
+    registry_did: 'did:web:registry-c.playground.local',
+    authority: AUTH_C,
+    supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
+    profiles: [
+      'acdp-registry-core',
+      'acdp-registry-receipts',
+      'acdp-registry-head-receipts',
+      'acdp-registry-transparency-log',
+      'acdp-registry-lifecycle',
+    ],
     anonymous_public_reads: true,
     limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
   },
@@ -718,7 +746,26 @@ export const MOCK_CONTEXTS: FullContext[] = [
       ],
       data_period: { start: iso(86400 * 90), end: iso(272) },
     },
-    registry_state: { status: 'active' },
+    // Retracted by its producer after v2 shipped (RFC-ACDP-0013): a non-head
+    // version, so the lineage's "current" pointer (v2) is unaffected.
+    registry_state: {
+      status: 'retracted',
+      lifecycle_events: [
+        {
+          event_id: 'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+          ctx_id: `acdp://${AUTH_A}/2e78f01a-solo`,
+          event_type: 'retracted',
+          occurred_at: iso(3600),
+          actor: DID_SOLO,
+          reason: 'Reconciliation error: intercompany transfers were double-counted. Superseded by the revised v2 snapshot.',
+          signature: {
+            algorithm: 'ed25519',
+            key_id: `${DID_SOLO}#key-1`,
+            value: 'zLcEvtRetrA8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8o',
+          },
+        },
+      ],
+    },
   },
   {
     body: {
@@ -746,7 +793,39 @@ export const MOCK_CONTEXTS: FullContext[] = [
       supersedes: null,
       contributors: [DID_KEY],
     },
-    registry_state: { status: 'active' },
+    // Retracted-then-republished pair (RFC-ACDP-0013): the registry held the
+    // context pending review, then restored it — final status is active again.
+    registry_state: {
+      status: 'active',
+      lifecycle_events: [
+        {
+          event_id: 'b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
+          ctx_id: `acdp://${AUTH_C}/attested-001`,
+          event_type: 'retracted',
+          occurred_at: iso(110),
+          actor: `did:web:${AUTH_C}`,
+          reason: 'Held pending compliance review of the attested claims.',
+          signature: {
+            algorithm: 'ed25519',
+            key_id: `did:web:${AUTH_C}#receipt-key-1`,
+            value: 'zLcEvtHoldC8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8',
+          },
+        },
+        {
+          event_id: 'c3d4e5f6-7a8b-4c9d-a0e1-2b3c4d5e6f7a',
+          ctx_id: `acdp://${AUTH_C}/attested-001`,
+          event_type: 'republished',
+          occurred_at: iso(80),
+          actor: `did:web:${AUTH_C}`,
+          reason: 'Compliance review cleared; attestation restored.',
+          signature: {
+            algorithm: 'ed25519',
+            key_id: `did:web:${AUTH_C}#receipt-key-1`,
+            value: 'zLcEvtRepubD8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN',
+          },
+        },
+      ],
+    },
     registry_receipt: {
       registry_did: `did:web:${AUTH_C}`,
       ctx_id: `acdp://${AUTH_C}/attested-001`,
@@ -759,6 +838,49 @@ export const MOCK_CONTEXTS: FullContext[] = [
         algorithm: 'ed25519',
         key_id: `did:web:${AUTH_C}#receipt-key-1`,
         value: 'zRcptKeyB8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP',
+      },
+    },
+    // RFC-ACDP-0011 serve-time head attestation: this v1 IS the lineage head,
+    // so all bindings match the served body.
+    lineage_head_receipt: {
+      receipt_version: 'acdp-lhr/1',
+      registry_did: `did:web:${AUTH_C}`,
+      lineage_id: 'lin-attested-001',
+      head_ctx_id: `acdp://${AUTH_C}/attested-001`,
+      head_version: 1,
+      head_status: 'active',
+      as_of: iso(45),
+      signature: {
+        algorithm: 'ed25519',
+        key_id: `did:web:${AUTH_C}#receipt-key-1`,
+        value: 'zLhrKeyE8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oPq',
+      },
+    },
+    // RFC-ACDP-0012 inclusion proof: leaf 41 of the 54-leaf receipts log,
+    // proof and checkpoint agree on tree_size/log_id.
+    log_inclusion: {
+      log_id: `did:web:${AUTH_C}/log/receipts`,
+      leaf_index: 41,
+      tree_size: 54,
+      inclusion_path: [
+        'sha256:3a91c47bd025e86f3a91c47bd025e86f3a91c47bd025e86f3a91c47bd025e86f',
+        'sha256:7be24d90fa6c1e537be24d90fa6c1e537be24d90fa6c1e537be24d90fa6c1e53',
+        'sha256:c58f01a3d7492b6ec58f01a3d7492b6ec58f01a3d7492b6ec58f01a3d7492b6e',
+        'sha256:e1462fb98c05d37ae1462fb98c05d37ae1462fb98c05d37ae1462fb98c05d37a',
+        'sha256:0d73a5c4e982f61b0d73a5c4e982f61b0d73a5c4e982f61b0d73a5c4e982f61b',
+        'sha256:92b6e08fd41c375a92b6e08fd41c375a92b6e08fd41c375a92b6e08fd41c375a',
+      ],
+      log_checkpoint: {
+        checkpoint_version: 'acdp-log/1',
+        log_id: `did:web:${AUTH_C}/log/receipts`,
+        tree_size: 54,
+        root_hash: 'sha256:d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63',
+        timestamp: iso(45),
+        signature: {
+          algorithm: 'ed25519',
+          key_id: `did:web:${AUTH_C}#receipt-key-1`,
+          value: 'zCkptKeyF8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP',
+        },
       },
     },
   },
@@ -883,10 +1005,11 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 
 // ── SDK matrix (config page) ──────────────────────────────────────────
 export const MOCK_SDK_MATRIX = [
-  { component: 'acdp-rs library', version: '0.1.0', status: 'ok' },
-  { component: 'acdp-py binding', version: '0.1.0', status: 'ok' },
-  { component: 'acdp-node binding', version: '0.1.0', status: 'ok' },
-  { component: 'Registry (Rust/axum)', version: '0.1.0', status: 'ok' },
-  { component: 'Control Plane (NestJS)', version: '0.2.0', status: 'ok' },
-  { component: 'Playground (FastAPI)', version: '0.2.0', status: 'ok' },
+  { component: 'ACDP spec', version: '0.3.0', status: 'ok' },
+  { component: 'acdp-rs library', version: '0.5.0', status: 'ok' },
+  { component: 'acdp-py binding', version: '0.5.0', status: 'ok' },
+  { component: 'acdp-node binding', version: '0.5.0', status: 'ok' },
+  { component: 'Registry (Rust/axum)', version: '0.3.0', status: 'ok' },
+  { component: 'Control Plane (NestJS)', version: '0.3.0', status: 'ok' },
+  { component: 'Playground (FastAPI)', version: '0.3.0', status: 'ok' },
 ];
