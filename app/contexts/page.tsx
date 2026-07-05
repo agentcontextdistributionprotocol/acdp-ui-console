@@ -24,6 +24,13 @@ const REGISTRIES: { id: RegistryAuthority | 'both'; label: string }[] = [
 
 const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert'];
 
+// Registry-derived status facet (RFC-ACDP-0004 §4 + RFC-ACDP-0013 'retracted').
+const STATUSES: { value: string; label: string }[] = [
+  { value: '', label: 'All statuses' },
+  { value: 'active', label: 'active' },
+  { value: 'retracted', label: 'retracted' },
+];
+
 interface Criteria extends ContextSearchParams {
   authority: RegistryAuthority | 'both';
 }
@@ -98,6 +105,19 @@ export default function ContextsPage() {
           {TYPES.map((t) => (
             <option key={t} value={t}>
               {t}
+            </option>
+          ))}
+        </select>
+        <select
+          className="form-input"
+          style={{ width: 140 }}
+          value={form.status}
+          aria-label="Filter by status"
+          onChange={(e) => set('status', e.target.value)}
+        >
+          {STATUSES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
             </option>
           ))}
         </select>
