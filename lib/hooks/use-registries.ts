@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { listRegistries, getRegistryCapabilities } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import type { RegistryAuthority } from '@/lib/types';
+import type { CapabilityAuthority } from '@/lib/types';
 
 export function useRegistries() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
@@ -13,7 +13,7 @@ export function useRegistries() {
   });
 }
 
-export function useRegistryCapabilities(authority: RegistryAuthority) {
+export function useRegistryCapabilities(authority: CapabilityAuthority) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   return useQuery({
     queryKey: ['registry-capabilities', authority, demoMode],

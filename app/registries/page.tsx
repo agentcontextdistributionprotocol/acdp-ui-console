@@ -13,6 +13,9 @@ export default function RegistriesPage() {
   const { data, isLoading, error } = useRegistries();
   const capsA = useRegistryCapabilities('a');
   const capsB = useRegistryCapabilities('b');
+  // Registry C: the receipts / 0.3.0 trust-profile registry (demo-mode only;
+  // the live query fails fast and the card simply renders without capabilities).
+  const capsC = useRegistryCapabilities('c');
 
   return (
     <div className="page">
@@ -27,7 +30,7 @@ export default function RegistriesPage() {
             <RegistryCard
               key={reg.authority}
               registry={reg}
-              capabilities={i === 0 ? capsA.data : i === 1 ? capsB.data : undefined}
+              capabilities={i === 0 ? capsA.data : i === 1 ? capsB.data : i === 2 ? capsC.data : undefined}
             />
           ))}
         </div>

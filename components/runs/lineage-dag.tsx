@@ -22,12 +22,15 @@ interface NodeData extends Record<string, unknown> {
   authority: string;
   contextType: string;
   active: boolean;
+  /** Registry-derived status; 'retracted' gets a distinct visual (RFC-ACDP-0013). */
+  status?: string;
 }
 
 function LineageNodeCard({ data }: NodeProps) {
   const d = data as NodeData;
+  const retracted = d.status === 'retracted';
   return (
-    <div className={`dag-node${d.active ? ' active' : ''}`}>
+    <div className={`dag-node${d.active ? ' active' : ''}${retracted ? ' retracted' : ''}`}>
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <div className="dag-step">
         Step {d.step} · {shortAuthority(d.authority)}
@@ -35,6 +38,7 @@ function LineageNodeCard({ data }: NodeProps) {
       <div className="dag-title">{d.title}</div>
       <div className="dag-chips">
         <span className="chip">{d.contextType}</span>
+        {retracted && <span className="chip bad">⊘ retracted</span>}
       </div>
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
     </div>
@@ -72,6 +76,7 @@ function layout(graph: LineageGraph, activeCtx?: string): { nodes: Node[]; edges
           authority: n.registry_authority,
           contextType: n.context_type,
           active: n.ctx_id === activeCtx,
+          status: n.status,
         } satisfies NodeData,
       });
     });

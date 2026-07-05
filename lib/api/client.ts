@@ -28,6 +28,7 @@ import {
   MOCK_WEBHOOKS,
 } from '@/lib/data/mock-data';
 import type {
+  CapabilityAuthority,
   CpContextEvent,
   CpDashboardOverview,
   CpLineageDag,
@@ -179,6 +180,7 @@ export async function getCpRunLineage(runId: string, demoMode: boolean): Promise
         visibility: 'public',
         registryAuthority: n.registry_authority,
         step: n.step,
+        status: n.status ?? null,
       })),
       edges: g.edges.map((e) => ({ from: e.src, to: e.dst })),
     });
@@ -198,6 +200,7 @@ export async function getRunLineageGraph(runId: string, demoMode: boolean): Prom
       context_type: n.contextType ?? 'context',
       registry_authority: n.registryAuthority,
       step: n.step,
+      status: n.status ?? undefined,
     })),
     edges: dag.edges.map((e) => ({ src: e.from, dst: e.to })),
   };
@@ -405,6 +408,7 @@ export async function searchContexts(
     }
     if (search.visibility && search.visibility !== 'all')
       hits = hits.filter((h) => h.visibility === search.visibility);
+    if (search.status) hits = hits.filter((h) => h.status === search.status);
     if (search.type) hits = hits.filter((h) => h.type === search.type);
     if (search.agentId) hits = hits.filter((h) => h.agent_id?.includes(search.agentId!));
     // domain/tags live on the full body, not the search hit — look them up.
@@ -488,10 +492,12 @@ export async function getLineageCurrent(
 }
 
 export async function getRegistryCapabilities(
-  authority: RegistryAuthority,
+  authority: CapabilityAuthority,
   demoMode: boolean,
 ): Promise<RegistryCapabilities> {
   if (demoMode) return delay(MOCK_CAPABILITIES[authority]);
+  // Registry C (receipts / 0.3.0 trust profiles) is demo-only — no proxy route.
+  if (authority === 'c') throw new Error('registry-c is only available in demo mode');
   return fetchJson<RegistryCapabilities>(authToService(authority), '/.well-known/acdp.json');
 }
 

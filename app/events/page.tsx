@@ -15,7 +15,14 @@ import { useDebounced } from '@/lib/hooks/use-debounced';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { C } from '@/lib/colors';
 
-const EVENT_TYPES = ['All types', 'context_published', 'context_retrieved', 'search_executed'];
+const EVENT_TYPES = [
+  'All types',
+  'context_published',
+  'context_retrieved',
+  'context_retracted',
+  'context_republished',
+  'search_executed',
+];
 const PAGE = 50;
 
 export default function EventsPage() {

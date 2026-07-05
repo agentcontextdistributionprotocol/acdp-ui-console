@@ -25,6 +25,9 @@ const isTerminalRun = (status?: RunStatus) =>
 const CP_EVENT_TYPE: Record<string, StepEventType> = {
   context_published: 'acdp.publish',
   context_retrieved: 'acdp.retrieve',
+  // RFC-ACDP-0013 lifecycle events (ACDP 0.3).
+  context_retracted: 'acdp.retract',
+  context_republished: 'acdp.republish',
   search_executed: 'acdp.search',
 };
 

@@ -5,6 +5,33 @@ import { Badge } from '@/components/ui/badge';
 import { formatNumber, timeAgo } from '@/lib/utils/format';
 import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 
+/**
+ * Tooltip copy for known registry profiles (registries/profiles.md). The
+ * 0.3.0 trust profiles get an accent chip so they stand out in the list.
+ */
+const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
+  'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },
+  'acdp-registry-discovery': { title: 'Search / discovery endpoints (RFC-ACDP-0001 §9.1)' },
+  'acdp-registry-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },
+  'acdp-consumer': { title: 'Consumer deployment profile (RFC-ACDP-0001 §9.1)' },
+  'acdp-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },
+  'acdp-registry-receipts': {
+    title: 'Signed registry receipts at publish time (RFC-ACDP-0010, acdp 0.2.0)',
+  },
+  'acdp-registry-head-receipts': {
+    title: 'Lineage-head receipts: signed serve-time head attestations (RFC-ACDP-0011, acdp 0.3.0)',
+    accent: true,
+  },
+  'acdp-registry-transparency-log': {
+    title: 'Append-only transparency log with inclusion proofs (RFC-ACDP-0012, acdp 0.3.0)',
+    accent: true,
+  },
+  'acdp-registry-lifecycle': {
+    title: 'Signed lifecycle events: retraction / republication (RFC-ACDP-0013, acdp 0.3.0)',
+    accent: true,
+  },
+};
+
 export function RegistryCard({
   registry,
   capabilities,
@@ -48,7 +75,16 @@ export function RegistryCard({
             </div>
             <div className="metric-row">
               <span className="metric-name">Profiles</span>
-              <span style={{ color: 'var(--text)', fontSize: 11 }}>{capabilities.profiles.join(', ')}</span>
+              <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {capabilities.profiles.map((p) => {
+                  const info = PROFILE_INFO[p];
+                  return (
+                    <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>
+                      {p}
+                    </span>
+                  );
+                })}
+              </span>
             </div>
             <div className="metric-row">
               <span className="metric-name">Max payload</span>

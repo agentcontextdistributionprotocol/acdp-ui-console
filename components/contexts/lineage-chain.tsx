@@ -9,7 +9,9 @@ import type { FullContext } from '@/lib/types';
 
 /**
  * Vertical version chain for a lineage (oldest → newest). The highest-version
- * entry is marked "current"; each card opens the full context detail.
+ * non-retracted entry is marked "current" — a retracted version is never
+ * served as head (RFC-ACDP-0013 §8.3), so it can never render as the green
+ * "current" — and each card opens the full context detail.
  */
 export function LineageChain({
   chain,
@@ -18,13 +20,17 @@ export function LineageChain({
   chain: FullContext[];
   onOpen: (ctxId: string) => void;
 }) {
-  const currentVersion = chain.reduce((max, c) => Math.max(max, c.body.version), 0);
+  const currentVersion = chain.reduce(
+    (max, c) => (c.registry_state.status === 'retracted' ? max : Math.max(max, c.body.version)),
+    0,
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       {chain.map((ctx, i) => {
         const b = ctx.body;
-        const isCurrent = b.version === currentVersion;
+        const retracted = ctx.registry_state.status === 'retracted';
+        const isCurrent = !retracted && b.version === currentVersion;
         return (
           <div key={b.ctx_id}>
             <div
@@ -32,15 +38,17 @@ export function LineageChain({
               style={{
                 padding: '12px 14px',
                 cursor: 'pointer',
-                borderColor: isCurrent ? C.brand : C.border,
+                borderColor: isCurrent ? C.brand : retracted ? 'rgba(240, 93, 122, 0.35)' : C.border,
+                ...(retracted ? { opacity: 0.6, borderStyle: 'dashed' } : {}),
               }}
               {...pressable(() => onOpen(b.ctx_id), `Inspect version ${b.version} — ${b.title}`)}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span className={isCurrent ? 'chip ok' : 'chip'}>v{b.version}</span>
+                <span className={isCurrent ? 'chip ok' : retracted ? 'chip bad' : 'chip'}>v{b.version}</span>
                 <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0 }}>
                   {b.title}
                 </span>
+                {retracted && <span className="chip bad">⊘ retracted</span>}
                 {isCurrent && <span className="chip ok">current</span>}
               </div>
               <div className="did" style={{ fontSize: 10.5, marginTop: 6 }}>
