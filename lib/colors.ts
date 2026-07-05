@@ -24,6 +24,10 @@ export const C = {
 
 /** Map a StepEventType (or any prefix) to its accent colour. */
 export function eventTypeColor(type: string): string {
+  // Lifecycle transitions (RFC-ACDP-0013) — checked before publish/retrieve so
+  // 'context_republished' never falls into the publish bucket.
+  if (type.startsWith('acdp.retract') || type.includes('retracted')) return C.danger;
+  if (type.startsWith('acdp.republish') || type.includes('republished')) return C.warning;
   if (type.startsWith('acdp.publish')) return C.brand;
   if (type.startsWith('acdp.retrieve')) return C.info;
   if (type.startsWith('acdp.search')) return C.purple;
@@ -40,22 +44,46 @@ export function eventTypeColor(type: string): string {
   return C.faint;
 }
 
-/** Map a run status to a badge class suffix. */
+/** Map a run status — or an ACDP context status — to a badge class suffix. */
 export function statusBadgeClass(status: string | null | undefined): string {
   switch (status) {
     case 'complete':
     case 'completed':
+    case 'active':
       return 'badge-complete';
     case 'running':
     case 'starting':
+    case 'expired':
       return 'badge-running';
     case 'failed':
     case 'error':
       return 'badge-failed';
+    // Canonical retracted style (RFC-ACDP-0013): danger-leaning, distinct from
+    // 'failed' via the dashed border in .badge-retracted.
+    case 'retracted':
+      return 'badge-retracted';
     case 'cancelled':
+    case 'superseded':
       return 'badge-neutral';
     default:
       return 'badge-neutral';
+  }
+}
+
+/**
+ * Canonical chip class for an ACDP context status (open vocabulary — unknown
+ * values fall back to the neutral chip).
+ */
+export function statusChipClass(status: string | null | undefined): string {
+  switch (status) {
+    case 'active':
+      return 'chip ok';
+    case 'retracted':
+      return 'chip bad';
+    case 'expired':
+      return 'chip warn';
+    default:
+      return 'chip';
   }
 }
 

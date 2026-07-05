@@ -13,6 +13,11 @@ const STATUS_ICON: Record<string, string> = {
   failed: '✗',
   error: '✗',
   cancelled: '–',
+  // ACDP context statuses (RFC-ACDP-0004 §4; 'retracted' per RFC-ACDP-0013).
+  active: '●',
+  superseded: '↺',
+  expired: '◔',
+  retracted: '⊘',
 };
 
 export function StatusBadge({ status }: { status: string | null | undefined }) {

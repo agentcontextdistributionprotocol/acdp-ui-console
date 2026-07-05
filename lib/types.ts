@@ -24,6 +24,9 @@ export type StepEventType =
   | 'acdp.retrieve'
   | 'acdp.search'
   | 'acdp.verify'
+  // ACDP 0.3 lifecycle transitions (RFC-ACDP-0013).
+  | 'acdp.retract'
+  | 'acdp.republish'
   | 'auth.token'
   | 'auth.revoke'
   | 'policy.check'
@@ -70,6 +73,8 @@ export interface LineageNode {
   context_type: string;
   registry_authority: string;
   step: number;
+  /** ACDP 0.3: registry-derived status, when known ('retracted' renders distinctly). */
+  status?: string;
 }
 
 export interface LineageEdge {
@@ -179,6 +184,8 @@ export interface CpLineageDag {
     visibility: string | null;
     registryAuthority: string;
     step: number;
+    /** ACDP 0.3: registry-derived status, when the control plane knows it. */
+    status?: string | null;
   }>;
   edges: Array<{ from: string; to: string }>;
 }
@@ -292,6 +299,36 @@ export interface ContextBody {
 }
 
 /**
+ * Registry-derived context status (RFC-ACDP-0004 §4; 'retracted' added by
+ * RFC-ACDP-0013, acdp/0.3.0). The vocabulary is open — `(string & {})`
+ * preserves unknown future values without collapsing the union to `string`.
+ */
+export type ContextStatus = 'active' | 'superseded' | 'expired' | 'retracted' | (string & {});
+
+/**
+ * A signed, append-only lifecycle event recorded in
+ * `registry_state.lifecycle_events` (RFC-ACDP-0013, acdp/0.3.0).
+ * `event_type` is an open vocabulary; v1 defines 'retracted' and 'republished'.
+ */
+export interface LifecycleEvent {
+  event_id: string; // UUID minted by the actor
+  ctx_id: string; // must equal the carrying context's ctx_id
+  event_type: 'retracted' | 'republished' | (string & {});
+  occurred_at: string; // canonical ms-precision RFC 3339 UTC
+  actor: string; // DID: producer for producer-initiated, registry DID otherwise
+  reason?: string; // informational only
+  signature?: Signature; // REQUIRED on producer-initiated events
+}
+
+/** Mutable registry-side state served alongside the immutable body. */
+export interface RegistryState {
+  status: ContextStatus;
+  // ACDP 0.3: present when the registry runs the lifecycle profile and the
+  // context has recorded lifecycle transitions (RFC-ACDP-0013).
+  lifecycle_events?: LifecycleEvent[];
+}
+
+/**
  * Registry receipt (RFC-ACDP-0010) — the serving registry's signed attestation
  * that it accepted and stored a context. `key_fingerprint` records the producer's
  * publish-time signing key, enabling historical-key verification after rotation.
@@ -307,11 +344,56 @@ export interface RegistryReceipt {
   signature: Signature;
 }
 
+/**
+ * Lineage-head receipt (RFC-ACDP-0011, acdp/0.3.0) — a registry-signed
+ * attestation that, as of `as_of`, `head_ctx_id` was the current head of
+ * `lineage_id` with status `head_status` (never 'superseded'/'retracted').
+ */
+export interface LineageHeadReceipt {
+  receipt_version: 'acdp-lhr/1';
+  registry_did: string; // did:web:<serving authority>
+  lineage_id: string;
+  head_ctx_id: string;
+  head_version: number;
+  head_status: ContextStatus;
+  as_of: string; // registry response-time clock, ms-precision RFC 3339 UTC
+  signature: Signature;
+}
+
+/** Signed transparency-log checkpoint (RFC-ACDP-0012 §6). */
+export interface LogCheckpoint {
+  checkpoint_version: 'acdp-log/1';
+  log_id: string; // did:web:<authority>/log/<name>
+  tree_size: number;
+  root_hash: string; // 'sha256:…'
+  timestamp: string; // ms-precision RFC 3339 UTC
+  signature: Signature;
+}
+
+/**
+ * Transparency-log inclusion proof (RFC-ACDP-0012 §8.2, §9.1) — the RFC 6962
+ * audit path for `leaf_index` at `tree_size`, plus the signed checkpoint it
+ * verifies against. Carried as a top-level retrieval-envelope member (§10).
+ */
+export interface LogInclusion {
+  log_id: string; // must equal log_checkpoint.log_id
+  leaf_index: number; // 0-based, < tree_size
+  tree_size: number; // must equal log_checkpoint.tree_size
+  inclusion_path: string[]; // 'sha256:…' node digests, lowest level first
+  log_checkpoint: LogCheckpoint;
+  /** Optional convenience echo — verifiers must not trust it (§9.1 step 1). */
+  leaf?: Record<string, unknown>;
+}
+
 export interface FullContext {
   body: ContextBody;
-  registry_state: { status: string };
+  registry_state: RegistryState;
   // ACDP 0.2: present when the serving registry runs the receipts profile.
   registry_receipt?: RegistryReceipt | null;
+  // ACDP 0.3: present when the serving registry runs the head-receipts profile.
+  lineage_head_receipt?: LineageHeadReceipt | null;
+  // ACDP 0.3: present when the serving registry runs the transparency-log profile.
+  log_inclusion?: LogInclusion | null;
 }
 
 /**
@@ -330,7 +412,7 @@ export interface SearchHit {
   title: string;
   type: string;
   created_at: string;
-  status: string;
+  status: ContextStatus;
   summary?: string;
   domain?: string;
   visibility?: string;
@@ -392,6 +474,13 @@ export interface JwkSet {
 
 // ── Misc ──────────────────────────────────────────────────────────────
 export type RegistryAuthority = 'a' | 'b';
+
+/**
+ * Registries the console can ask for capabilities. Registry C (the receipts /
+ * 0.3.0 trust-profile registry) exists only in demo mode — it has no proxy
+ * route, so live-mode capability queries for it fail fast.
+ */
+export type CapabilityAuthority = RegistryAuthority | 'c';
 
 export interface HealthResult {
   ok: boolean;
