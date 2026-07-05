@@ -78,9 +78,20 @@ export function useGlobalEvents(enabled: boolean) {
       }
     };
     es.onmessage = handle;
-    ['context_published', 'context_retrieved', 'search_executed'].forEach((t) =>
-      es.addEventListener(t, handle as EventListener),
-    );
+    // Named SSE events relayed by the control plane. Wire names are the
+    // registry webhook body's snake_case `type` (serde `rename_all =
+    // "snake_case"` on WebhookEvent), forwarded verbatim as the SSE `event:`
+    // line — the dotted `context.retracted` form only ever appears in the
+    // X-ACDP-Event HTTP header, never on the SSE stream.
+    // `context_retracted` / `context_republished` are the RFC-ACDP-0013
+    // lifecycle events (ACDP 0.3).
+    [
+      'context_published',
+      'context_retrieved',
+      'context_retracted',
+      'context_republished',
+      'search_executed',
+    ].forEach((t) => es.addEventListener(t, handle as EventListener));
     es.onerror = () => setLive(false);
 
     return () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Boxes, ArrowDownToLine, Search } from 'lucide-react';
+import { Boxes, ArrowDownToLine, Search, Ban, RotateCcw } from 'lucide-react';
 import { eventTypeColor } from '@/lib/colors';
 import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { timeAgo } from '@/lib/utils/format';
@@ -8,6 +8,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import type { CpContextEvent } from '@/lib/types';
 
 function iconFor(eventType: string) {
+  if (eventType.includes('retract')) return <Ban size={13} />;
+  if (eventType.includes('republish')) return <RotateCcw size={13} />;
   if (eventType.includes('retriev')) return <ArrowDownToLine size={13} />;
   if (eventType.includes('search')) return <Search size={13} />;
   return <Boxes size={13} />;
@@ -15,6 +17,9 @@ function iconFor(eventType: string) {
 
 /** Map a CP event type to a step-event-style colour key. */
 function colorKey(eventType: string): string {
+  // Lifecycle events first: 'context_republished' also contains 'publish'.
+  if (eventType.includes('retract')) return 'acdp.retract';
+  if (eventType.includes('republish')) return 'acdp.republish';
   if (eventType.includes('publish')) return 'acdp.publish';
   if (eventType.includes('retriev')) return 'acdp.retrieve';
   if (eventType.includes('search')) return 'acdp.search';

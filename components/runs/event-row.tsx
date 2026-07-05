@@ -15,6 +15,8 @@ import {
   FileText,
   Webhook,
   StickyNote,
+  Ban,
+  RotateCcw,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { eventTypeColor } from '@/lib/colors';
@@ -30,6 +32,8 @@ const ICONS: Record<string, LucideIcon> = {
   'acdp.retrieve': ArrowDownToLine,
   'acdp.search': Search,
   'acdp.verify': ShieldCheck,
+  'acdp.retract': Ban,
+  'acdp.republish': RotateCcw,
   'auth.token': KeyRound,
   'auth.revoke': KeyRound,
   'policy.check': ShieldCheck,

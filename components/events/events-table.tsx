@@ -9,6 +9,9 @@ import { pressable } from '@/lib/utils/a11y';
 import type { CpContextEvent } from '@/lib/types';
 
 function colorKey(eventType: string): string {
+  // Lifecycle events first: 'context_republished' also contains 'publish'.
+  if (eventType.includes('retract')) return 'acdp.retract';
+  if (eventType.includes('republish')) return 'acdp.republish';
   if (eventType.includes('publish')) return 'acdp.publish';
   if (eventType.includes('retriev')) return 'acdp.retrieve';
   if (eventType.includes('search')) return 'acdp.search';
