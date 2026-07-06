@@ -1005,11 +1005,11 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 
 // ── SDK matrix (config page) ──────────────────────────────────────────
 export const MOCK_SDK_MATRIX = [
-  { component: 'ACDP spec', version: '0.3.0', status: 'ok' },
-  { component: 'acdp-rs library', version: '0.5.0', status: 'ok' },
-  { component: 'acdp-py binding', version: '0.5.0', status: 'ok' },
-  { component: 'acdp-node binding', version: '0.5.0', status: 'ok' },
-  { component: 'Registry (Rust/axum)', version: '0.3.0', status: 'ok' },
-  { component: 'Control Plane (NestJS)', version: '0.3.0', status: 'ok' },
-  { component: 'Playground (FastAPI)', version: '0.3.0', status: 'ok' },
+  { component: 'ACDP spec', version: '0.3.0 Final / 0.4.0 Draft', status: 'ok' },
+  { component: 'acdp-rs library', version: '0.5.3', status: 'ok' },
+  { component: 'acdp-py binding', version: '0.7.0', status: 'ok' },
+  { component: 'acdp-node binding', version: '0.7.0', status: 'ok' },
+  { component: 'Registry (Rust/axum)', version: '0.3.0 + 0.4.0 witness agg', status: 'ok' },
+  { component: 'Control Plane (NestJS)', version: '0.4.0 witness', status: 'ok' },
+  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S31)', status: 'ok' },
 ];
