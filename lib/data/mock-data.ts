@@ -23,6 +23,9 @@ import type {
   StepEvent,
   Webhook,
 } from '@/lib/types';
+import type { LineageHeadReceipt, LogInclusion, RegistryReceipt } from '@/lib/types';
+import { DID_KEY_PRODUCER, LIN_ATTESTED, MOCK_CRYPTO } from '@/lib/data/mock-crypto';
+export { MOCK_DID_DOCS } from '@/lib/data/mock-crypto';
 
 const now = Date.now();
 function iso(secondsAgo: number): string {
@@ -39,7 +42,7 @@ const AUTH_C = 'registry-c.playground.local'; // ACDP 0.2 receipts-profile regis
 const DID_A = 'did:web:registry-a.local:agents:cross-a';
 const DID_B = 'did:web:registry-b.local:agents:cross-b';
 const DID_SOLO = 'did:web:registry-a.local:agents:solo';
-const DID_KEY = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH'; // ephemeral agent
+const DID_KEY = DID_KEY_PRODUCER; // ephemeral did:key agent (real key, minted in mock-crypto)
 
 // ── Scenarios (mirrors playground catalog, S1–S20) ────────────────────
 export const MOCK_SCENARIOS: ScenarioDef[] = [
@@ -632,6 +635,11 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
 };
 
 // ── Contexts (search + full bodies) ───────────────────────────────────
+// The crypto-bearing fields (content_hash, producer/registry/witness
+// signatures, receipts, transparency-log proofs) are REAL — minted and
+// self-verified in scripts/gen-mock-crypto.mjs and imported from mock-crypto.
+// The identity fields excluded from the §5.7 hash preimage (ctx_id, lineage_id,
+// origin_registry, created_at) stay here so the demo dataset reads naturally.
 export const MOCK_CONTEXTS: FullContext[] = [
   {
     body: {
@@ -639,49 +647,13 @@ export const MOCK_CONTEXTS: FullContext[] = [
       lineage_id: 'lin-arctic-001',
       origin_registry: AUTH_A,
       created_at: iso(16),
-      content_hash: 'sha256:f170150d8c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8',
-      version: 1,
-      agent_id: DID_A,
-      title: 'Cross-registry source — Arctic shipping routes',
-      type: 'data_snapshot',
-      visibility: 'public',
-      derived_from: [],
-      summary: 'Geopolitical and logistical assessment of emerging Arctic shipping corridors.',
-      description:
-        'Composite snapshot fusing AIS vessel traffic, ice-coverage telemetry, and port throughput for the 2024 navigation season.',
-      tags: ['geopolitics', 'logistics'],
-      domain: 'geopolitics',
-      acdp_version: '0.1.0',
-      signature: {
-        algorithm: 'ed25519',
-        key_id: `${DID_A}#key-1`,
-        value: 'z3MqA8m1c0Vd7xkR2pYbnLwQf6sТ4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP9qR0',
-      },
-      supersedes: null,
-      contributors: [DID_A],
-      data_refs: [
-        { type: 'data_snapshot', location: 's3://acdp-demo/arctic/ais-2024.parquet', encoding: 'application/parquet' },
-      ],
-      data_period: { start: iso(86400 * 120), end: iso(16) },
-      expires_at: iso(-86400 * 30),
-      schema_uri: 'https://schemas.acdp.dev/data_snapshot/v1.json',
+      ...MOCK_CRYPTO.arcticSource.hashed,
+      content_hash: MOCK_CRYPTO.arcticSource.content_hash,
+      signature: MOCK_CRYPTO.arcticSource.signature,
     },
     registry_state: { status: 'active' },
-    // RFC-ACDP-0010 receipt — bindings all match the served body (clean verify).
-    registry_receipt: {
-      registry_did: `did:web:${AUTH_C}`,
-      ctx_id: LIVE_LINEAGE.nodes[0].ctx_id,
-      lineage_id: 'lin-arctic-001',
-      origin_registry: AUTH_A,
-      created_at: iso(16),
-      content_hash: 'sha256:f170150d8c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8',
-      key_fingerprint: 'sha256:1f4a90c2e7b3d5089a6c4e21f7b0d9c8a3e5f6071b2c4d8e9f0a1b2c3d4e5f6a7',
-      signature: {
-        algorithm: 'ed25519',
-        key_id: `did:web:${AUTH_C}#receipt-key-1`,
-        value: 'zRcptA8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP9qR0',
-      },
-    },
+    // RFC-ACDP-0010 receipt — real registry-a signature over the served body hash.
+    registry_receipt: MOCK_CRYPTO.arcticSource.registry_receipt as RegistryReceipt,
   },
   {
     body: {
@@ -689,30 +661,9 @@ export const MOCK_CONTEXTS: FullContext[] = [
       lineage_id: 'lin-arctic-002',
       origin_registry: AUTH_B,
       created_at: iso(3),
-      content_hash: 'sha256:9c11a7f2e1d2b4a3c9e8f001a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1',
-      version: 1,
-      agent_id: DID_B,
-      title: 'Cross-registry derivative — Arctic investment analysis',
-      type: 'analysis',
-      visibility: 'public',
-      derived_from: [LIVE_LINEAGE.nodes[0].ctx_id],
-      summary: 'Investment implications derived from the Arctic shipping snapshot.',
-      description: 'Risk-weighted investment thesis across shipping, insurance, and port-infrastructure equities.',
-      tags: ['investment', 'analysis'],
-      domain: 'finance',
-      acdp_version: '0.1.0',
-      signature: {
-        algorithm: 'ecdsa-p256',
-        key_id: `${DID_B}#key-2`,
-        value: 'zP256bQc1dWe8ylS3qZcoMxRg7tU5vK0iH1fY2bC3dE4fG5hI6jK7lM8nO9pQ0rS1',
-      },
-      supersedes: null,
-      contributors: [DID_B, DID_A],
-      audience: [DID_A],
-      data_refs: [
-        { type: 'report', location: 'https://reports.acdp-demo/arctic-investment.pdf', encoding: 'application/pdf' },
-      ],
-      schema_uri: 'https://schemas.acdp.dev/analysis/v1.json',
+      ...MOCK_CRYPTO.arcticDeriv.hashed,
+      content_hash: MOCK_CRYPTO.arcticDeriv.content_hash,
+      signature: MOCK_CRYPTO.arcticDeriv.signature,
     },
     registry_state: { status: 'active' },
   },
@@ -722,29 +673,9 @@ export const MOCK_CONTEXTS: FullContext[] = [
       lineage_id: 'lin-cashflow-001',
       origin_registry: AUTH_A,
       created_at: iso(272),
-      content_hash: 'sha256:2e78f01abc34d56e78f90a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d',
-      version: 1,
-      agent_id: DID_SOLO,
-      title: 'Quarterly cash flow snapshot',
-      type: 'data_snapshot',
-      visibility: 'public',
-      derived_from: [],
-      summary: 'Snapshot of quarterly operating cash flow figures.',
-      description: 'Operating, investing, and financing cash flows for the trailing quarter.',
-      tags: ['finance'],
-      domain: 'finance',
-      acdp_version: '0.1.0',
-      signature: {
-        algorithm: 'ed25519',
-        key_id: `${DID_SOLO}#key-1`,
-        value: 'zCa5hF1ow2sN3apShOt4qWeRtYuIoP5aSdFgHjKlZxCvBnM6qWeRtYuIoP7aSdFg',
-      },
-      supersedes: null,
-      contributors: [DID_SOLO],
-      data_refs: [
-        { type: 'data_snapshot', location: 's3://acdp-demo/finance/cashflow-q.json', encoding: 'application/json' },
-      ],
-      data_period: { start: iso(86400 * 90), end: iso(272) },
+      ...MOCK_CRYPTO.cashV1.hashed,
+      content_hash: MOCK_CRYPTO.cashV1.content_hash,
+      signature: MOCK_CRYPTO.cashV1.signature,
     },
     // Retracted by its producer after v2 shipped (RFC-ACDP-0013): a non-head
     // version, so the lineage's "current" pointer (v2) is unaffected.
@@ -770,28 +701,12 @@ export const MOCK_CONTEXTS: FullContext[] = [
   {
     body: {
       ctx_id: `acdp://${AUTH_C}/attested-001`,
-      lineage_id: 'lin-attested-001',
+      lineage_id: LIN_ATTESTED,
       origin_registry: AUTH_C,
       created_at: iso(140),
-      content_hash: 'sha256:bd61f88a4c70e2139f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
-      version: 1,
-      agent_id: DID_KEY,
-      title: 'Attested disclosure — did:key ephemeral agent',
-      type: 'attestation',
-      visibility: 'public',
-      derived_from: [],
-      summary: 'Offline-verifiable disclosure published by an ephemeral did:key agent to the receipts registry.',
-      description: 'Demonstrates the RFC-ACDP-0010 receipts profile: the producer key is embedded in the did:key identifier and pinned by the registry receipt.',
-      tags: ['attestation', 'did:key'],
-      domain: 'compliance',
-      acdp_version: '0.2.0',
-      signature: {
-        algorithm: 'ed25519',
-        key_id: `${DID_KEY}#key-1`,
-        value: 'zDidKeyA8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP9',
-      },
-      supersedes: null,
-      contributors: [DID_KEY],
+      ...MOCK_CRYPTO.attested.hashed,
+      content_hash: MOCK_CRYPTO.attested.content_hash,
+      signature: MOCK_CRYPTO.attested.signature,
     },
     // Retracted-then-republished pair (RFC-ACDP-0013): the registry held the
     // context pending review, then restored it — final status is active again.
@@ -826,103 +741,11 @@ export const MOCK_CONTEXTS: FullContext[] = [
         },
       ],
     },
-    registry_receipt: {
-      registry_did: `did:web:${AUTH_C}`,
-      ctx_id: `acdp://${AUTH_C}/attested-001`,
-      lineage_id: 'lin-attested-001',
-      origin_registry: AUTH_C,
-      created_at: iso(140),
-      content_hash: 'sha256:bd61f88a4c70e2139f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
-      key_fingerprint: 'sha256:bd61f88a4c70e2139f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3',
-      signature: {
-        algorithm: 'ed25519',
-        key_id: `did:web:${AUTH_C}#receipt-key-1`,
-        value: 'zRcptKeyB8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP',
-      },
-    },
-    // RFC-ACDP-0011 serve-time head attestation: this v1 IS the lineage head,
-    // so all bindings match the served body.
-    lineage_head_receipt: {
-      receipt_version: 'acdp-lhr/1',
-      registry_did: `did:web:${AUTH_C}`,
-      lineage_id: 'lin-attested-001',
-      head_ctx_id: `acdp://${AUTH_C}/attested-001`,
-      head_version: 1,
-      head_status: 'active',
-      as_of: iso(45),
-      signature: {
-        algorithm: 'ed25519',
-        key_id: `did:web:${AUTH_C}#receipt-key-1`,
-        value: 'zLhrKeyE8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oPq',
-      },
-    },
-    // RFC-ACDP-0012 inclusion proof: leaf 41 of the 54-leaf receipts log,
-    // proof and checkpoint agree on tree_size/log_id.
-    log_inclusion: {
-      log_id: `did:web:${AUTH_C}/log/receipts`,
-      leaf_index: 41,
-      tree_size: 54,
-      inclusion_path: [
-        'sha256:3a91c47bd025e86f3a91c47bd025e86f3a91c47bd025e86f3a91c47bd025e86f',
-        'sha256:7be24d90fa6c1e537be24d90fa6c1e537be24d90fa6c1e537be24d90fa6c1e53',
-        'sha256:c58f01a3d7492b6ec58f01a3d7492b6ec58f01a3d7492b6ec58f01a3d7492b6e',
-        'sha256:e1462fb98c05d37ae1462fb98c05d37ae1462fb98c05d37ae1462fb98c05d37a',
-        'sha256:0d73a5c4e982f61b0d73a5c4e982f61b0d73a5c4e982f61b0d73a5c4e982f61b',
-        'sha256:92b6e08fd41c375a92b6e08fd41c375a92b6e08fd41c375a92b6e08fd41c375a',
-      ],
-      log_checkpoint: {
-        checkpoint_version: 'acdp-log/1',
-        log_id: `did:web:${AUTH_C}/log/receipts`,
-        tree_size: 54,
-        root_hash: 'sha256:d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63',
-        timestamp: iso(45),
-        signature: {
-          algorithm: 'ed25519',
-          key_id: `did:web:${AUTH_C}#receipt-key-1`,
-          value: 'zCkptKeyF8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP',
-        },
-      },
-      // RFC-ACDP-0015 §6.1: two independent witnesses cosigned this exact
-      // checkpoint tuple (log_id / tree_size / root_hash copied verbatim), so
-      // the surface renders "2-witnessed" with all bindings green. Each witness
-      // uses its OWN DID + key (a witness is not a registry) and its own
-      // witness-clock observation time — a sibling of log_checkpoint, never
-      // inside the closed, signed checkpoint.
-      witness_signatures: [
-        {
-          cosignature_version: 'acdp-cosig/1',
-          witness_id: 'did:web:witness-alpha.trust.example',
-          witnessed_checkpoint: {
-            log_id: `did:web:${AUTH_C}/log/receipts`,
-            tree_size: 54,
-            root_hash: 'sha256:d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63',
-            timestamp: iso(45),
-          },
-          witnessed_at: iso(30),
-          signature: {
-            algorithm: 'ed25519',
-            key_id: 'did:web:witness-alpha.trust.example#cosig-key-1',
-            value: 'zWitAlpha7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oPqRsTuVwXy',
-          },
-        },
-        {
-          cosignature_version: 'acdp-cosig/1',
-          witness_id: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
-          witnessed_checkpoint: {
-            log_id: `did:web:${AUTH_C}/log/receipts`,
-            tree_size: 54,
-            root_hash: 'sha256:d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63',
-            timestamp: iso(45),
-          },
-          witnessed_at: iso(75),
-          signature: {
-            algorithm: 'ed25519',
-            key_id: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
-            value: 'zWitBeta9c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oPqRsTu',
-          },
-        },
-      ],
-    },
+    // Real RFC-ACDP-0010 / 0011 / 0012 / 0015 material (registry-c signatures,
+    // real Merkle inclusion proof, two real witness cosignatures).
+    registry_receipt: MOCK_CRYPTO.attested.registry_receipt as RegistryReceipt,
+    lineage_head_receipt: MOCK_CRYPTO.attested.lineage_head_receipt as LineageHeadReceipt,
+    log_inclusion: MOCK_CRYPTO.attested.log_inclusion as unknown as LogInclusion,
   },
 ];
 
@@ -932,14 +755,13 @@ export const MOCK_CONTEXTS: FullContext[] = [
 const CASHFLOW_V1 = MOCK_CONTEXTS[2];
 const CASHFLOW_V2: FullContext = {
   body: {
-    ...CASHFLOW_V1.body,
     ctx_id: `acdp://${AUTH_A}/2e78f01a-solo-v2`,
-    version: 2,
-    supersedes: CASHFLOW_V1.body.ctx_id,
+    lineage_id: CASHFLOW_V1.body.lineage_id,
+    origin_registry: AUTH_A,
     created_at: iso(86400),
-    title: 'Quarterly cash flow snapshot (revised)',
-    summary: 'Revised quarterly operating cash flow figures after reconciliation.',
-    content_hash: 'sha256:bb22c8a3f2e1d4b5a6c7e8f901a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0',
+    ...MOCK_CRYPTO.cashV2.hashed,
+    content_hash: MOCK_CRYPTO.cashV2.content_hash,
+    signature: MOCK_CRYPTO.cashV2.signature,
   },
   registry_state: { status: 'active' },
 };
