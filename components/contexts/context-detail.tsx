@@ -21,6 +21,51 @@ import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { clockTime, timeAgo, shortId } from '@/lib/utils/format';
 import { C, statusChipClass } from '@/lib/colors';
 import type { FullContext, LifecycleEvent } from '@/lib/types';
+import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { MOCK_DID_DOCS } from '@/lib/data/mock-data';
+import { useContextVerdicts } from '@/lib/verify/use-verdicts';
+import type { Verdict } from '@/lib/verify/verify';
+
+/**
+ * Client-side verification verdict chip. Driven by the wasm verifier — a green
+ * chip means the browser recomputed the hash / checked the signature itself.
+ * `unavailable` ("material only") is honest about a missing signer key/DID doc
+ * and is NEVER shown as a pass.
+ */
+function VerdictChip({ verdict, ready, label }: { verdict?: Verdict; ready: boolean; label?: string }) {
+  if (!ready || !verdict) {
+    return (
+      <span className="chip" title="Running client-side verification…">
+        {label ? `${label} · ` : ''}verifying…
+      </span>
+    );
+  }
+  const prefix = label ? `${label} · ` : '';
+  if (verdict.status === 'verified')
+    return (
+      <span className="chip ok" title={verdict.detail}>
+        ✓ {prefix}verified
+      </span>
+    );
+  if (verdict.status === 'failed')
+    return (
+      <span className="chip bad" title={verdict.detail}>
+        ✗ {prefix}verification failed
+      </span>
+    );
+  return (
+    <span className="chip warn" title={verdict.detail}>
+      {prefix}material only
+    </span>
+  );
+}
+
+/** Small caption echoing the verdict's human-readable detail. */
+function VerdictCaption({ verdict, ready }: { verdict?: Verdict; ready: boolean }) {
+  const text = !ready || !verdict ? 'Verifying client-side…' : verdict.detail;
+  const color = !ready || !verdict ? C.faint : verdict.status === 'failed' ? C.danger : C.faint;
+  return <div style={{ fontSize: 10, color, marginTop: 2 }}>{text}</div>;
+}
 
 /** Latest lifecycle event of a given type (array order is authoritative). */
 function latestEvent(events: LifecycleEvent[] | undefined, type: string): LifecycleEvent | undefined {
@@ -94,13 +139,22 @@ function Group({
  * lifecycle, classification, and data references — with a collapsible raw
  * JSON fallback. Reused by the contexts modal and the run-detail inspector.
  *
- * Note: the "signed" badge reflects the presence of a producer signature in
- * the body; it is NOT a client-side cryptographic verification.
+ * The trust surfaces (integrity, receipt, lineage-head receipt, transparency
+ * log, witness cosignatures) carry REAL client-side cryptographic verdicts,
+ * computed in-browser by the acdp-wasm verifier via `useContextVerdicts`.
  */
 export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; compact?: boolean }) {
   const [rawOpen, setRawOpen] = useState(false);
   const b = ctx.body;
   const fontSize = compact ? 10.5 : 11.5;
+
+  // In demo mode the console supplies the mock did:web DID documents so the
+  // did:web-signed surfaces can be verified offline; did:key surfaces verify
+  // with no documents at all. In live mode no did:web docs are on hand, so
+  // those surfaces honestly read "material only" (did:key still verifies).
+  const demoMode = usePreferencesStore((s) => s.demoMode);
+  const didDocs = demoMode ? MOCK_DID_DOCS : undefined;
+  const verdicts = useContextVerdicts(ctx, didDocs);
 
   const expired = b.expires_at ? new Date(b.expires_at).getTime() < Date.now() : false;
 
@@ -190,8 +244,9 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {/* Integrity / signature */}
       <Group icon={ShieldCheck} title="Integrity">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+          <VerdictChip verdict={verdicts.contentHash} ready={verdicts.ready} label="content_hash" />
           {b.signature ? (
-            <span className="chip ok">signed · {b.signature.algorithm}</span>
+            <VerdictChip verdict={verdicts.producerSignature} ready={verdicts.ready} label={`sig ${b.signature.algorithm}`} />
           ) : (
             <span className="chip">unsigned</span>
           )}
@@ -222,6 +277,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {ctx.registry_receipt && (
         <Group icon={BadgeCheck} title="Registry receipt">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+            <VerdictChip verdict={verdicts.registryReceipt} ready={verdicts.ready} />
             <BindingChip label="ctx" ok={ctx.registry_receipt.ctx_id === b.ctx_id} />
             <BindingChip label="lineage" ok={ctx.registry_receipt.lineage_id === b.lineage_id} />
             <BindingChip label="origin" ok={ctx.registry_receipt.origin_registry === b.origin_registry} />
@@ -244,9 +300,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(ctx.registry_receipt.signature.value, 16, 8)}
             </span>
           </Field>
-          <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
-            Structural field bindings — not a client-side cryptographic verification.
-          </div>
+          <VerdictCaption verdict={verdicts.registryReceipt} ready={verdicts.ready} />
         </Group>
       )}
 
@@ -254,6 +308,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {lhr && (
         <Group icon={Stamp} title="Lineage-head receipt">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+            <VerdictChip verdict={verdicts.lineageHeadReceipt} ready={verdicts.ready} />
             <BindingChip label="lineage" ok={lhr.lineage_id === b.lineage_id} />
             <BindingChip label="head = this ctx" ok={lhr.head_ctx_id === b.ctx_id} />
             <BindingChip label="head version" ok={lhr.head_version === b.version} />
@@ -284,15 +339,16 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(lhr.signature.value, 16, 8)}
             </span>
           </Field>
-          <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
-            Structural field bindings — not a client-side cryptographic verification.
-          </div>
+          <VerdictCaption verdict={verdicts.lineageHeadReceipt} ready={verdicts.ready} />
         </Group>
       )}
 
       {/* Transparency log (RFC-ACDP-0012) */}
       {inclusion && (
         <Group icon={ScrollText} title="Transparency log">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+            <VerdictChip verdict={verdicts.transparencyLog} ready={verdicts.ready} />
+          </div>
           <Field label="log">
             <span className="did" style={{ fontSize: 10.5 }}>
               {inclusion.log_id}
@@ -326,9 +382,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(inclusion.log_checkpoint.signature.value, 16, 8)}
             </span>
           </Field>
-          <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
-            Proof material as served — not a client-side cryptographic verification.
-          </div>
+          <VerdictCaption verdict={verdicts.transparencyLog} ready={verdicts.ready} />
         </Group>
       )}
 
@@ -336,12 +390,18 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {inclusion && witnesses.length > 0 && (
         <Group icon={Eye} title="Witness cosignatures">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-            <span
-              className="chip ok"
-              title="Distinct independent witnesses that cosigned this checkpoint (RFC-ACDP-0015 §8)."
-            >
-              {distinctWitnessCount}-witnessed
-            </span>
+            {verdicts.ready && verdicts.witnessQuorum ? (
+              <VerdictChip
+                verdict={{
+                  ...verdicts.witnessQuorum,
+                  detail: verdicts.witnessQuorum.detail,
+                }}
+                ready={verdicts.ready}
+                label={`${verdicts.witnessQuorum.witnessedCount}-witnessed`}
+              />
+            ) : (
+              <VerdictChip verdict={undefined} ready={false} label={`${distinctWitnessCount}-witnessed`} />
+            )}
             <BindingChip label="log" ok={witnessesBindLog} />
             <BindingChip label="tree size" ok={witnessesBindSize} />
             <BindingChip label="root hash" ok={witnessesBindRoot} />
@@ -378,9 +438,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               </div>
             );
           })}
-          <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
-            Proof material as served — not a client-side cryptographic verification.
-          </div>
+          <VerdictCaption verdict={verdicts.witnessQuorum} ready={verdicts.ready} />
         </Group>
       )}
 
