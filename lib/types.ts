@@ -371,6 +371,38 @@ export interface LogCheckpoint {
 }
 
 /**
+ * The identity-bearing subset of an RFC-ACDP-0012 §6 checkpoint that a witness
+ * observed — {log_id, tree_size, root_hash, timestamp}, copied verbatim from the
+ * verified checkpoint (RFC-ACDP-0015 §4; acdp-log-cosignature.schema.json). Closed
+ * schema: the registry's own checkpoint_version / signature are deliberately NOT
+ * restated (the consumer verifies the checkpoint signature independently). The
+ * `timestamp` is the registry-CLAIMED checkpoint time — the witness does not vouch
+ * for it (`witnessed_at` is what the witness attests).
+ */
+export interface WitnessedCheckpoint {
+  log_id: string; // did:web:<authority>/log/<name>
+  tree_size: number;
+  root_hash: string; // 'sha256:…'
+  timestamp: string; // registry-claimed checkpoint time, ms-precision RFC 3339 UTC
+}
+
+/**
+ * A transparency-log witness cosignature (RFC-ACDP-0015, acdp/0.4.0;
+ * acdp-log-cosignature.schema.json) — an independent witness's signed observation
+ * that it saw `witnessed_checkpoint`, verified it, and cosigned it at `witnessed_at`
+ * with the witness's OWN DID + key (a witness is not a registry — no publish
+ * surface; `signature.key_id` is a DID URL under `witness_id`). Closed, fully
+ * signed schema. The N-witnessed count (§8) is over DISTINCT `witness_id` values.
+ */
+export interface WitnessCosignature {
+  cosignature_version: 'acdp-cosig/1';
+  witness_id: string; // did:web:… | did:key:… (the witness's own DID)
+  witnessed_checkpoint: WitnessedCheckpoint;
+  witnessed_at: string; // witness-clock observation time, ms-precision RFC 3339 UTC
+  signature: Signature; // keyed by the witness's own assertionMethod key
+}
+
+/**
  * Transparency-log inclusion proof (RFC-ACDP-0012 §8.2, §9.1) — the RFC 6962
  * audit path for `leaf_index` at `tree_size`, plus the signed checkpoint it
  * verifies against. Carried as a top-level retrieval-envelope member (§10).
@@ -381,6 +413,14 @@ export interface LogInclusion {
   tree_size: number; // must equal log_checkpoint.tree_size
   inclusion_path: string[]; // 'sha256:…' node digests, lowest level first
   log_checkpoint: LogCheckpoint;
+  /**
+   * RFC-ACDP-0015 §6.1 witness cosignatures of `log_checkpoint`. The registry
+   * attaches these as a top-level SIBLING of `log_checkpoint` (never inside the
+   * closed, signed checkpoint — see acdp-registry-core `handlers/log.rs`
+   * `attach_witness_signatures`). Absent — never `[]` — when the registry has
+   * collected none (backward compatible with pre-0.4.0 consumers).
+   */
+  witness_signatures?: WitnessCosignature[];
   /** Optional convenience echo — verifiers must not trust it (§9.1 step 1). */
   leaf?: Record<string, unknown>;
 }
