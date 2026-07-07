@@ -882,6 +882,46 @@ export const MOCK_CONTEXTS: FullContext[] = [
           value: 'zCkptKeyF8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oP',
         },
       },
+      // RFC-ACDP-0015 §6.1: two independent witnesses cosigned this exact
+      // checkpoint tuple (log_id / tree_size / root_hash copied verbatim), so
+      // the surface renders "2-witnessed" with all bindings green. Each witness
+      // uses its OWN DID + key (a witness is not a registry) and its own
+      // witness-clock observation time — a sibling of log_checkpoint, never
+      // inside the closed, signed checkpoint.
+      witness_signatures: [
+        {
+          cosignature_version: 'acdp-cosig/1',
+          witness_id: 'did:web:witness-alpha.trust.example',
+          witnessed_checkpoint: {
+            log_id: `did:web:${AUTH_C}/log/receipts`,
+            tree_size: 54,
+            root_hash: 'sha256:d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63',
+            timestamp: iso(45),
+          },
+          witnessed_at: iso(30),
+          signature: {
+            algorithm: 'ed25519',
+            key_id: 'did:web:witness-alpha.trust.example#cosig-key-1',
+            value: 'zWitAlpha7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oPqRsTuVwXy',
+          },
+        },
+        {
+          cosignature_version: 'acdp-cosig/1',
+          witness_id: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
+          witnessed_checkpoint: {
+            log_id: `did:web:${AUTH_C}/log/receipts`,
+            tree_size: 54,
+            root_hash: 'sha256:d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63d94f0b7a12c85e63',
+            timestamp: iso(45),
+          },
+          witnessed_at: iso(75),
+          signature: {
+            algorithm: 'ed25519',
+            key_id: 'did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK',
+            value: 'zWitBeta9c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8oPqRsTu',
+          },
+        },
+      ],
     },
   },
 ];

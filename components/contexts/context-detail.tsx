@@ -14,6 +14,7 @@ import {
   History,
   Stamp,
   ScrollText,
+  Eye,
 } from 'lucide-react';
 import { JsonViewer } from '@/components/ui/json-viewer';
 import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
@@ -32,6 +33,14 @@ function latestEvent(events: LifecycleEvent[] | undefined, type: string): Lifecy
 
 /** Staleness threshold for lineage-head receipts (RFC-ACDP-0011 §6 freshness). */
 const HEAD_RECEIPT_STALE_MS = 300_000;
+
+/**
+ * Freshness window for witness cosignatures (RFC-ACDP-0015 §7). Witnesses
+ * re-observe the log on a periodic cadence — much slower than a serve-time head
+ * receipt — so a wider window than HEAD_RECEIPT_STALE_MS is appropriate before a
+ * cosignature reads as stale.
+ */
+const WITNESS_COSIG_STALE_MS = 21_600_000; // 6 h
 
 /** A structural cross-field check between the receipt and the served body. */
 function BindingChip({ label, ok }: { label: string; ok: boolean }) {
@@ -105,6 +114,17 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
   const lhrStale = lhr ? lhrAgeMs > HEAD_RECEIPT_STALE_MS : false;
 
   const inclusion = ctx.log_inclusion;
+
+  // RFC-ACDP-0015 §6.1 witness cosignatures ride as a sibling of log_checkpoint.
+  const witnesses = inclusion?.witness_signatures ?? [];
+  const cp = inclusion?.log_checkpoint;
+  // N-witnessed count is over DISTINCT witness_id values (RFC-ACDP-0015 §8).
+  const distinctWitnessCount = new Set(witnesses.map((w) => w.witness_id)).size;
+  // Every cosignature's witnessed_checkpoint must bind to the served checkpoint's
+  // (log_id, tree_size, root_hash) tuple — the tuple the N-witnessed count is over.
+  const witnessesBindLog = cp ? witnesses.every((w) => w.witnessed_checkpoint.log_id === cp.log_id) : false;
+  const witnessesBindSize = cp ? witnesses.every((w) => w.witnessed_checkpoint.tree_size === cp.tree_size) : false;
+  const witnessesBindRoot = cp ? witnesses.every((w) => w.witnessed_checkpoint.root_hash === cp.root_hash) : false;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 12 : 16, fontSize }}>
@@ -306,6 +326,58 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(inclusion.log_checkpoint.signature.value, 16, 8)}
             </span>
           </Field>
+          <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
+            Proof material as served — not a client-side cryptographic verification.
+          </div>
+        </Group>
+      )}
+
+      {/* Witness cosignatures (RFC-ACDP-0015) */}
+      {inclusion && witnesses.length > 0 && (
+        <Group icon={Eye} title="Witness cosignatures">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+            <span
+              className="chip ok"
+              title="Distinct independent witnesses that cosigned this checkpoint (RFC-ACDP-0015 §8)."
+            >
+              {distinctWitnessCount}-witnessed
+            </span>
+            <BindingChip label="log" ok={witnessesBindLog} />
+            <BindingChip label="tree size" ok={witnessesBindSize} />
+            <BindingChip label="root hash" ok={witnessesBindRoot} />
+          </div>
+          {witnesses.map((w, i) => {
+            const ageMs = Date.now() - new Date(w.witnessed_at).getTime();
+            const stale = ageMs > WITNESS_COSIG_STALE_MS;
+            return (
+              <div
+                key={`${w.witness_id}-${i}`}
+                style={{ display: 'flex', gap: 10, fontSize: 11.5, lineHeight: 1.5 }}
+              >
+                <span style={{ color: C.faint, minWidth: 88, flexShrink: 0 }}>witness</span>
+                <span style={{ color: C.text, minWidth: 0, wordBreak: 'break-word' }}>
+                  <span className="did" style={{ fontSize: 10.5 }} title={w.witness_id}>
+                    {formatAgentDid(w.witness_id)}
+                  </span>
+                  <div style={{ color: C.muted, fontSize: 10.5, marginTop: 2 }}>
+                    observed {clockTime(w.witnessed_at)} ({timeAgo(w.witnessed_at)})
+                    {stale && (
+                      <span
+                        className="chip warn"
+                        style={{ marginLeft: 6 }}
+                        title="Cosignature observed outside the freshness window (RFC-ACDP-0015 §7) — the witness may not have re-observed the log recently."
+                      >
+                        stale · {Math.round(ageMs / 3_600_000)}h old
+                      </span>
+                    )}
+                    <span className="chip ok" style={{ marginLeft: 6 }} title={w.signature.key_id}>
+                      {w.signature.algorithm}
+                    </span>
+                  </div>
+                </span>
+              </div>
+            );
+          })}
           <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
             Proof material as served — not a client-side cryptographic verification.
           </div>
