@@ -48,8 +48,64 @@ All requests are proxied through `/api/proxy/[service]/[...path]`; SSE streams a
 ## Scripts
 
 ```bash
-npm run dev        npm run build       npm run start
-npm run typecheck  npm run lint        npm test
+npm run dev        npm run dev:real    npm run build       npm run start
+npm run typecheck  npm run lint        npm test            npm run test:coverage
 ```
+
+`node scripts/smoke-routes.mjs` fetches every top-level route and fails on any non-200
+(`SMOKE_BASE_URL` overrides the target; defaults to production).
+
+## Testing
+
+Tests use [Vitest](https://vitest.dev) (jsdom) and live in [`test/__tests__/`](./test/__tests__).
+
+```bash
+npm test               # run once
+npm run test:watch     # watch mode
+npm run test:coverage  # v8 coverage (text + html report under coverage/)
+```
+
+Coverage spans `lib/**` and the `app/api/**` route handlers. What's covered:
+
+- **Pure logic** — `lib/utils/*` (format, ctx_id/DID parsing, `cn`), `lib/server/integrations.ts`.
+- **API client** — both demo and real (proxy-path) branches of `lib/api/client.ts`, plus `fetcher.ts`.
+- **Route handlers** — the proxy (`app/api/proxy/[service]/[...path]`) and both SSE relays
+  (`app/api/stream/*`): header allow-listing, server-side bearer injection, response scrubbing, and
+  502 fallbacks. Because these import `next/server`, their test files opt into the Node environment
+  with a `// @vitest-environment node` docblock.
+- **Store & hooks** — the preferences store (incl. localStorage persistence) and `useDebounced` /
+  `useMounted`.
+- **Mock-data invariants** — structural checks over `lib/data/mock-data.ts`.
+
+House style: mock upstreams with `vi.stubGlobal('fetch', …)` and env with `vi.stubEnv`, cleaned up in
+`afterEach`. Follow the existing files (`fetcher.test.ts`, `integrations.test.ts`) when adding tests.
+
+## CI/CD & Deployment
+
+GitHub Actions workflows in [`.github/workflows/`](./.github/workflows):
+
+| Workflow | Trigger | Does |
+| --- | --- | --- |
+| `ci.yml` | push / PR to `main` | Lint → typecheck → test (with coverage artifact) → build, on Node 22 (`.nvmrc`), with `.next/cache` reuse. |
+| `docker.yml` | push / PR to `main`, tags `v*` | Builds the image; on `main` and tags publishes to `ghcr.io/agentcontextdistributionprotocol/acdp-ui-console`. PRs build only. |
+| `smoke.yml` | nightly + manual | Runs `scripts/smoke-routes.mjs` against the deployed console. |
+| `notify-website.yml` | `docs/**` / `README.md` on `main` | Notifies `acdp-website` to re-sync docs. |
+
+Dependency updates are automated via [Dependabot](./.github/dependabot.yml) (weekly npm + actions).
+
+**Deployment.** The primary target is Vercel (Next.js git integration; see [`vercel.json`](./vercel.json)).
+A multi-stage [`Dockerfile`](./Dockerfile) produces a standalone image (`output: 'standalone'`) — the
+published GHCR image bakes demo mode (`NEXT_PUBLIC_ACDP_UI_DEMO_MODE=true`) since `NEXT_PUBLIC_*` is
+inlined at build time; the sibling compose stacks override that ARG to build a real-mode image.
+
+## Related repositories
+
+The console is a client of the ACDP backends — see their own docs rather than duplicating them here:
+
+- [`agentcontextdistributionprotocol`](https://github.com/agentcontextdistributionprotocol/agentcontextdistributionprotocol) — the protocol spec / RFCs.
+- [`acdp-playground`](https://github.com/agentcontextdistributionprotocol/acdp-playground) — scenario catalog + run execution.
+- [`acdp-control-plane`](https://github.com/agentcontextdistributionprotocol/acdp-control-plane) — runs, events, agents, registries, metrics.
+- [`acdp-registry-rs`](https://github.com/agentcontextdistributionprotocol/acdp-registry-rs) — context registry (storage, search, JWKS).
+- [`acdp-rs`](https://github.com/agentcontextdistributionprotocol/acdp-rs) / [`acdp-verifier-py`](https://github.com/agentcontextdistributionprotocol/acdp-verifier-py) — SDKs and the verifier.
 
 See [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions.
