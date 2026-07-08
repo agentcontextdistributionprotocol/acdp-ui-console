@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 
-const initial = usePreferencesStore.getState();
+const STORAGE_KEY = 'acdp-ui-preferences';
 
 beforeEach(() => {
-  // Reset to a known baseline between tests (the store is a singleton).
+  // Reset to a known baseline between tests (the store is a singleton and
+  // every `set` writes through the persist middleware to localStorage).
+  localStorage.clear();
   usePreferencesStore.setState({
     demoMode: true,
     serviceUrls: {
@@ -19,13 +21,6 @@ beforeEach(() => {
 });
 
 describe('preferences store', () => {
-  it('exposes the action functions', () => {
-    expect(typeof initial.setDemoMode).toBe('function');
-    expect(typeof initial.setServiceUrl).toBe('function');
-    expect(typeof initial.setControlPlaneApiKey).toBe('function');
-    expect(typeof initial.setJaegerUrl).toBe('function');
-  });
-
   it('toggles demo mode', () => {
     usePreferencesStore.getState().setDemoMode(false);
     expect(usePreferencesStore.getState().demoMode).toBe(false);
@@ -44,5 +39,48 @@ describe('preferences store', () => {
     usePreferencesStore.getState().setJaegerUrl('https://jaeger.prod');
     expect(usePreferencesStore.getState().controlPlaneApiKey).toBe('tok-123');
     expect(usePreferencesStore.getState().jaegerUrl).toBe('https://jaeger.prod');
+  });
+});
+
+describe('preferences store — persistence', () => {
+  it('writes state through to localStorage under the persist key (no functions serialized)', () => {
+    usePreferencesStore.getState().setDemoMode(false);
+    usePreferencesStore.getState().setServiceUrl('registry-a', 'https://reg-a.prod');
+
+    const raw = localStorage.getItem(STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    const persisted = JSON.parse(raw as string).state;
+    expect(persisted.demoMode).toBe(false);
+    expect(persisted.serviceUrls['registry-a']).toBe('https://reg-a.prod');
+    // JSON serialization drops the action functions — only data is persisted.
+    expect(persisted.setDemoMode).toBeUndefined();
+  });
+
+  it('rehydrates state from a previously persisted payload', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 0,
+        state: {
+          demoMode: false,
+          serviceUrls: {
+            playground: 'https://pg.seeded',
+            'control-plane': 'https://cp.seeded',
+            'registry-a': 'https://reg-a.seeded',
+            'registry-b': 'https://reg-b.seeded',
+          },
+          controlPlaneApiKey: 'seeded-key',
+          jaegerUrl: 'https://jaeger.seeded',
+        },
+      }),
+    );
+
+    await usePreferencesStore.persist.rehydrate();
+
+    const state = usePreferencesStore.getState();
+    expect(state.demoMode).toBe(false);
+    expect(state.serviceUrls.playground).toBe('https://pg.seeded');
+    expect(state.controlPlaneApiKey).toBe('seeded-key');
+    expect(state.jaegerUrl).toBe('https://jaeger.seeded');
   });
 });
