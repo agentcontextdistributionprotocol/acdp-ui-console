@@ -1,0 +1,32 @@
+name: Smoke
+
+on:
+  schedule:
+    # Nightly at 05:17 UTC (off the hour to dodge scheduler congestion).
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Base URL to smoke-check
+        required: false
+        default: https://console.agentcontextdistributionprotocol.io
+
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  routes:
+    name: Route smoke check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check routes
+        env:
+          SMOKE_BASE_URL: ${{ github.event.inputs.base_url || 'https://console.agentcontextdistributionprotocol.io' }}
+        run: node scripts/smoke-routes.mjs
