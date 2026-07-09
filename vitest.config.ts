@@ -11,8 +11,10 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      include: ['lib/**/*.ts'],
-      // Pure type modules and React-only hooks (covered by integration, not unit).
+      include: ['lib/**/*.ts', 'app/api/**/*.ts'],
+      // Pure type modules and the data-fetching React hooks (covered by
+      // integration, not unit). use-debounced / use-mounted do have unit tests,
+      // but the whole hooks dir stays excluded to keep the coverage config simple.
       exclude: ['lib/types.ts', 'lib/colors.ts', 'lib/hooks/**'],
     },
   },
