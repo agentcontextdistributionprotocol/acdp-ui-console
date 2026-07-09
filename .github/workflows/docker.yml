@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Only authenticate when we intend to push. Pull-request builds (including
       # from forks with a read-only token) stay build-only and skip login.
