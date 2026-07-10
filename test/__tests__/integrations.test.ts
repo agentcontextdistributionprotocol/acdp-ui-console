@@ -11,14 +11,14 @@ afterEach(() => {
 });
 
 describe('isProxyService', () => {
-  it('accepts the four known services', () => {
-    for (const s of ['playground', 'control-plane', 'registry-a', 'registry-b']) {
+  it('accepts the five known services', () => {
+    for (const s of ['playground', 'control-plane', 'registry-a', 'registry-b', 'registry-c']) {
       expect(isProxyService(s)).toBe(true);
     }
   });
 
   it('rejects anything else', () => {
-    expect(isProxyService('registry-c')).toBe(false);
+    expect(isProxyService('registry-d')).toBe(false);
     expect(isProxyService('')).toBe(false);
     expect(isProxyService('Control-Plane')).toBe(false);
   });
@@ -31,9 +31,21 @@ describe('getIntegrationConfig', () => {
     expect(cp.authHeaderName).toBe('authorization');
     expect(cp.authToken).toBe('secret-token');
 
-    const reg = getIntegrationConfig('registry-a');
-    expect(reg.authHeaderName).toBeUndefined();
-    expect(reg.authToken).toBeUndefined();
+    for (const reg of ['registry-a', 'registry-b', 'registry-c'] as const) {
+      const cfg = getIntegrationConfig(reg);
+      expect(cfg.authHeaderName).toBeUndefined();
+      expect(cfg.authToken).toBeUndefined();
+    }
+  });
+
+  it('resolves the registry-c base url from its env var', () => {
+    vi.stubEnv('REGISTRY_C_BASE_URL', 'https://registry-c.example.com');
+    expect(getIntegrationConfig('registry-c').baseUrl).toBe('https://registry-c.example.com');
+  });
+
+  it('falls back to the registry-c localhost default outside production', () => {
+    vi.stubEnv('REGISTRY_C_BASE_URL', '');
+    expect(getIntegrationConfig('registry-c').baseUrl).toBe('http://localhost:8300');
   });
 
   it('defaults the control-plane token to empty string when unset', () => {

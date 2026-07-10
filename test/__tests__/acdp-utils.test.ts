@@ -5,6 +5,7 @@ import {
   formatAgentDid,
   authorityFromDid,
   shortAuthority,
+  isRunDegraded,
 } from '@/lib/utils/acdp';
 
 describe('parseCtxId', () => {
@@ -74,5 +75,25 @@ describe('shortAuthority', () => {
 
   it('takes the first host segment', () => {
     expect(shortAuthority('registry-a.playground.local')).toBe('registry-a');
+  });
+});
+
+describe('isRunDegraded', () => {
+  it('is true only when result.summary.degraded === true', () => {
+    expect(isRunDegraded({ result: { summary: { degraded: true } } })).toBe(true);
+  });
+
+  it('is false when the flag is absent, false, or truthy-but-not-true', () => {
+    expect(isRunDegraded({ result: { summary: { degraded: false } } })).toBe(false);
+    expect(isRunDegraded({ result: { summary: {} } })).toBe(false);
+    expect(isRunDegraded({ result: { summary: { degraded: 'yes' } } })).toBe(false);
+  });
+
+  it('reads defensively through missing/nullish/wrongly-shaped fields', () => {
+    expect(isRunDegraded(null)).toBe(false);
+    expect(isRunDegraded(undefined)).toBe(false);
+    expect(isRunDegraded({})).toBe(false);
+    expect(isRunDegraded({ result: null })).toBe(false);
+    expect(isRunDegraded({ result: { summary: null } })).toBe(false);
   });
 });

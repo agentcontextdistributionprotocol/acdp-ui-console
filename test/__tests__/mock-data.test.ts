@@ -97,9 +97,33 @@ describe('security mocks', () => {
     }
   });
 
-  it('both registries publish at least one signing key', () => {
+  it('all three registries publish at least one signing key', () => {
     expect(MOCK_JWKS.a.keys.length).toBeGreaterThan(0);
     expect(MOCK_JWKS.b.keys.length).toBeGreaterThan(0);
+    expect(MOCK_JWKS.c.keys.length).toBeGreaterThan(0);
+  });
+});
+
+describe('registry-c + degraded demo parity', () => {
+  it('the catalog includes the ACDP 0.3 scenarios s27–s32', () => {
+    const ids = new Set(MOCK_SCENARIOS.map((s) => s.id));
+    for (const id of [
+      's27_receipt_key_rotation',
+      's28_lifecycle_retraction',
+      's29_transparency_log',
+      's30_head_receipt_freshness',
+      's31_witness_cosigning',
+      's32_key_revocation',
+    ]) {
+      expect(ids.has(id)).toBe(true);
+    }
+  });
+
+  it('at least one demo run reports degraded via result.summary.degraded', () => {
+    const degraded = MOCK_RUNS.filter(
+      (r) => (r.result as { summary?: { degraded?: unknown } } | null)?.summary?.degraded === true,
+    );
+    expect(degraded.length).toBeGreaterThan(0);
   });
 });
 

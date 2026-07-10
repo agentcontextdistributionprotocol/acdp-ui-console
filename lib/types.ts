@@ -513,14 +513,24 @@ export interface JwkSet {
 }
 
 // ── Misc ──────────────────────────────────────────────────────────────
-export type RegistryAuthority = 'a' | 'b';
+/** The registry authorities the console proxies, in display order. */
+export const REGISTRY_AUTHORITIES = ['a', 'b', 'c'] as const;
+export type RegistryAuthority = (typeof REGISTRY_AUTHORITIES)[number];
+
+/** Human-facing labels for each registry authority. */
+export const REGISTRY_LABELS: Record<RegistryAuthority, string> = {
+  a: 'Registry A',
+  b: 'Registry B',
+  c: 'Registry C',
+};
 
 /**
- * Registries the console can ask for capabilities. Registry C (the receipts /
- * 0.3.0 trust-profile registry) exists only in demo mode — it has no proxy
- * route, so live-mode capability queries for it fail fast.
+ * Historical alias: registry-c (the receipts / 0.3.0 trust-profile registry)
+ * was once demo-only, so capability queries used a widened type. It is now a
+ * real proxied registry, so this is simply `RegistryAuthority`.
+ * @deprecated Use `RegistryAuthority`.
  */
-export type CapabilityAuthority = RegistryAuthority | 'c';
+export type CapabilityAuthority = RegistryAuthority;
 
 export interface HealthResult {
   ok: boolean;
@@ -571,4 +581,4 @@ export interface ServiceConnection {
   port: string;
 }
 
-export type ProxyService = 'playground' | 'control-plane' | 'registry-a' | 'registry-b';
+export type ProxyService = 'playground' | 'control-plane' | 'registry-a' | 'registry-b' | 'registry-c';

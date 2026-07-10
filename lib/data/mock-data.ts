@@ -272,6 +272,61 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
     framework: 'langchain',
     default_inputs: { topic: 'canonicalization drift' },
   },
+  // ── ACDP 0.3 lifecycle, transparency-log & witness scenarios (S27–S32) ──
+  {
+    id: 's27_receipt_key_rotation',
+    name: 'Receipt Key Rotation',
+    description: 'A registry rotates its receipt-signing key; new receipts verify against the current key while pinned historical ones stay valid.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'receipt key rotation' },
+  },
+  {
+    id: 's28_lifecycle_retraction',
+    name: 'Lifecycle Retraction',
+    description: 'A published context is retracted (RFC-ACDP-0013); the registry serves a retraction receipt and the lineage head reflects the retracted state.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'retract disclosure' },
+  },
+  {
+    id: 's29_transparency_log',
+    name: 'Transparency Log Inclusion',
+    description: 'A receipt is entered into the append-only transparency log (RFC-ACDP-0012); the consumer verifies the inclusion proof against a signed checkpoint.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'logged attestation' },
+  },
+  {
+    id: 's30_head_receipt_freshness',
+    name: 'Head Receipt Freshness',
+    description: 'A lineage-head receipt (RFC-ACDP-0011) proves the current head; a stale head is detected via the receipt timestamp/counter.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'lineage head freshness' },
+  },
+  {
+    id: 's31_witness_cosigning',
+    name: 'Witness Cosigning',
+    description: 'Independent witnesses cosign a transparency-log checkpoint (RFC-ACDP-0015); a quorum of distinct witness signatures is verified offline.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'witnessed checkpoint' },
+  },
+  {
+    id: 's32_key_revocation',
+    name: 'Key Revocation',
+    description: 'A producer key is revoked; contexts signed after the revocation instant fail closed while pre-revocation receipts stay historically authorized.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'revoked producer key' },
+  },
 ];
 
 export const SCENARIO_COUNT = MOCK_SCENARIOS.length;
@@ -431,6 +486,10 @@ export const MOCK_RUNS: CpRun[] = [
     contextsCount: 1,
     registries: [AUTH_A],
     inputs: { topic: 'customer PII summary' },
+    // Offline isolation invariant proved, but the live cross-tenant round-trip
+    // couldn't be exercised in this environment — the run degrades (RFC-ACDP
+    // offline-core semantics), which the summary flags.
+    result: { summary: { degraded: true } },
     // Receipt shape verified, but the registry isn't on the receipts profile so
     // there's no crypto receipt to verify — structural-only.
     trust: { audited: 1, verified: 0, verifiedHistorical: 0, structural: 1, noReceipt: 0, errors: 0, flagged: [] },
@@ -823,6 +882,20 @@ export const MOCK_JWKS: Record<RegistryAuthority, JwkSet> = {
         alg: 'ES256',
         x: 'f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU',
         y: 'x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0',
+      },
+    ],
+  },
+  // registry-c is the ACDP 0.3.0 receipts registry — P-256 receipt-signing key.
+  c: {
+    keys: [
+      {
+        kty: 'EC',
+        crv: 'P-256',
+        kid: 'registry-c-receipt-1',
+        use: 'sig',
+        alg: 'ES256',
+        x: 'kgR_PqO1bWl4Gm0i2m2t5r5r-3rQ9m6Yy0aQ8kZ3n3E',
+        y: 'lYbY4rL3n2q8Xt0vZ1c7pQ9mJ4hN6gK2sD5fA1bC7w',
       },
     ],
   },

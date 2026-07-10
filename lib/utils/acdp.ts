@@ -49,3 +49,19 @@ export function shortAuthority(authority: string | null | undefined): string {
   if (!authority) return '';
   return authority.split('.')[0];
 }
+
+/**
+ * Whether a run reported `degraded: true` in its result summary. A degraded run
+ * proved its offline core (signatures/receipts) but could not complete a live
+ * round-trip — e.g. a *.playground.local DID that isn't DNS-hosted, so live
+ * token issuance / did:web resolution can't succeed. The playground carries this
+ * as `result.summary.degraded`; the control-plane persists the same shape.
+ * Read defensively — `summary` is a free-form, per-scenario grab-bag.
+ */
+export function isRunDegraded(run: { result?: Record<string, unknown> | null } | null | undefined): boolean {
+  const result = run?.result;
+  if (!result || typeof result !== 'object') return false;
+  const summary = (result as { summary?: unknown }).summary;
+  if (!summary || typeof summary !== 'object') return false;
+  return (summary as { degraded?: unknown }).degraded === true;
+}
