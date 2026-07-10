@@ -64,7 +64,6 @@ function delay<T>(value: T, ms = 150): Promise<T> {
 const AUTHORITY_TO_SERVICE: Record<RegistryAuthority, ProxyService> = {
   a: 'registry-a',
   b: 'registry-b',
-  c: 'registry-c',
 };
 const authToService = (a: RegistryAuthority): ProxyService => AUTHORITY_TO_SERVICE[a];
 

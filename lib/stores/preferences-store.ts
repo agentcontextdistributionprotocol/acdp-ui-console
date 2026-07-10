@@ -9,7 +9,6 @@ export interface ServiceUrls {
   'control-plane': string;
   'registry-a': string;
   'registry-b': string;
-  'registry-c': string;
 }
 
 interface PreferencesState {
@@ -28,7 +27,6 @@ const defaultServiceUrls: ServiceUrls = {
   'control-plane': 'http://localhost:3001',
   'registry-a': 'http://localhost:8100',
   'registry-b': 'http://localhost:8200',
-  'registry-c': 'http://localhost:8300',
 };
 
 export const usePreferencesStore = create<PreferencesState>()(

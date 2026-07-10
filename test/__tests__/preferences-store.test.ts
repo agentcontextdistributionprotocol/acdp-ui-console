@@ -14,7 +14,6 @@ beforeEach(() => {
       'control-plane': 'http://localhost:3001',
       'registry-a': 'http://localhost:8100',
       'registry-b': 'http://localhost:8200',
-      'registry-c': 'http://localhost:8300',
     },
     controlPlaneApiKey: '',
     jaegerUrl: 'http://localhost:16686',

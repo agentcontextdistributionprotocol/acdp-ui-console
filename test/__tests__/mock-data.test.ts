@@ -11,6 +11,7 @@ import {
   MOCK_REVOCATIONS,
   MOCK_JWKS,
   MOCK_ENROLLMENTS,
+  MOCK_CAPABILITIES,
 } from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 
@@ -97,14 +98,13 @@ describe('security mocks', () => {
     }
   });
 
-  it('all three registries publish at least one signing key', () => {
+  it('both registries publish at least one signing key', () => {
     expect(MOCK_JWKS.a.keys.length).toBeGreaterThan(0);
     expect(MOCK_JWKS.b.keys.length).toBeGreaterThan(0);
-    expect(MOCK_JWKS.c.keys.length).toBeGreaterThan(0);
   });
 });
 
-describe('registry-c + degraded demo parity', () => {
+describe('receipts + degraded demo parity', () => {
   it('the catalog includes the ACDP 0.3 scenarios s27–s32', () => {
     const ids = new Set(MOCK_SCENARIOS.map((s) => s.id));
     for (const id of [
@@ -124,6 +124,12 @@ describe('registry-c + degraded demo parity', () => {
       (r) => (r.result as { summary?: { degraded?: unknown } } | null)?.summary?.degraded === true,
     );
     expect(degraded.length).toBeGreaterThan(0);
+  });
+
+  it('registry-a hosts the receipts profile in a two-registry topology (registry-c retired)', () => {
+    expect(MOCK_CAPABILITIES.a.profiles).toContain('acdp-registry-receipts');
+    expect(MOCK_CAPABILITIES.a.acdp_version).toBe('0.3.0');
+    expect(MOCK_CAPABILITIES).not.toHaveProperty('c');
   });
 });
 

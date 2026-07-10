@@ -129,16 +129,13 @@ const assertOk = (label, verdictJson) => {
 // ══════════════════════════════════════════════════════════════════════
 const AUTH_A = 'registry-a.playground.local';
 const AUTH_B = 'registry-b.playground.local';
-const AUTH_C = 'registry-c.playground.local';
 const REGISTRY_A_DID = `did:web:${AUTH_A}`;
-const REGISTRY_C_DID = `did:web:${AUTH_C}`;
 const WEB_A = 'did:web:registry-a.local:agents:cross-a';
 const WEB_B = 'did:web:registry-b.local:agents:cross-b';
 const WEB_SOLO = 'did:web:registry-a.local:agents:solo';
 const WITNESS_ALPHA = 'did:web:witness-alpha.trust.example';
 
 const registryA = ed25519FromSeed('99'.repeat(32));
-const registryC = ed25519FromSeed('11'.repeat(32));
 const prodA = ed25519FromSeed('22'.repeat(32));
 const prodSolo = ed25519FromSeed('33'.repeat(32));
 const prodKey = ed25519FromSeed('44'.repeat(32)); // did:key producer
@@ -165,7 +162,7 @@ const CTX_ARCTIC_SRC = `acdp://${AUTH_A}/f4a2c9e1-1d2b-4a3c-9e8f-001`;
 const CTX_ARCTIC_DERIV = `acdp://${AUTH_B}/9c11a7f2-7b6c-4d5e-8a9b-002`;
 const CTX_CASH_V1 = `acdp://${AUTH_A}/2e78f01a-solo`;
 const CTX_CASH_V2 = `acdp://${AUTH_A}/2e78f01a-solo-v2`;
-const CTX_ATTESTED = `acdp://${AUTH_C}/attested-001`;
+const CTX_ATTESTED = `acdp://${AUTH_A}/attested-001`;
 // RFC-ACDP-0001 §5: lineage_id is a 'lin:sha256:<hex>' identifier. The other
 // demo lineages use a loose label form that only the strict LHR parser rejects;
 // the attested context (the one with a lineage-head receipt) uses the real form.
@@ -325,7 +322,7 @@ const attestedHashed = {
 const attested = makeBody({
   ctx_id: CTX_ATTESTED,
   lineage_id: LIN_ATTESTED,
-  origin_registry: AUTH_C,
+  origin_registry: AUTH_A,
   created_at: '2026-07-06T11:57:00.000Z',
   producer: prodKey,
   hashed: attestedHashed,
@@ -368,11 +365,11 @@ const arcticReceipt = makeReceipt({
 const attestedReceipt = makeReceipt({
   ctx_id: CTX_ATTESTED,
   lineage_id: LIN_ATTESTED,
-  origin_registry: AUTH_C,
+  origin_registry: AUTH_A,
   content_hash: attested.content_hash,
   producerRawPubB64: prodKey.rawPubB64,
-  registry: registryC,
-  registryDid: REGISTRY_C_DID,
+  registry: registryA,
+  registryDid: REGISTRY_A_DID,
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -380,7 +377,7 @@ const attestedReceipt = makeReceipt({
 // ══════════════════════════════════════════════════════════════════════
 const lhrUnsigned = {
   receipt_version: 'acdp-lhr/1',
-  registry_did: REGISTRY_C_DID,
+  registry_did: REGISTRY_A_DID,
   lineage_id: LIN_ATTESTED,
   head_ctx_id: CTX_ATTESTED,
   head_version: 1,
@@ -389,11 +386,11 @@ const lhrUnsigned = {
 };
 const lineageHeadReceipt = {
   ...lhrUnsigned,
-  signature: { algorithm: 'ed25519', key_id: `${REGISTRY_C_DID}#receipt-key-1`, value: registryC.signAscii(preimageHash(lhrUnsigned)) },
+  signature: { algorithm: 'ed25519', key_id: `${REGISTRY_A_DID}#receipt-key-1`, value: registryA.signAscii(preimageHash(lhrUnsigned)) },
 };
 {
-  const expected = { registry_did: REGISTRY_C_DID, lineage_id: LIN_ATTESTED, head_ctx_id: CTX_ATTESTED, head_version: 1, head_status: 'active' };
-  const doc = didWebDoc(REGISTRY_C_DID, 'receipt-key-1', registryC);
+  const expected = { registry_did: REGISTRY_A_DID, lineage_id: LIN_ATTESTED, head_ctx_id: CTX_ATTESTED, head_version: 1, head_status: 'active' };
+  const doc = didWebDoc(REGISTRY_A_DID, 'receipt-key-1', registryA);
   assertOk(
     'lineage_head_receipt',
     // pass a generous max_age so the fixed timestamp is not flagged invalid (staleness is a separate flag)
@@ -411,7 +408,7 @@ const lineageHeadReceipt = {
 // ══════════════════════════════════════════════════════════════════════
 // 4. Transparency log — checkpoint + inclusion proof (RFC-ACDP-0012)
 // ══════════════════════════════════════════════════════════════════════
-const LOG_ID = `${REGISTRY_C_DID}/log/receipts`;
+const LOG_ID = `${REGISTRY_A_DID}/log/receipts`;
 
 // §9.1 step 1: the leaf is rebuilt from the VERIFIED receipt.
 const reconstructedLeaf = acdp.buildLogLeaf(JSON.stringify(attestedReceipt));
@@ -446,9 +443,9 @@ const checkpointUnsigned = {
 };
 const logCheckpoint = {
   ...checkpointUnsigned,
-  signature: { algorithm: 'ed25519', key_id: `${REGISTRY_C_DID}#receipt-key-1`, value: registryC.signAscii(preimageHash(checkpointUnsigned)) },
+  signature: { algorithm: 'ed25519', key_id: `${REGISTRY_A_DID}#receipt-key-1`, value: registryA.signAscii(preimageHash(checkpointUnsigned)) },
 };
-const registryDoc = didWebDoc(REGISTRY_C_DID, 'receipt-key-1', registryC);
+const registryDoc = didWebDoc(REGISTRY_A_DID, 'receipt-key-1', registryA);
 assertOk(
   'log_checkpoint',
   acdp.verifyLogCheckpoint(JSON.stringify(logCheckpoint), JSON.stringify(registryDoc), LOG_ID, T.checkpoint, 300n),
@@ -523,7 +520,6 @@ const didDocs = {
   [WEB_B]: didWebDoc(WEB_B, 'key-2', prodB),
   [WEB_SOLO]: didWebDoc(WEB_SOLO, 'key-1', prodSolo),
   [REGISTRY_A_DID]: didWebDoc(REGISTRY_A_DID, 'receipt-key-1', registryA),
-  [REGISTRY_C_DID]: registryDoc,
   [WITNESS_ALPHA]: witnessAlphaDoc,
 };
 
