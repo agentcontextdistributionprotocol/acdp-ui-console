@@ -5,20 +5,17 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
-    # Batch the routine minor/patch bumps into one PR to cut review noise;
-    # majors still open individually so they get a deliberate look.
+    # Batch routine minor/patch bumps into one PR; majors get their own.
     groups:
-      npm-minor-patch:
-        update-types:
-          - minor
-          - patch
+      minor-and-patch:
+        update-types: [minor, patch]
+      major-updates:
+        update-types: [major]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     groups:
-      github-actions:
-        update-types:
-          - minor
-          - patch
+      actions:
+        patterns: ['*']
