@@ -16,6 +16,7 @@ const DEFAULTS: Record<ProxyService, { envVar: string; fallback: string }> = {
   'control-plane': { envVar: 'CONTROL_PLANE_BASE_URL', fallback: 'http://localhost:3001' },
   'registry-a': { envVar: 'REGISTRY_A_BASE_URL', fallback: 'http://localhost:8100' },
   'registry-b': { envVar: 'REGISTRY_B_BASE_URL', fallback: 'http://localhost:8200' },
+  'registry-c': { envVar: 'REGISTRY_C_BASE_URL', fallback: 'http://localhost:8300' },
 };
 
 function resolveBaseUrl(service: ProxyService): string {
@@ -44,7 +45,13 @@ export function getIntegrationConfig(service: ProxyService): ServiceConfig {
 }
 
 export function isProxyService(value: string): value is ProxyService {
-  return value === 'playground' || value === 'control-plane' || value === 'registry-a' || value === 'registry-b';
+  return (
+    value === 'playground' ||
+    value === 'control-plane' ||
+    value === 'registry-a' ||
+    value === 'registry-b' ||
+    value === 'registry-c'
+  );
 }
 
 export function buildUpstreamUrl(service: ProxyService, path: string, search?: string): string {

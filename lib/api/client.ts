@@ -27,8 +27,8 @@ import {
   MOCK_SEARCH_HITS,
   MOCK_WEBHOOKS,
 } from '@/lib/data/mock-data';
+import { REGISTRY_AUTHORITIES } from '@/lib/types';
 import type {
-  CapabilityAuthority,
   CpContextEvent,
   CpDashboardOverview,
   CpLineageDag,
@@ -61,7 +61,12 @@ function delay<T>(value: T, ms = 150): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
-const authToService = (a: RegistryAuthority): ProxyService => (a === 'a' ? 'registry-a' : 'registry-b');
+const AUTHORITY_TO_SERVICE: Record<RegistryAuthority, ProxyService> = {
+  a: 'registry-a',
+  b: 'registry-b',
+  c: 'registry-c',
+};
+const authToService = (a: RegistryAuthority): ProxyService => AUTHORITY_TO_SERVICE[a];
 
 // ── Health ────────────────────────────────────────────────────────────
 export async function pingHealth(service: ProxyService, demoMode: boolean): Promise<HealthResult> {
@@ -393,7 +398,7 @@ export async function deleteWebhook(id: string, demoMode: boolean): Promise<void
 const DEFAULT_SEARCH_LIMIT = 20;
 
 export async function searchContexts(
-  authority: RegistryAuthority | 'both',
+  authority: RegistryAuthority | 'all',
   search: ContextSearchParams,
   demoMode: boolean,
 ): Promise<SearchResponse> {
@@ -445,13 +450,14 @@ export async function searchContexts(
   if (search.visibility && search.visibility !== 'all') params.set('visibility', search.visibility);
   if (search.cursor) params.set('cursor', search.cursor);
   params.set('limit', String(limit));
-  if (authority === 'both') {
+  if (authority === 'all') {
     // A single down registry must not blank the combined view. Merged results
     // can't be keyset-paginated coherently, so no next_cursor is returned.
-    const settled = await Promise.allSettled([
-      fetchJson<SearchResponse>('registry-a', `/contexts/search?${params.toString()}`),
-      fetchJson<SearchResponse>('registry-b', `/contexts/search?${params.toString()}`),
-    ]);
+    const settled = await Promise.allSettled(
+      REGISTRY_AUTHORITIES.map((a) =>
+        fetchJson<SearchResponse>(authToService(a), `/contexts/search?${params.toString()}`),
+      ),
+    );
     const matches = settled.flatMap((r) => (r.status === 'fulfilled' ? (r.value.matches ?? []) : []));
     const partial = settled.some((r) => r.status === 'rejected');
     return { matches, total_estimate: matches.length, ...(partial ? { partial: true } : {}) };
@@ -492,12 +498,10 @@ export async function getLineageCurrent(
 }
 
 export async function getRegistryCapabilities(
-  authority: CapabilityAuthority,
+  authority: RegistryAuthority,
   demoMode: boolean,
 ): Promise<RegistryCapabilities> {
   if (demoMode) return delay(MOCK_CAPABILITIES[authority]);
-  // Registry C (receipts / 0.3.0 trust profiles) is demo-only — no proxy route.
-  if (authority === 'c') throw new Error('registry-c is only available in demo mode');
   return fetchJson<RegistryCapabilities>(authToService(authority), '/.well-known/acdp.json');
 }
 

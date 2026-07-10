@@ -85,9 +85,10 @@ function RevocationFeed() {
 
 function SigningKeys() {
   return (
-    <div className="grid-2">
+    <div className="grid-3">
       <JwksCard authority="a" label="Registry A" />
       <JwksCard authority="b" label="Registry B" />
+      <JwksCard authority="c" label="Registry C" />
     </div>
   );
 }

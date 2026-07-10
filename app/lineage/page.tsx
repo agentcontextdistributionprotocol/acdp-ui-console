@@ -143,6 +143,7 @@ function ByLineage({ demoMode }: { demoMode: boolean }) {
         >
           <option value="a">Registry A</option>
           <option value="b">Registry B</option>
+          <option value="c">Registry C</option>
         </select>
         <Button variant="primary" onClick={lookup}>
           Resolve

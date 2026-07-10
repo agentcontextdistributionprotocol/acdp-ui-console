@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { StatusBadge } from '@/components/ui/badge';
 import { elapsed } from '@/lib/utils/format';
-import { shortAuthority } from '@/lib/utils/acdp';
+import { shortAuthority, isRunDegraded } from '@/lib/utils/acdp';
 import { C } from '@/lib/colors';
 import type { CpRun } from '@/lib/types';
 import type { LiveStatus } from '@/lib/hooks/use-live-run';
@@ -39,6 +39,8 @@ export function RunSummary({
           ? 'completed'
           : run.status;
 
+  const degraded = isRunDegraded(run);
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
       <div>
@@ -47,7 +49,15 @@ export function RunSummary({
           {run.runId} · {run.registries.map(shortAuthority).join(' + ') || 'registry-a'} · {run.scenarioId}
         </div>
       </div>
-      <span style={{ marginLeft: 'auto' }}>
+      <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        {degraded && (
+          <span
+            className="chip warn"
+            title="Offline core verified (signatures/receipts), but the live registry round-trip was unavailable in this environment — e.g. an unhosted *.playground.local DID. Not a failure."
+          >
+            Degraded
+          </span>
+        )}
         <StatusBadge status={status} />
       </span>
       <span style={{ fontSize: 12, color: C.muted }}>{elapsed(run.startedAt, running ? null : run.completedAt)}</span>

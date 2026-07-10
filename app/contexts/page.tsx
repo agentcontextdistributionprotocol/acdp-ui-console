@@ -16,10 +16,11 @@ import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { C } from '@/lib/colors';
 import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
 
-const REGISTRIES: { id: RegistryAuthority | 'both'; label: string }[] = [
+const REGISTRIES: { id: RegistryAuthority | 'all'; label: string }[] = [
   { id: 'a', label: 'Registry A' },
   { id: 'b', label: 'Registry B' },
-  { id: 'both', label: 'Both' },
+  { id: 'c', label: 'Registry C' },
+  { id: 'all', label: 'All' },
 ];
 
 const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert'];
@@ -32,7 +33,7 @@ const STATUSES: { value: string; label: string }[] = [
 ];
 
 interface Criteria extends ContextSearchParams {
-  authority: RegistryAuthority | 'both';
+  authority: RegistryAuthority | 'all';
 }
 
 const EMPTY: Criteria = { authority: 'a', q: '', type: '', domain: '', tags: '', visibility: 'all', status: '' };
@@ -85,7 +86,7 @@ export default function ContextsPage() {
           className="form-input"
           style={{ width: 130 }}
           value={form.authority}
-          onChange={(e) => set('authority', e.target.value as RegistryAuthority | 'both')}
+          onChange={(e) => set('authority', e.target.value as RegistryAuthority | 'all')}
         >
           {REGISTRIES.map((r) => (
             <option key={r.id} value={r.id}>

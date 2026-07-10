@@ -13,6 +13,7 @@ const ROWS: { service: ProxyService; label: string }[] = [
   { service: 'control-plane', label: 'Control Plane' },
   { service: 'registry-a', label: 'Registry A' },
   { service: 'registry-b', label: 'Registry B' },
+  { service: 'registry-c', label: 'Registry C' },
 ];
 
 export function ConnectionPanel() {

@@ -45,6 +45,12 @@ describe('real-mode proxy paths', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/registry-a/.well-known/acdp.json');
   });
 
+  it('registry-c capabilities route through the real proxy (no longer demo-only)', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ acdp_version: '0.3.0' }));
+    await getRegistryCapabilities('c', false);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/registry-c/.well-known/acdp.json');
+  });
+
   it('dashboard overview → /dashboard/overview with window', async () => {
     const fetchMock = mockFetch(() => jsonResponse({ window: '24h' }));
     await getCpDashboard('24h', false);
@@ -144,14 +150,15 @@ describe('getCpMetrics', () => {
   });
 });
 
-describe('searchContexts both', () => {
+describe('searchContexts all', () => {
   it('survives one registry failing and merges the rest', async () => {
     mockFetch((url) => {
       if (url.includes('registry-a')) return jsonResponse({ matches: [{ ctx_id: 'a1' }] });
+      if (url.includes('registry-c')) return jsonResponse({ matches: [{ ctx_id: 'c1' }] });
       return jsonResponse('boom', false, 500); // registry-b fails
     });
-    const res = await searchContexts('both', { q: 'q' }, false);
-    expect(res.matches.map((m) => m.ctx_id)).toEqual(['a1']);
+    const res = await searchContexts('all', { q: 'q' }, false);
+    expect(res.matches.map((m) => m.ctx_id).sort()).toEqual(['a1', 'c1']);
     expect(res.partial).toBe(true);
   });
 
