@@ -19,8 +19,7 @@ import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
 const REGISTRIES: { id: RegistryAuthority | 'all'; label: string }[] = [
   { id: 'a', label: 'Registry A' },
   { id: 'b', label: 'Registry B' },
-  { id: 'c', label: 'Registry C' },
-  { id: 'all', label: 'All' },
+  { id: 'all', label: 'Both' },
 ];
 
 const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert'];

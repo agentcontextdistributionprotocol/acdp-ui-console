@@ -334,7 +334,7 @@ export interface RegistryState {
  * publish-time signing key, enabling historical-key verification after rotation.
  */
 export interface RegistryReceipt {
-  registry_did: string; // e.g. 'did:web:registry-c.playground.local'
+  registry_did: string; // e.g. 'did:web:registry-a.playground.local'
   ctx_id: string;
   lineage_id: string;
   origin_registry: string; // authority string
@@ -514,20 +514,20 @@ export interface JwkSet {
 
 // ── Misc ──────────────────────────────────────────────────────────────
 /** The registry authorities the console proxies, in display order. */
-export const REGISTRY_AUTHORITIES = ['a', 'b', 'c'] as const;
+export const REGISTRY_AUTHORITIES = ['a', 'b'] as const;
 export type RegistryAuthority = (typeof REGISTRY_AUTHORITIES)[number];
 
 /** Human-facing labels for each registry authority. */
 export const REGISTRY_LABELS: Record<RegistryAuthority, string> = {
   a: 'Registry A',
   b: 'Registry B',
-  c: 'Registry C',
 };
 
 /**
- * Historical alias: registry-c (the receipts / 0.3.0 trust-profile registry)
- * was once demo-only, so capability queries used a widened type. It is now a
- * real proxied registry, so this is simply `RegistryAuthority`.
+ * Alias retained for call sites that historically distinguished
+ * capability-only registries. The playground consolidated to a two-registry
+ * topology (registry-a hosts the receipts / 0.3.0 trust profiles directly), so
+ * this is simply `RegistryAuthority`.
  * @deprecated Use `RegistryAuthority`.
  */
 export type CapabilityAuthority = RegistryAuthority;
@@ -581,4 +581,4 @@ export interface ServiceConnection {
   port: string;
 }
 
-export type ProxyService = 'playground' | 'control-plane' | 'registry-a' | 'registry-b' | 'registry-c';
+export type ProxyService = 'playground' | 'control-plane' | 'registry-a' | 'registry-b';

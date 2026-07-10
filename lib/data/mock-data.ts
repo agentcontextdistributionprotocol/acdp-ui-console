@@ -38,7 +38,6 @@ export const FAILED_RUN_ID = 'run-9d8e7f6a';
 
 const AUTH_A = 'registry-a.playground.local';
 const AUTH_B = 'registry-b.playground.local';
-const AUTH_C = 'registry-c.playground.local'; // ACDP 0.2 receipts-profile registry
 const DID_A = 'did:web:registry-a.local:agents:cross-a';
 const DID_B = 'did:web:registry-b.local:agents:cross-b';
 const DID_SOLO = 'did:web:registry-a.local:agents:solo';
@@ -558,7 +557,7 @@ export const MOCK_RUNS: CpRun[] = [
     startedAt: iso(150),
     completedAt: iso(138),
     contextsCount: 1,
-    registries: [AUTH_C],
+    registries: [AUTH_A],
     inputs: { topic: 'rotated signing key' },
     // The producer rotated its key after publishing; the pre-rotation context
     // still verifies against the retired key pinned by the receipt (RFC-ACDP-0010
@@ -575,11 +574,11 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
   { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/tenant-a-001`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
-  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_C}/attested-001`, agentId: DID_KEY, contextType: 'attestation', visibility: 'public', version: 1, registryAuthority: AUTH_C, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
+  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/attested-001`, agentId: DID_KEY, contextType: 'attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
   // ── RFC-ACDP-0013 lifecycle events (ACDP 0.3) ─────────────────────────
   // Registry-initiated hold + restore on the attested context (a pair).
-  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_C}/attested-001`, agentId: `did:web:${AUTH_C}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_C },
-  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_C}/attested-001`, agentId: `did:web:${AUTH_C}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_C },
+  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_A}/attested-001`, agentId: `did:web:${AUTH_A}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_A}/attested-001`, agentId: `did:web:${AUTH_A}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_A },
   // Producer-initiated retraction of the non-head cashflow v1.
   { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
   // Retraction of the fan-out FX derivative (renders retracted in the run DAG).
@@ -607,7 +606,6 @@ export const MOCK_DASHBOARD: CpDashboardOverview = {
     { registry_authority: AUTH_B, event_count: 125 },
   ],
   receiptCoverage: [
-    { registry_authority: AUTH_C, publish_count: 54, receipt_count: 54 },
     { registry_authority: AUTH_A, publish_count: 187, receipt_count: 142 },
     { registry_authority: AUTH_B, publish_count: 125, receipt_count: 71 },
   ],
@@ -623,14 +621,13 @@ export const MOCK_AGENTS: KnownAgent[] = [
   { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
   { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(21) },
   { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(240) },
-  { agentDid: DID_KEY, registryAuthority: AUTH_C, contextCount: 1, firstSeen: iso(140), lastSeen: iso(140) },
+  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: iso(140), lastSeen: iso(140) },
 ];
 
 // ── Registries ────────────────────────────────────────────────────────
 export const MOCK_REGISTRIES: KnownRegistry[] = [
   { authority: AUTH_A, baseUrl: 'http://localhost:8100', eventCount: 187, firstSeen: iso(432000), lastSeen: iso(8) },
   { authority: AUTH_B, baseUrl: 'http://localhost:8200', eventCount: 125, firstSeen: iso(432000), lastSeen: iso(3) },
-  { authority: AUTH_C, baseUrl: 'http://localhost:8300', eventCount: 54, firstSeen: iso(86400 * 4), lastSeen: iso(140) },
 ];
 
 export const MOCK_ENROLLMENTS: RegistryEnrollment[] = [
@@ -655,12 +652,23 @@ export const MOCK_ENROLLMENTS: RegistryEnrollment[] = [
 ];
 
 export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities> = {
+  // registry-a hosts the receipts profile directly (playground consolidated to a
+  // two-registry topology): its capabilities advertise the full ACDP 0.3.0
+  // trust-profile stack — RFC-ACDP-0010 receipts, RFC-ACDP-0011 head receipts,
+  // RFC-ACDP-0012 transparency log, RFC-ACDP-0013 lifecycle.
   a: {
-    acdp_version: '0.1.0',
+    acdp_version: '0.3.0',
     registry_did: 'did:web:registry-a.playground.local',
     authority: AUTH_A,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
-    profiles: ['acdp-consumer', 'acdp-federated'],
+    profiles: [
+      'acdp-registry-core',
+      'acdp-registry-discovery',
+      'acdp-registry-receipts',
+      'acdp-registry-head-receipts',
+      'acdp-registry-transparency-log',
+      'acdp-registry-lifecycle',
+    ],
     anonymous_public_reads: true,
     limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
   },
@@ -670,24 +678,6 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
     authority: AUTH_B,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
     profiles: ['acdp-consumer', 'acdp-federated'],
-    anonymous_public_reads: true,
-    limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
-  },
-  // The receipts registry advertises the full ACDP 0.3.0 trust-profile stack
-  // (RFC-ACDP-0011 head receipts, RFC-ACDP-0012 transparency log,
-  // RFC-ACDP-0013 lifecycle) on top of the 0.2.0 receipts profile.
-  c: {
-    acdp_version: '0.3.0',
-    registry_did: 'did:web:registry-c.playground.local',
-    authority: AUTH_C,
-    supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
-    profiles: [
-      'acdp-registry-core',
-      'acdp-registry-receipts',
-      'acdp-registry-head-receipts',
-      'acdp-registry-transparency-log',
-      'acdp-registry-lifecycle',
-    ],
     anonymous_public_reads: true,
     limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
   },
@@ -759,9 +749,9 @@ export const MOCK_CONTEXTS: FullContext[] = [
   },
   {
     body: {
-      ctx_id: `acdp://${AUTH_C}/attested-001`,
+      ctx_id: `acdp://${AUTH_A}/attested-001`,
       lineage_id: LIN_ATTESTED,
-      origin_registry: AUTH_C,
+      origin_registry: AUTH_A,
       created_at: iso(140),
       ...MOCK_CRYPTO.attested.hashed,
       content_hash: MOCK_CRYPTO.attested.content_hash,
@@ -774,33 +764,33 @@ export const MOCK_CONTEXTS: FullContext[] = [
       lifecycle_events: [
         {
           event_id: 'b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
-          ctx_id: `acdp://${AUTH_C}/attested-001`,
+          ctx_id: `acdp://${AUTH_A}/attested-001`,
           event_type: 'retracted',
           occurred_at: iso(110),
-          actor: `did:web:${AUTH_C}`,
+          actor: `did:web:${AUTH_A}`,
           reason: 'Held pending compliance review of the attested claims.',
           signature: {
             algorithm: 'ed25519',
-            key_id: `did:web:${AUTH_C}#receipt-key-1`,
+            key_id: `did:web:${AUTH_A}#receipt-key-1`,
             value: 'zLcEvtHoldC8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN8',
           },
         },
         {
           event_id: 'c3d4e5f6-7a8b-4c9d-a0e1-2b3c4d5e6f7a',
-          ctx_id: `acdp://${AUTH_C}/attested-001`,
+          ctx_id: `acdp://${AUTH_A}/attested-001`,
           event_type: 'republished',
           occurred_at: iso(80),
-          actor: `did:web:${AUTH_C}`,
+          actor: `did:web:${AUTH_A}`,
           reason: 'Compliance review cleared; attestation restored.',
           signature: {
             algorithm: 'ed25519',
-            key_id: `did:web:${AUTH_C}#receipt-key-1`,
+            key_id: `did:web:${AUTH_A}#receipt-key-1`,
             value: 'zLcEvtRepubD8m1c0Vd7xkR2pYbnLwQf6sT4uJ9hG0eX1aB2cD3eF4gH5iJ6kL7mN',
           },
         },
       ],
     },
-    // Real RFC-ACDP-0010 / 0011 / 0012 / 0015 material (registry-c signatures,
+    // Real RFC-ACDP-0010 / 0011 / 0012 / 0015 material (registry-a signatures,
     // real Merkle inclusion proof, two real witness cosignatures).
     registry_receipt: MOCK_CRYPTO.attested.registry_receipt as RegistryReceipt,
     lineage_head_receipt: MOCK_CRYPTO.attested.lineage_head_receipt as LineageHeadReceipt,
@@ -882,20 +872,6 @@ export const MOCK_JWKS: Record<RegistryAuthority, JwkSet> = {
         alg: 'ES256',
         x: 'f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU',
         y: 'x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0',
-      },
-    ],
-  },
-  // registry-c is the ACDP 0.3.0 receipts registry — P-256 receipt-signing key.
-  c: {
-    keys: [
-      {
-        kty: 'EC',
-        crv: 'P-256',
-        kid: 'registry-c-receipt-1',
-        use: 'sig',
-        alg: 'ES256',
-        x: 'kgR_PqO1bWl4Gm0i2m2t5r5r-3rQ9m6Yy0aQ8kZ3n3E',
-        y: 'lYbY4rL3n2q8Xt0vZ1c7pQ9mJ4hN6gK2sD5fA1bC7w',
       },
     ],
   },

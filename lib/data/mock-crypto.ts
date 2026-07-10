@@ -41,8 +41,8 @@ export const MOCK_DID_DOCS: Record<string, unknown> = {
         "publicKeyJwk": {
           "kty": "EC",
           "crv": "P-256",
-          "x": "jtuP0OyDzPGA1SnhX6W_9nSHoSTrlaDirIIXpqzRyRM",
-          "y": "S97gg87gJmk_XeFXLUSYA-dbA7s9qy_JqViYFEMuhgw"
+          "x": "-81tj-vhoqushTyHFu_Ma9UaE4FIckvO79QHVG8wEg4",
+          "y": "RoOgpeJzkLi2Q5shH-ZxSK5JL9PX1boPOlbOeNwL99k"
         }
       }
     ],
@@ -76,20 +76,6 @@ export const MOCK_DID_DOCS: Record<string, unknown> = {
     ],
     "assertionMethod": [
       "did:web:registry-a.playground.local#receipt-key-1"
-    ]
-  },
-  "did:web:registry-c.playground.local": {
-    "id": "did:web:registry-c.playground.local",
-    "verificationMethod": [
-      {
-        "id": "did:web:registry-c.playground.local#receipt-key-1",
-        "type": "Ed25519VerificationKey2020",
-        "controller": "did:web:registry-c.playground.local",
-        "publicKeyMultibase": "z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S"
-      }
-    ],
-    "assertionMethod": [
-      "did:web:registry-c.playground.local#receipt-key-1"
     ]
   },
   "did:web:witness-alpha.trust.example": {
@@ -204,7 +190,7 @@ export const MOCK_CRYPTO = {
     "signature": {
       "algorithm": "ecdsa-p256",
       "key_id": "did:web:registry-b.local:agents:cross-b#key-2",
-      "value": "QkcoaRWEoIlCe9ph6A67d/ig8o4af/KPZWXgA36RjAt6BiITyg9YpKSq7zrK6QK92Rg9Vh9hIor2kn3ihv+Lqw=="
+      "value": "B6l9gyMyKPwzlp0JN3ehyksuoNkBZJEzUreBSmKJbQPcyn2BwkXDyqg+hxwMQKHzHHvxuV/elvD/Mg1vw3jqDw=="
     }
   },
   "cashV1": {
@@ -311,35 +297,35 @@ export const MOCK_CRYPTO = {
       "value": "r3vpinQs5HY8m9GUp7hNc3GAlTZRYDc/OBr0kaJlqrlb00Nyk+VMWojjvSJVTieSAQaNeKjM7qJrUHjMef4jAA=="
     },
     "registry_receipt": {
-      "registry_did": "did:web:registry-c.playground.local",
-      "ctx_id": "acdp://registry-c.playground.local/attested-001",
+      "registry_did": "did:web:registry-a.playground.local",
+      "ctx_id": "acdp://registry-a.playground.local/attested-001",
       "lineage_id": "lin:sha256:444ce9e4045a12619d57eabb8524a0e54f6e9cf322f6dd1092612c8b54313039",
-      "origin_registry": "registry-c.playground.local",
+      "origin_registry": "registry-a.playground.local",
       "created_at": "2026-07-06T12:00:00.000Z",
       "content_hash": "sha256:e58ed2540ab5a4db348e3d9e97fc7b501c5aa50ae1fa7fde5613e92bbb120a27",
       "key_fingerprint": "sha256:b14705888f4a68391a09aa5968dd25d16c3bba7bb3b6d15bf354d8dcaae85a47",
       "signature": {
         "algorithm": "ed25519",
-        "key_id": "did:web:registry-c.playground.local#receipt-key-1",
-        "value": "GrfMHCSZx4QQxAOLpHQdlaOJ9DhL9r0kneMErWTXfMJJFk1+gfcrLDw7Xf4s0sV3hMOj86UakuJNUElAlhBJDQ=="
+        "key_id": "did:web:registry-a.playground.local#receipt-key-1",
+        "value": "hfdmsqgC0KoSZNkCylcABqp9MLXWUf2wrboAYh5DIwbmc7KMbx2u2uXd3aclBimt2jV5h4n+Y2JdcZlQpxdGDw=="
       }
     },
     "lineage_head_receipt": {
       "receipt_version": "acdp-lhr/1",
-      "registry_did": "did:web:registry-c.playground.local",
+      "registry_did": "did:web:registry-a.playground.local",
       "lineage_id": "lin:sha256:444ce9e4045a12619d57eabb8524a0e54f6e9cf322f6dd1092612c8b54313039",
-      "head_ctx_id": "acdp://registry-c.playground.local/attested-001",
+      "head_ctx_id": "acdp://registry-a.playground.local/attested-001",
       "head_version": 1,
       "head_status": "active",
       "as_of": "2026-07-06T12:34:00.000Z",
       "signature": {
         "algorithm": "ed25519",
-        "key_id": "did:web:registry-c.playground.local#receipt-key-1",
-        "value": "uRxt7dpe+WykThoaWDxELLA/4p+t6MlxHRepr4tj0yAFMPgrPrW6bXTxuDvXvzWZydqfPSDXGWVu5eDyzSSwDw=="
+        "key_id": "did:web:registry-a.playground.local#receipt-key-1",
+        "value": "yqF22MBppeRWlQgxW+SY5bDe9/10rCm9FcPLnJGsJpM+rhRIxCZrElBuAd9AwXK03ICid7tZBe4TP63Z0kB2AQ=="
       }
     },
     "log_inclusion": {
-      "log_id": "did:web:registry-c.playground.local/log/receipts",
+      "log_id": "did:web:registry-a.playground.local/log/receipts",
       "leaf_index": 2,
       "tree_size": 6,
       "inclusion_path": [
@@ -349,14 +335,14 @@ export const MOCK_CRYPTO = {
       ],
       "log_checkpoint": {
         "checkpoint_version": "acdp-log/1",
-        "log_id": "did:web:registry-c.playground.local/log/receipts",
+        "log_id": "did:web:registry-a.playground.local/log/receipts",
         "tree_size": 6,
-        "root_hash": "sha256:2d81735f9de80063ffb2d96ae64fb87687df67f87bcfef256737c6487ae6ef92",
+        "root_hash": "sha256:37da8cda72e732255f10468b6acb5459a58d1f0139cbb0eb07da5ea35f6b9221",
         "timestamp": "2026-07-06T12:34:00.000Z",
         "signature": {
           "algorithm": "ed25519",
-          "key_id": "did:web:registry-c.playground.local#receipt-key-1",
-          "value": "e+z87X2FYMJY0kSVBE0F7552TJdHGsO1r0gEzBM33OKNOCkclgTMmfEHWnMotIb0MxWwIyPOvbSWbOeop+hTDw=="
+          "key_id": "did:web:registry-a.playground.local#receipt-key-1",
+          "value": "lV3FYPjPje1ANqtDLXUyozjExfw60PV625TFt8zmSm53nTiKP497kyAYWRpKropL15YJ7yqBGHN+p3RCPmMCDg=="
         }
       },
       "witness_signatures": [
@@ -364,32 +350,32 @@ export const MOCK_CRYPTO = {
           "cosignature_version": "acdp-cosig/1",
           "witness_id": "did:web:witness-alpha.trust.example",
           "witnessed_checkpoint": {
-            "log_id": "did:web:registry-c.playground.local/log/receipts",
+            "log_id": "did:web:registry-a.playground.local/log/receipts",
             "tree_size": 6,
-            "root_hash": "sha256:2d81735f9de80063ffb2d96ae64fb87687df67f87bcfef256737c6487ae6ef92",
+            "root_hash": "sha256:37da8cda72e732255f10468b6acb5459a58d1f0139cbb0eb07da5ea35f6b9221",
             "timestamp": "2026-07-06T12:34:00.000Z"
           },
           "witnessed_at": "2026-07-06T12:35:00.000Z",
           "signature": {
             "algorithm": "ed25519",
             "key_id": "did:web:witness-alpha.trust.example#witness-key-1",
-            "value": "zwwxCRvwqig86r57sPkaLGK8qzdfNJv8aHN57lRy6XHAPAiX6s1bIpt5PDVhODm+Cif7rBb35DL9sAB5bFj0Aw=="
+            "value": "WEXngKjXB4aU5BYq8NxDRhE+qCGGT1sMoiVEZL58bd2zVQ5k5VJmMbojAmIcm3oCZTgzhyV42DtR22KDmnxeBA=="
           }
         },
         {
           "cosignature_version": "acdp-cosig/1",
           "witness_id": "did:key:z6Mki11Bt3TszrQcX7c1GuaNUc3gFh4XLWjCQWXrRis9QQeH",
           "witnessed_checkpoint": {
-            "log_id": "did:web:registry-c.playground.local/log/receipts",
+            "log_id": "did:web:registry-a.playground.local/log/receipts",
             "tree_size": 6,
-            "root_hash": "sha256:2d81735f9de80063ffb2d96ae64fb87687df67f87bcfef256737c6487ae6ef92",
+            "root_hash": "sha256:37da8cda72e732255f10468b6acb5459a58d1f0139cbb0eb07da5ea35f6b9221",
             "timestamp": "2026-07-06T12:34:00.000Z"
           },
           "witnessed_at": "2026-07-06T12:33:00.000Z",
           "signature": {
             "algorithm": "ed25519",
             "key_id": "did:key:z6Mki11Bt3TszrQcX7c1GuaNUc3gFh4XLWjCQWXrRis9QQeH#witness-key-1",
-            "value": "TfxGzZ7wO85PKEwaYdVkr4BAppk4WAd2n63Vk+okaxG4RyeycEB/P4xw6Sbw0XAlCnWzti1Tnt9rnCzlL87dCQ=="
+            "value": "orNlkdNsDgmRWIprqj6v8iuyaNVkRJq1NqsUu2T8zdVXGZztW+QZ6KwXBP+ITtP5bFB4O1ZVtBf0fAyfHtU9BA=="
           }
         }
       ]
