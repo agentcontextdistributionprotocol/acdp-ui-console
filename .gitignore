@@ -12,3 +12,9 @@ next-env.d.ts
 plans/
 temp/
 CLAUDE.md
+
+# Ad-hoc Playwright UI walkthroughs (require an undeclared `playwright` dep and
+# target the deployed console). Kept local, not committed.
+scripts/ui-walk.mjs
+scripts/ui-run-flow.mjs
+scripts/ui-interactive.mjs
