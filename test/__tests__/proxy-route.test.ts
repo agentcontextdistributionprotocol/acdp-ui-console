@@ -131,6 +131,22 @@ describe('proxy route — route allow-list', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('rejects a DOUBLE-encoded dot segment that survives Next\'s single decode as the literal text "%2E%2E"', async () => {
+    // Next decodes %252E%252E once, landing here as the plain 6-character
+    // string "%2E%2E" — not '.'/'..', so the literal pathComponents check
+    // never fires. But the WHATWG URL parser fetch() itself uses DOES
+    // recognize this spelling as a dot segment and normalizes it away, so
+    // without the URL-diff guard this would still reach an arbitrary route.
+    const path = ['contexts', '%2E%2E', 'admin', 'secrets'];
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects a path segment carrying an embedded query string (%3F), before it reaches the allow-list', async () => {
     const path = decodedCatchAllPath('contexts', encodeURIComponent('id?all=1'));
     expect(path).toEqual(['contexts', 'id?all=1']);

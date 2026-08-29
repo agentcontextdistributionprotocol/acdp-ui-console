@@ -114,6 +114,21 @@ async function forward(
     });
   }
   const pathname = `/${segments.join('/')}`;
+  // Belt-and-suspenders against the literal check above: a DOUBLE-encoded dot
+  // segment (`%252E%252E`) survives Next's single percent-decode pass as the
+  // literal text "%2E%2E", which `pathComponents` never recognizes as a dot
+  // segment — but the WHATWG URL parser `fetch()` itself uses DOES (the spec's
+  // path-segment state explicitly matches the case-insensitive encoded
+  // spellings of '.'/'..', not just the bare characters, and normalizes them
+  // away). Building a throwaway URL from this exact pathname and diffing
+  // catches anything that would be silently rewritten between here and the
+  // real fetch call, whatever encoding trick produced it.
+  if (new URL(`http://proxy-guard.invalid${pathname}`).pathname !== pathname) {
+    return new Response(JSON.stringify({ error: 'Forbidden: path traversal' }), {
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
   if (!isAllowedRoute(service, method, pathname)) {
     return new Response(
       JSON.stringify({ error: `Forbidden: ${method} ${pathname} is not an allowed proxy route for '${service}'` }),
