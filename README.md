@@ -90,8 +90,9 @@ GitHub Actions workflows in [`.github/workflows/`](./.github/workflows):
 | `docker.yml` | push / PR to `main`, tags `v*` | Builds the image; on `main` and tags publishes to `ghcr.io/agentcontextdistributionprotocol/acdp-ui-console`. PRs build only. |
 | `smoke.yml` | nightly + manual | Runs `scripts/smoke-routes.mjs` against the deployed console. |
 | `notify-website.yml` | `docs/**` / `README.md` on `main` | Notifies `acdp-website` to re-sync docs. |
+| `auto-merge.yml` | PR | Delegates to the shared `acdp-ci` auto-merge workflow, which can merge a green PR without human review. |
 
-Dependency updates are automated via [Dependabot](./.github/dependabot.yml) (weekly npm + actions).
+Dependency updates are automated via [Dependabot](./.github/dependabot.yml) (monthly npm + actions).
 
 **Deployment.** The primary target is Vercel (Next.js git integration; see [`vercel.json`](./vercel.json)).
 A multi-stage [`Dockerfile`](./Dockerfile) produces a standalone image (`output: 'standalone'`) — the
