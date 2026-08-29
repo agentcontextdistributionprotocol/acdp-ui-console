@@ -94,7 +94,26 @@ async function forward(
   }
   const service = rawService as ProxyService;
   const method = request.method.toUpperCase();
-  const pathname = `/${(path ?? []).join('/')}`;
+  const segments = path ?? [];
+  // Next.js splits the raw URL path on literal '/' FIRST, then percent-decodes
+  // each resulting piece independently — so an encoded `%2F` inside one raw
+  // segment decodes into a literal '/' embedded IN THAT SAME array element
+  // (e.g. `%2E%2E%2Fadmin` arrives here as path = ['contexts',
+  // '../admin/secrets']), not as extra array elements. A dot-segment or an
+  // embedded '?'/'#' therefore has to be looked for in the fully-joined
+  // pathname's OWN '/'-split components, not in `segments` itself — otherwise
+  // a pattern like `/contexts/.+` (real ctx_ids legitimately contain '/')
+  // could traverse to a different upstream path, or splice a query string,
+  // once buildUpstreamUrl's raw string concatenation is fetched (fetch() then
+  // normalizes '..' away).
+  const pathComponents = segments.join('/').split('/');
+  if (pathComponents.some((s) => s === '.' || s === '..' || s.includes('?') || s.includes('#'))) {
+    return new Response(JSON.stringify({ error: 'Forbidden: path traversal' }), {
+      status: 403,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+  const pathname = `/${segments.join('/')}`;
   if (!isAllowedRoute(service, method, pathname)) {
     return new Response(
       JSON.stringify({ error: `Forbidden: ${method} ${pathname} is not an allowed proxy route for '${service}'` }),
