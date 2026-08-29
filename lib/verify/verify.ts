@@ -46,15 +46,15 @@ interface WasmVerdict {
 
 /** Run a wasm verifier that returns a `{valid,…}` verdict, mapping throws honestly. */
 function fromWasm(run: () => string, okDetail: string, failPrefix: string): Verdict {
-  let raw: string;
+  let v: WasmVerdict;
   try {
-    raw = run();
+    v = JSON.parse(run()) as WasmVerdict;
   } catch (e) {
-    // A THROW is malformed *host input* (RFC-ACDP spec violation in the material
-    // itself), not a clean false verdict — surface it as a failure to verify.
+    // A THROW (or unparseable output) is malformed *host input* (RFC-ACDP spec
+    // violation in the material itself), not a clean false verdict — surface it
+    // as a failure to verify.
     return failed(`malformed material: ${(e as Error).message}`);
   }
-  const v = JSON.parse(raw) as WasmVerdict;
   if (v.valid) return verified(v.stale ? `${okDetail} (material is stale)` : okDetail);
   return failed(v.error ? `${failPrefix}: ${v.error.split('\n')[0]}` : failPrefix);
 }
@@ -214,7 +214,6 @@ export async function verifyWitnessQuorum(inclusion: LogInclusion, docs: DidDocM
   const wasm = await getAcdpWasm();
   const cosigs = inclusion.witness_signatures ?? [];
   const trusted = Array.from(new Set(cosigs.map((c) => c.witness_id)));
-  const required = trusted.length; // demo policy: every distinct witness on hand must verify
   const witnessDocs: Record<string, unknown> = {};
   for (const wid of trusted) {
     // Use the cosignature's own signature.key_id so a synthesized did:key
@@ -223,12 +222,29 @@ export async function verifyWitnessQuorum(inclusion: LogInclusion, docs: DidDocM
     const doc = resolveDidDocument(wid, docs, keyId);
     if (doc) witnessDocs[wid] = doc;
   }
+  // A witness whose DID document didn't resolve can't be checked — per this
+  // module's contract, absence of a key is not a failure of the proof. Exclude
+  // it from both the quorum requirement and the set handed to the evaluator,
+  // rather than letting it count against quorum by default.
+  const resolvable = trusted.filter((wid) => Object.hasOwn(witnessDocs, wid));
+  const skipped = trusted.length - resolvable.length;
+  if (trusted.length > 0 && resolvable.length === 0) {
+    return {
+      status: 'unavailable',
+      detail: `${trusted.length} witness cosignature${trusted.length === 1 ? '' : 's'} present but no witness DID document resolved — quorum not evaluated`,
+      witnessedCount: 0,
+      requiredCount: trusted.length,
+    };
+  }
+  const required = resolvable.length; // demo policy: every resolvable distinct witness must verify
+  const skippedNote =
+    skipped > 0 ? ` (${skipped} witness${skipped === 1 ? '' : 'es'} skipped — DID document not resolved)` : '';
   let raw: string;
   try {
     raw = wasm.evaluateWitnessQuorum(
       JSON.stringify(cosigs),
       JSON.stringify(inclusion.log_checkpoint),
-      JSON.stringify(trusted),
+      JSON.stringify(resolvable),
       JSON.stringify(witnessDocs),
       JSON.stringify({ min_witnesses: Math.max(1, required), max_age_secs: null }),
       new Date().toISOString(),
@@ -236,23 +252,24 @@ export async function verifyWitnessQuorum(inclusion: LogInclusion, docs: DidDocM
   } catch (e) {
     return { status: 'failed', detail: `malformed cosignatures: ${(e as Error).message}`, witnessedCount: 0, requiredCount: required };
   }
-  const report = JSON.parse(raw) as {
-    witnessed_count: number;
-    meets_quorum: boolean;
-    failures?: unknown[];
-  };
+  let report: { witnessed_count: number; meets_quorum: boolean; failures?: unknown[] };
+  try {
+    report = JSON.parse(raw) as typeof report;
+  } catch (e) {
+    return { status: 'failed', detail: `malformed quorum result: ${(e as Error).message}`, witnessedCount: 0, requiredCount: required };
+  }
   const wc = report.witnessed_count;
   if (report.meets_quorum) {
     return {
       status: 'verified',
-      detail: `${wc}-witnessed — every cosignature independently verified against its witness key`,
+      detail: `${wc}-witnessed — every cosignature independently verified against its witness key${skippedNote}`,
       witnessedCount: wc,
       requiredCount: required,
     };
   }
   return {
     status: 'failed',
-    detail: `${wc} of ${required} witness cosignatures verified`,
+    detail: `${wc} of ${required} witness cosignatures verified${skippedNote}`,
     witnessedCount: wc,
     requiredCount: required,
   };

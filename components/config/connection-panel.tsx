@@ -16,20 +16,12 @@ const ROWS: { service: ProxyService; label: string }[] = [
 ];
 
 export function ConnectionPanel() {
-  const {
-    serviceUrls,
-    setServiceUrl,
-    controlPlaneApiKey,
-    setControlPlaneApiKey,
-    jaegerUrl,
-    setJaegerUrl,
-    demoMode,
-    setDemoMode,
-  } = usePreferencesStore();
+  const { jaegerUrl, setJaegerUrl, demoMode, setDemoMode } = usePreferencesStore();
   const [results, setResults] = useState<Record<string, boolean | 'pending'>>({});
   const [saved, setSaved] = useState(false);
 
-  // Inputs already persist live via the store; Save is an explicit acknowledgement.
+  // Jaeger is the only browser-editable value here; Save is an explicit
+  // acknowledgement since it already persists live via the store.
   const save = () => {
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
@@ -69,11 +61,7 @@ export function ConnectionPanel() {
             <div key={r.service} className="form-row">
               <span className="form-label">{r.label}</span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input
-                  className="form-input"
-                  value={serviceUrls[r.service]}
-                  onChange={(e) => setServiceUrl(r.service, e.target.value)}
-                />
+                <span style={{ fontSize: 11, color: C.faint }}>server-configured</span>
                 {results[r.service] !== undefined && (
                   <span
                     className={`dot ${results[r.service] === 'pending' ? 'warn' : results[r.service] ? 'ok' : 'err'}`}
@@ -83,16 +71,6 @@ export function ConnectionPanel() {
               </div>
             </div>
           ))}
-          <div className="form-row">
-            <span className="form-label">CP API Key</span>
-            <input
-              className="form-input"
-              type="password"
-              placeholder="Bearer token"
-              value={controlPlaneApiKey}
-              onChange={(e) => setControlPlaneApiKey(e.target.value)}
-            />
-          </div>
           <div className="form-row">
             <span className="form-label">Jaeger</span>
             <input className="form-input" value={jaegerUrl} onChange={(e) => setJaegerUrl(e.target.value)} />
@@ -106,7 +84,8 @@ export function ConnectionPanel() {
             Test All
           </Button>
           <span style={{ fontSize: 11, color: C.faint }}>
-            Service URLs are stored in your browser only. The Next.js proxy reads server-side env vars at runtime.
+            Service URLs and the control-plane API key are server-side only (env vars read by the Next.js
+            proxy) — nothing the browser sends can change them.
           </span>
         </div>
       </CardBody>
