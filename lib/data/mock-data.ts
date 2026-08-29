@@ -920,7 +920,7 @@ export const MOCK_SDK_MATRIX = [
   { component: 'acdp-rs library', version: '0.8.1', status: 'ok' },
   { component: 'acdp-py binding', version: '0.7.0', status: 'ok' },
   { component: 'acdp-node binding', version: '0.7.0', status: 'ok' },
-  { component: 'Registry (Rust/axum)', version: '0.3.0 + 0.4.0 witness agg', status: 'ok' },
-  { component: 'Control Plane (NestJS)', version: '0.4.0 witness', status: 'ok' },
+  { component: 'Registry (Rust/axum)', version: '0.4.0 (witness aggregation)', status: 'ok' },
+  { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)', status: 'ok' },
   { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S31)', status: 'ok' },
 ];

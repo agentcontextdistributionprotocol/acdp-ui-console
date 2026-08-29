@@ -68,7 +68,9 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     { method: 'POST', pattern: /^\/webhooks$/ },
     { method: 'PATCH', pattern: /^\/webhooks\/[^/]+$/ },
     { method: 'DELETE', pattern: /^\/webhooks\/[^/]+$/ },
-    { method: 'GET', pattern: /^\/contexts\/[^/]+$/ },
+    // ctx_id is an `acdp://authority/uuid` URI (see lib/api/client.ts's
+    // getContext) — it contains slashes, so this must NOT be `[^/]+`.
+    { method: 'GET', pattern: /^\/contexts\/.+$/ },
     { method: 'GET', pattern: /^\/auth\/revocations$/ },
   ],
   'registry-a': REGISTRY_ROUTES,

@@ -19,6 +19,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { useMounted } from '@/lib/hooks/use-mounted';
+import { SCENARIO_COUNT } from '@/lib/data/mock-data';
 
 interface NavItem {
   href: string;
@@ -40,7 +41,7 @@ const NAV: NavGroup[] = [
   {
     section: 'Playground',
     items: [
-      { href: '/scenarios', label: 'Scenarios', icon: FlaskConical, badge: '31' },
+      { href: '/scenarios', label: 'Scenarios', icon: FlaskConical, badge: String(SCENARIO_COUNT) },
       { href: '/runs', label: 'Runs', icon: Play },
     ],
   },

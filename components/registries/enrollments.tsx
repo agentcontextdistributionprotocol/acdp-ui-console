@@ -65,7 +65,7 @@ export function Enrollments() {
           <ErrorPanel
             message={
               toggleForbidden
-                ? 'Enrollment changes require an admin API key (set it in Config).'
+                ? 'Enrollment changes require an admin API key. The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this console to grant it admin scope.'
                 : String(toggleMut.error)
             }
           />
@@ -265,7 +265,9 @@ function EnrollForm({
       </div>
       {mut.error && (
         <div style={{ marginTop: 12, fontSize: 11, color: C.danger }}>
-          {forbidden ? 'Enrollment requires an admin API key (set it in Config).' : String(mut.error)}
+          {forbidden
+            ? 'Enrollment requires an admin API key. The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this console to grant it admin scope.'
+            : String(mut.error)}
         </div>
       )}
     </Modal>

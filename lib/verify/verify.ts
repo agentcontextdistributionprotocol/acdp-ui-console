@@ -226,7 +226,7 @@ export async function verifyWitnessQuorum(inclusion: LogInclusion, docs: DidDocM
   // module's contract, absence of a key is not a failure of the proof. Exclude
   // it from both the quorum requirement and the set handed to the evaluator,
   // rather than letting it count against quorum by default.
-  const resolvable = trusted.filter((wid) => wid in witnessDocs);
+  const resolvable = trusted.filter((wid) => Object.hasOwn(witnessDocs, wid));
   const skipped = trusted.length - resolvable.length;
   if (trusted.length > 0 && resolvable.length === 0) {
     return {
@@ -252,11 +252,12 @@ export async function verifyWitnessQuorum(inclusion: LogInclusion, docs: DidDocM
   } catch (e) {
     return { status: 'failed', detail: `malformed cosignatures: ${(e as Error).message}`, witnessedCount: 0, requiredCount: required };
   }
-  const report = JSON.parse(raw) as {
-    witnessed_count: number;
-    meets_quorum: boolean;
-    failures?: unknown[];
-  };
+  let report: { witnessed_count: number; meets_quorum: boolean; failures?: unknown[] };
+  try {
+    report = JSON.parse(raw) as typeof report;
+  } catch (e) {
+    return { status: 'failed', detail: `malformed quorum result: ${(e as Error).message}`, witnessedCount: 0, requiredCount: required };
+  }
   const wc = report.witnessed_count;
   if (report.meets_quorum) {
     return {

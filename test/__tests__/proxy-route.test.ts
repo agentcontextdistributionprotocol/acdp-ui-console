@@ -65,6 +65,16 @@ describe('proxy route — routing & validation', () => {
   });
 });
 
+/**
+ * Mirrors how Next.js resolves a `[...path]` catch-all: the request pathname is
+ * percent-decoded and THEN split on '/' — so a `%2F` inside one raw segment
+ * (e.g. an `encodeURIComponent`'d ctx_id, which itself contains '/') reappears
+ * as extra array entries rather than staying inside one segment.
+ */
+function decodedCatchAllPath(...rawSegments: string[]): string[] {
+  return decodeURIComponent(rawSegments.join('/')).split('/');
+}
+
 describe('proxy route — route allow-list', () => {
   it('rejects a path the console never calls, before touching upstream', async () => {
     const fetchMock = mockFetch(() => upstream());
@@ -87,6 +97,22 @@ describe('proxy route — route allow-list', () => {
     );
     expect(res.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a real acdp:// ctx_id — which contains slashes once Next decodes the catch-all segment', async () => {
+    // getContext() in lib/api/client.ts sends `/contexts/${encodeURIComponent(ctxId)}`.
+    // A real ctx_id is an `acdp://authority/uuid` URI, so the encoded segment
+    // decodes back into several array entries, not one flat id.
+    const ctxId = 'acdp://registry-a.playground.local/f4a2c9e1-1d2b-4a3c-9e8f-001';
+    const path = decodedCatchAllPath('contexts', encodeURIComponent(ctxId));
+    expect(path.length).toBeGreaterThan(2); // sanity: this really does split into extra segments
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).not.toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('allows every route lib/api/client.ts actually issues', async () => {
@@ -112,6 +138,11 @@ describe('proxy route — route allow-list', () => {
       { method: 'PATCH', service: 'control-plane', path: ['webhooks', 'wh1'] },
       { method: 'DELETE', service: 'control-plane', path: ['webhooks', 'wh1'] },
       { method: 'GET', service: 'control-plane', path: ['contexts', 'ctx1'] },
+      {
+        method: 'GET',
+        service: 'control-plane',
+        path: decodedCatchAllPath('contexts', encodeURIComponent('acdp://registry-a.playground.local/f4a2c9e1')),
+      },
       { method: 'GET', service: 'control-plane', path: ['auth', 'revocations'] },
       { method: 'GET', service: 'registry-a', path: ['healthz'] },
       { method: 'GET', service: 'registry-a', path: ['contexts', 'search'] },

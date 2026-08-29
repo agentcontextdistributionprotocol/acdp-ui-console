@@ -46,7 +46,7 @@ function VerdictChip({
 }) {
   if (error && !verdict) {
     return (
-      <span className="chip bad" title={error}>
+      <span className="chip warn" title={error}>
         {label ? `${label} · ` : ''}unavailable
       </span>
     );
@@ -82,7 +82,7 @@ function VerdictChip({
 function VerdictCaption({ verdict, ready, error }: { verdict?: Verdict; ready: boolean; error?: string }) {
   const pending = !ready || !verdict;
   const text = error && pending ? error : pending ? 'Verifying client-side…' : verdict.detail;
-  const color = error && pending ? C.danger : pending ? C.faint : verdict.status === 'failed' ? C.danger : C.faint;
+  const color = error && pending ? C.warning : pending ? C.faint : verdict.status === 'failed' ? C.danger : C.faint;
   return <div style={{ fontSize: 10, color, marginTop: 2 }}>{text}</div>;
 }
 
@@ -449,7 +449,20 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
                 error={verdicts.error}
                 label={`${verdicts.witnessQuorum.witnessedCount}-witnessed`}
               />
-            ) : (
+            ) : null}
+            {verdicts.ready &&
+            verdicts.witnessQuorum &&
+            verdicts.witnessQuorum.status !== 'unavailable' &&
+            verdicts.witnessQuorum.requiredCount < distinctWitnessCount ? (
+              <span
+                className="chip warn"
+                title="A witness cosignature's DID document did not resolve, so it was excluded from both the count and the quorum requirement — quorum was only evaluated over the witnesses that could be checked."
+              >
+                {distinctWitnessCount - verdicts.witnessQuorum.requiredCount} witness
+                {distinctWitnessCount - verdicts.witnessQuorum.requiredCount === 1 ? '' : 'es'} skipped
+              </span>
+            ) : null}
+            {!(verdicts.ready && verdicts.witnessQuorum) && (
               <VerdictChip
                 verdict={undefined}
                 ready={verdicts.ready}
