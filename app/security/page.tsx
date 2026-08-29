@@ -41,7 +41,7 @@ function RevocationFeed() {
       <div className="card-body">
         {revs.isLoading && <LoadingSkeleton rows={4} height={36} />}
         {forbidden && (
-          <ErrorPanel message="The configured control-plane key is not an admin key. Set an admin API key in Config to view the revocation feed." />
+          <ErrorPanel message="The control-plane key configured server-side (CONTROL_PLANE_API_KEY) is not an admin key. This is set as a deployment environment variable, not from the console UI — ask whoever deployed this console to grant it admin scope." />
         )}
         {revs.error && !forbidden && <ErrorPanel message={String(revs.error)} />}
         {!revs.isLoading && !revs.error && entries.length === 0 && (

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { GET, POST } from '@/app/api/proxy/[service]/[...path]/route';
+import { GET, POST, PATCH, DELETE } from '@/app/api/proxy/[service]/[...path]/route';
 
 /** Build the Next 15 async-params context the route handler expects. */
 function ctx(service: string, path?: string[]) {
@@ -57,18 +57,177 @@ describe('proxy route — routing & validation', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:3001/runs?limit=5');
   });
 
-  it('hits the base url root when no path segments are given', async () => {
+  it('hits the base url root when no path segments are given, for an allowed route', async () => {
     vi.stubEnv('PLAYGROUND_BASE_URL', 'http://localhost:8000');
     const fetchMock = mockFetch(() => upstream());
-    await GET(new NextRequest('http://localhost/api/proxy/playground'), ctx('playground', undefined));
-    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/');
+    await GET(new NextRequest('http://localhost/api/proxy/playground/healthz'), ctx('playground', ['healthz']));
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:8000/healthz');
+  });
+});
+
+/**
+ * Mirrors how Next.js resolves a `[...path]` catch-all: the raw URL is split
+ * on LITERAL '/' first, and each resulting piece is percent-decoded
+ * independently — so a `%2F` inside one raw segment (e.g. an
+ * `encodeURIComponent`'d ctx_id, which itself contains '/') decodes into a
+ * literal '/' EMBEDDED IN THAT SAME array element, not into extra array
+ * entries. Empirically confirmed against a real `next start` server: a raw
+ * segment `%2E%2E%2Fadmin%2Fsecrets` arrives as the single element
+ * `'../admin/secrets'`, not as `['..', 'admin', 'secrets']`.
+ */
+function decodedCatchAllPath(...rawSegments: string[]): string[] {
+  return rawSegments.map((s) => decodeURIComponent(s));
+}
+
+describe('proxy route — route allow-list', () => {
+  it('rejects a path the console never calls, before touching upstream', async () => {
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/playground'),
+      ctx('playground', undefined),
+    );
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "Forbidden: GET / is not an allowed proxy route for 'playground'",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a known path with the wrong method', async () => {
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/control-plane/registries/enroll'),
+      ctx('control-plane', ['registries', 'enroll']),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a dot-segment embedded (post-decode) inside one raw path segment, before it can traverse a `.+` pattern to another upstream route', async () => {
+    // Encodes exactly the attack the widened /contexts/.+ pattern makes
+    // reachable: one raw segment `%2E%2E%2Fadmin%2Fsecrets` decodes into the
+    // single array element '../admin/secrets' (see decodedCatchAllPath) —
+    // which would otherwise resolve upstream to /admin/secrets once joined
+    // into the pathname.
+    const path = decodedCatchAllPath('contexts', '%2E%2E%2Fadmin%2Fsecrets');
+    expect(path).toEqual(['contexts', '../admin/secrets']);
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a bare `..` array segment too (belt-and-suspenders, regardless of how it was split)', async () => {
+    const path = ['contexts', '..', 'admin', 'secrets'];
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a DOUBLE-encoded dot segment that survives Next\'s single decode as the literal text "%2E%2E"', async () => {
+    // Next decodes %252E%252E once, landing here as the plain 6-character
+    // string "%2E%2E" — not '.'/'..', so the literal pathComponents check
+    // never fires. But the WHATWG URL parser fetch() itself uses DOES
+    // recognize this spelling as a dot segment and normalizes it away, so
+    // without the URL-diff guard this would still reach an arbitrary route.
+    const path = ['contexts', '%2E%2E', 'admin', 'secrets'];
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a path segment carrying an embedded query string (%3F), before it reaches the allow-list', async () => {
+    const path = decodedCatchAllPath('contexts', encodeURIComponent('id?all=1'));
+    expect(path).toEqual(['contexts', 'id?all=1']);
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows a real acdp:// ctx_id — which decodes to a segment containing embedded slashes', async () => {
+    // getContext() in lib/api/client.ts sends `/contexts/${encodeURIComponent(ctxId)}`.
+    // A real ctx_id is an `acdp://authority/uuid` URI, so the one raw,
+    // encoded URL segment decodes back into a single array element that
+    // itself contains '/' characters — never a flat, slash-free id.
+    const ctxId = 'acdp://registry-a.playground.local/f4a2c9e1-1d2b-4a3c-9e8f-001';
+    const path = decodedCatchAllPath('contexts', encodeURIComponent(ctxId));
+    expect(path).toEqual(['contexts', ctxId]); // sanity: decodes in place, no re-split
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/control-plane/${path.join('/')}`),
+      ctx('control-plane', path),
+    );
+    expect(res.status).not.toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows every route lib/api/client.ts actually issues', async () => {
+    const cases: Array<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; service: string; path: string[] }> = [
+      { method: 'GET', service: 'playground', path: ['healthz'] },
+      { method: 'GET', service: 'playground', path: ['scenarios'] },
+      { method: 'POST', service: 'playground', path: ['runs'] },
+      { method: 'GET', service: 'playground', path: ['runs', 'r1'] },
+      { method: 'GET', service: 'control-plane', path: ['healthz'] },
+      { method: 'GET', service: 'control-plane', path: ['dashboard', 'overview'] },
+      { method: 'GET', service: 'control-plane', path: ['runs'] },
+      { method: 'GET', service: 'control-plane', path: ['runs', 'r1'] },
+      { method: 'GET', service: 'control-plane', path: ['runs', 'r1', 'lineage'] },
+      { method: 'GET', service: 'control-plane', path: ['runs', 'r1', 'events'] },
+      { method: 'GET', service: 'control-plane', path: ['events'] },
+      { method: 'GET', service: 'control-plane', path: ['agents'] },
+      { method: 'GET', service: 'control-plane', path: ['registries'] },
+      { method: 'GET', service: 'control-plane', path: ['registries', 'enrollments'] },
+      { method: 'POST', service: 'control-plane', path: ['registries', 'enroll'] },
+      { method: 'GET', service: 'control-plane', path: ['metrics'] },
+      { method: 'GET', service: 'control-plane', path: ['webhooks'] },
+      { method: 'POST', service: 'control-plane', path: ['webhooks'] },
+      { method: 'PATCH', service: 'control-plane', path: ['webhooks', 'wh1'] },
+      { method: 'DELETE', service: 'control-plane', path: ['webhooks', 'wh1'] },
+      { method: 'GET', service: 'control-plane', path: ['contexts', 'ctx1'] },
+      {
+        method: 'GET',
+        service: 'control-plane',
+        path: decodedCatchAllPath('contexts', encodeURIComponent('acdp://registry-a.playground.local/f4a2c9e1')),
+      },
+      { method: 'GET', service: 'control-plane', path: ['auth', 'revocations'] },
+      { method: 'GET', service: 'registry-a', path: ['healthz'] },
+      { method: 'GET', service: 'registry-a', path: ['contexts', 'search'] },
+      { method: 'GET', service: 'registry-a', path: ['lineages', 'l1'] },
+      { method: 'GET', service: 'registry-a', path: ['lineages', 'l1', 'current'] },
+      { method: 'GET', service: 'registry-a', path: ['.well-known', 'acdp.json'] },
+      { method: 'GET', service: 'registry-a', path: ['.well-known', 'jwks.json'] },
+      { method: 'GET', service: 'registry-b', path: ['contexts', 'search'] },
+    ];
+    for (const { method, service, path } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/${service}/${path.join('/')}`;
+      const handler = method === 'GET' ? GET : method === 'POST' ? POST : method === 'PATCH' ? PATCH : DELETE;
+      const res = await handler(new NextRequest(url, { method }), ctx(service, path));
+      expect(res.status, `${method} ${service}/${path.join('/')}`).not.toBe(403);
+      expect(fetchMock, `${method} ${service}/${path.join('/')}`).toHaveBeenCalledTimes(1);
+    }
   });
 });
 
 describe('proxy route — request header hygiene', () => {
   it('forwards allow-listed headers but strips cookies and client authorization', async () => {
     const fetchMock = mockFetch(() => upstream());
-    const req = new NextRequest('http://localhost/api/proxy/registry-a/contexts', {
+    const req = new NextRequest('http://localhost/api/proxy/registry-a/contexts/search', {
       headers: {
         cookie: 'session=abc',
         authorization: 'Bearer client-token',
@@ -76,7 +235,7 @@ describe('proxy route — request header hygiene', () => {
         'content-type': 'application/json',
       },
     });
-    await GET(req, ctx('registry-a', ['contexts']));
+    await GET(req, ctx('registry-a', ['contexts', 'search']));
     const sent = fetchMock.mock.calls[0][1].headers as Headers;
     expect(sent.get('x-tenant-id')).toBe('tenant-7');
     expect(sent.get('content-type')).toBe('application/json');
@@ -98,10 +257,10 @@ describe('proxy route — request header hygiene', () => {
   it('never lets a client authorization header reach a registry', async () => {
     vi.stubEnv('CONTROL_PLANE_API_KEY', 'cp-secret');
     const fetchMock = mockFetch(() => upstream());
-    const req = new NextRequest('http://localhost/api/proxy/registry-b/contexts', {
+    const req = new NextRequest('http://localhost/api/proxy/registry-b/contexts/search', {
       headers: { authorization: 'Bearer client-token' },
     });
-    await GET(req, ctx('registry-b', ['contexts']));
+    await GET(req, ctx('registry-b', ['contexts', 'search']));
     const sent = fetchMock.mock.calls[0][1].headers as Headers;
     expect(sent.get('authorization')).toBeNull();
   });
@@ -139,8 +298,8 @@ describe('proxy route — response header scrubbing & errors', () => {
       }),
     );
     const res = await GET(
-      new NextRequest('http://localhost/api/proxy/registry-a/contexts'),
-      ctx('registry-a', ['contexts']),
+      new NextRequest('http://localhost/api/proxy/registry-a/contexts/search'),
+      ctx('registry-a', ['contexts', 'search']),
     );
     expect(res.status).toBe(201);
     expect(res.statusText).toBe('Created');
