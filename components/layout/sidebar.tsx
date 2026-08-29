@@ -40,7 +40,7 @@ const NAV: NavGroup[] = [
   {
     section: 'Playground',
     items: [
-      { href: '/scenarios', label: 'Scenarios', icon: FlaskConical, badge: '25' },
+      { href: '/scenarios', label: 'Scenarios', icon: FlaskConical, badge: '31' },
       { href: '/runs', label: 'Runs', icon: Play },
     ],
   },

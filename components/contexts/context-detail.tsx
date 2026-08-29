@@ -15,6 +15,7 @@ import {
   Stamp,
   ScrollText,
   Eye,
+  AlertTriangle,
 } from 'lucide-react';
 import { JsonViewer } from '@/components/ui/json-viewer';
 import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
@@ -32,7 +33,24 @@ import type { Verdict } from '@/lib/verify/verify';
  * `unavailable` ("material only") is honest about a missing signer key/DID doc
  * and is NEVER shown as a pass.
  */
-function VerdictChip({ verdict, ready, label }: { verdict?: Verdict; ready: boolean; label?: string }) {
+function VerdictChip({
+  verdict,
+  ready,
+  error,
+  label,
+}: {
+  verdict?: Verdict;
+  ready: boolean;
+  error?: string;
+  label?: string;
+}) {
+  if (error && !verdict) {
+    return (
+      <span className="chip bad" title={error}>
+        {label ? `${label} · ` : ''}unavailable
+      </span>
+    );
+  }
   if (!ready || !verdict) {
     return (
       <span className="chip" title="Running client-side verification…">
@@ -61,9 +79,10 @@ function VerdictChip({ verdict, ready, label }: { verdict?: Verdict; ready: bool
 }
 
 /** Small caption echoing the verdict's human-readable detail. */
-function VerdictCaption({ verdict, ready }: { verdict?: Verdict; ready: boolean }) {
-  const text = !ready || !verdict ? 'Verifying client-side…' : verdict.detail;
-  const color = !ready || !verdict ? C.faint : verdict.status === 'failed' ? C.danger : C.faint;
+function VerdictCaption({ verdict, ready, error }: { verdict?: Verdict; ready: boolean; error?: string }) {
+  const pending = !ready || !verdict;
+  const text = error && pending ? error : pending ? 'Verifying client-side…' : verdict.detail;
+  const color = error && pending ? C.danger : pending ? C.faint : verdict.status === 'failed' ? C.danger : C.faint;
   return <div style={{ fontSize: 10, color, marginTop: 2 }}>{text}</div>;
 }
 
@@ -182,6 +201,31 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 12 : 16, fontSize }}>
+      {/* Client-side verifier failed to initialize (wasm 404 / MIME / CSP, …) —
+          without this, every trust-surface chip below would sit in "verifying…"
+          forever with no indication anything went wrong. */}
+      {verdicts.error && (
+        <div
+          role="alert"
+          style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+            padding: '10px 12px',
+            borderRadius: 6,
+            border: '1px dashed rgba(240, 93, 122, 0.5)',
+            background: 'rgba(240, 93, 122, 0.07)',
+            color: C.danger,
+          }}
+        >
+          <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} aria-hidden />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 11.5 }}>Client-side verification unavailable</div>
+            <div style={{ color: C.text, fontSize: 11, marginTop: 3 }}>{verdicts.error}</div>
+          </div>
+        </div>
+      )}
+
       {/* Retraction banner (RFC-ACDP-0013) */}
       {retracted && (
         <div
@@ -244,9 +288,14 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {/* Integrity / signature */}
       <Group icon={ShieldCheck} title="Integrity">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
-          <VerdictChip verdict={verdicts.contentHash} ready={verdicts.ready} label="content_hash" />
+          <VerdictChip verdict={verdicts.contentHash} ready={verdicts.ready} error={verdicts.error} label="content_hash" />
           {b.signature ? (
-            <VerdictChip verdict={verdicts.producerSignature} ready={verdicts.ready} label={`sig ${b.signature.algorithm}`} />
+            <VerdictChip
+              verdict={verdicts.producerSignature}
+              ready={verdicts.ready}
+              error={verdicts.error}
+              label={`sig ${b.signature.algorithm}`}
+            />
           ) : (
             <span className="chip">unsigned</span>
           )}
@@ -277,7 +326,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {ctx.registry_receipt && (
         <Group icon={BadgeCheck} title="Registry receipt">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-            <VerdictChip verdict={verdicts.registryReceipt} ready={verdicts.ready} />
+            <VerdictChip verdict={verdicts.registryReceipt} ready={verdicts.ready} error={verdicts.error} />
             <BindingChip label="ctx" ok={ctx.registry_receipt.ctx_id === b.ctx_id} />
             <BindingChip label="lineage" ok={ctx.registry_receipt.lineage_id === b.lineage_id} />
             <BindingChip label="origin" ok={ctx.registry_receipt.origin_registry === b.origin_registry} />
@@ -300,7 +349,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(ctx.registry_receipt.signature.value, 16, 8)}
             </span>
           </Field>
-          <VerdictCaption verdict={verdicts.registryReceipt} ready={verdicts.ready} />
+          <VerdictCaption verdict={verdicts.registryReceipt} ready={verdicts.ready} error={verdicts.error} />
         </Group>
       )}
 
@@ -308,7 +357,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {lhr && (
         <Group icon={Stamp} title="Lineage-head receipt">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-            <VerdictChip verdict={verdicts.lineageHeadReceipt} ready={verdicts.ready} />
+            <VerdictChip verdict={verdicts.lineageHeadReceipt} ready={verdicts.ready} error={verdicts.error} />
             <BindingChip label="lineage" ok={lhr.lineage_id === b.lineage_id} />
             <BindingChip label="head = this ctx" ok={lhr.head_ctx_id === b.ctx_id} />
             <BindingChip label="head version" ok={lhr.head_version === b.version} />
@@ -339,7 +388,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(lhr.signature.value, 16, 8)}
             </span>
           </Field>
-          <VerdictCaption verdict={verdicts.lineageHeadReceipt} ready={verdicts.ready} />
+          <VerdictCaption verdict={verdicts.lineageHeadReceipt} ready={verdicts.ready} error={verdicts.error} />
         </Group>
       )}
 
@@ -347,7 +396,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       {inclusion && (
         <Group icon={ScrollText} title="Transparency log">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-            <VerdictChip verdict={verdicts.transparencyLog} ready={verdicts.ready} />
+            <VerdictChip verdict={verdicts.transparencyLog} ready={verdicts.ready} error={verdicts.error} />
           </div>
           <Field label="log">
             <span className="did" style={{ fontSize: 10.5 }}>
@@ -382,7 +431,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               {shortId(inclusion.log_checkpoint.signature.value, 16, 8)}
             </span>
           </Field>
-          <VerdictCaption verdict={verdicts.transparencyLog} ready={verdicts.ready} />
+          <VerdictCaption verdict={verdicts.transparencyLog} ready={verdicts.ready} error={verdicts.error} />
         </Group>
       )}
 
@@ -397,10 +446,16 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
                   detail: verdicts.witnessQuorum.detail,
                 }}
                 ready={verdicts.ready}
+                error={verdicts.error}
                 label={`${verdicts.witnessQuorum.witnessedCount}-witnessed`}
               />
             ) : (
-              <VerdictChip verdict={undefined} ready={false} label={`${distinctWitnessCount}-witnessed`} />
+              <VerdictChip
+                verdict={undefined}
+                ready={verdicts.ready}
+                error={verdicts.error}
+                label={`${distinctWitnessCount}-witnessed`}
+              />
             )}
             <BindingChip label="log" ok={witnessesBindLog} />
             <BindingChip label="tree size" ok={witnessesBindSize} />
@@ -438,7 +493,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
               </div>
             );
           })}
-          <VerdictCaption verdict={verdicts.witnessQuorum} ready={verdicts.ready} />
+          <VerdictCaption verdict={verdicts.witnessQuorum} ready={verdicts.ready} error={verdicts.error} />
         </Group>
       )}
 
