@@ -96,7 +96,10 @@ Dependency updates are automated via [Dependabot](./.github/dependabot.yml) (mon
 The `typescript` major is held below `6.1` via an `ignore` entry, since typescript-eslint hard-throws
 above that range until [typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
 lands; see [issue #59](https://github.com/agentcontextdistributionprotocol/acdp-ui-console/issues/59)
-for the unblock condition.
+for the unblock condition. `@types/node` is similarly held below `23` — types must track this repo's
+pinned Node 22 runtime (`.nvmrc`), not the newest publish — see
+[issue #60](https://github.com/agentcontextdistributionprotocol/acdp-ui-console/issues/60) for the
+unblock condition.
 
 **Deployment.** The primary target is Vercel (Next.js git integration; see [`vercel.json`](./vercel.json)).
 A multi-stage [`Dockerfile`](./Dockerfile) produces a standalone image (`output: 'standalone'`) — the

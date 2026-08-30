@@ -18,6 +18,14 @@ updates:
       # Remove once typescript-eslint ships TS 7 support.
       - dependency-name: typescript
         versions: ['>=6.1']
+      # Types must track the runtime, not the newest publish: this repo pins
+      # Node 22 everywhere (.nvmrc, ci.yml, Dockerfile). @types/node>=23 ships
+      # declarations for node:ffi/node:quic, which crash on node:22-alpine.
+      # auto-merge.yml would otherwise silently revert this on a green
+      # typecheck (22 vs 26 output is byte-identical today). See #60.
+      # Remove once the runtime itself moves off Node 22.
+      - dependency-name: "@types/node"
+        versions: ['>=23']
 
   - package-ecosystem: github-actions
     directory: /
