@@ -4,7 +4,7 @@ Orchestration and observability console for the **Agent Context Distribution Pro
 Launch playground scenarios, watch context publication/retrieval flow live, explore cross-registry
 lineage DAGs, and monitor the control plane — all from one console.
 
-Built with Next.js 15 (App Router), React 19, TypeScript (strict), TanStack Query, Zustand,
+Built with Next.js 16 (App Router), React 19, TypeScript (strict), TanStack Query, Zustand,
 Recharts, and React Flow. No Tailwind — styling is pure CSS variables with a `C.*` design-token object.
 
 ## Quick start

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Multi-stage build for the ACDP UI console (Next.js 15 / React 19).
+# Multi-stage build for the ACDP UI console (Next.js 16 / React 19).
 # Produces a lean runtime image from Next's standalone output.
 
 # ── deps: install node_modules from the lockfile ────────────────────────
