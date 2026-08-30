@@ -73,6 +73,8 @@ Coverage spans `lib/**` and the `app/api/**` route handlers. What's covered:
   (`app/api/stream/*`): header allow-listing, server-side bearer injection, response scrubbing, and
   502 fallbacks. Because these import `next/server`, their test files opt into the Node environment
   with a `// @vitest-environment node` docblock.
+- **Auth gate** — the root `middleware.ts` (session validation, fail-open/closed env-var behavior,
+  CSRF/Origin check) and `app/api/auth/{login,logout}` (`middleware.test.ts`, `auth-route.test.ts`).
 - **Store & hooks** — the preferences store (incl. localStorage persistence) and `useDebounced` /
   `useMounted`.
 - **Mock-data invariants** — structural checks over `lib/data/mock-data.ts`.
@@ -104,6 +106,15 @@ guard.
 A multi-stage [`Dockerfile`](./Dockerfile) produces a standalone image (`output: 'standalone'`) — the
 published GHCR image bakes demo mode (`NEXT_PUBLIC_ACDP_UI_DEMO_MODE=true`) since `NEXT_PUBLIC_*` is
 inlined at build time; the sibling compose stacks override that ARG to build a real-mode image.
+
+**`ACDP_UI_CONSOLE_PASSWORD` is required in any production deployment that calls the real backends.**
+Root `middleware.ts` gates `/api/proxy/*` and `/api/stream/*` behind a signed operator-session cookie
+(`/login` → `POST /api/auth/login`); with the var unset, gated requests 503 in production (fail
+closed) but pass through unauthenticated in development (fail open, with a console warning) so the
+zero-setup demo keeps working. A pure demo deployment that never flips `NEXT_PUBLIC_ACDP_UI_DEMO_MODE`
+to `false` never calls the gated routes and doesn't need the var configured. There is no login
+rate-limiting (an accepted tradeoff for a single-operator tool), so pick a high-entropy passphrase —
+4+ diceware words or 20+ random characters.
 
 ## Related repositories
 

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid,
   FlaskConical,
@@ -15,6 +15,7 @@ import {
   GitBranch,
   ShieldCheck,
   BadgeCheck,
+  LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
@@ -68,11 +69,22 @@ const NAV: NavGroup[] = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const mounted = useMounted();
   // Default to demo mode until the persisted store has rehydrated, so SSR and
   // the first client paint agree.
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const showDemo = !mounted || demoMode;
+
+  // Best-effort: the operator session cookie is HttpOnly, so this can't check
+  // whether one exists before rendering. Clearing a cookie that was never set
+  // (demo mode, or the auth gate unconfigured) is a harmless no-op — the
+  // middleware fail-open/closed behavior in middleware.ts is unaffected.
+  const signOut = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    router.push('/login');
+    router.refresh();
+  };
 
   return (
     <aside className="sidebar">
@@ -114,6 +126,10 @@ export function Sidebar() {
           <div className={`dot ${showDemo ? 'warn' : 'ok'} pulse`} />
           <span>{showDemo ? 'Demo mode' : 'Live backend'}</span>
         </div>
+        <button type="button" className="nav-item sidebar-signout" onClick={signOut}>
+          <LogOut />
+          Sign out
+        </button>
       </div>
     </aside>
   );

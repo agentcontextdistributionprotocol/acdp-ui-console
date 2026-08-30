@@ -94,3 +94,42 @@ describe('fetchText', () => {
     await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({ status: 503 });
   });
 });
+
+describe('401 → redirect to /login', () => {
+  // jsdom's real `window.location.assign` is non-configurable (can't be
+  // `vi.spyOn`'d directly), so stub the whole global instead — restored by
+  // the top-level `vi.unstubAllGlobals()` in `afterEach`.
+  function stubLocation(pathname = '/dashboard') {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { pathname, assign });
+    return assign;
+  }
+
+  it('fetchJson redirects the browser to /login on a 401 (the auth gate)', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+    await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 401 });
+    expect(assign).toHaveBeenCalledWith('/login');
+  });
+
+  it('fetchText redirects the browser to /login on a 401 (the auth gate)', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+    await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({ status: 401 });
+    expect(assign).toHaveBeenCalledWith('/login');
+  });
+
+  it('does not redirect on other error statuses', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('boom', { ok: false, status: 502 }));
+    await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 502 });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('does not redirect again when already on /login', async () => {
+    const assign = stubLocation('/login');
+    mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+    await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 401 });
+    expect(assign).not.toHaveBeenCalled();
+  });
+});
