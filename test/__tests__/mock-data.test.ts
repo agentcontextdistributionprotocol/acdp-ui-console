@@ -12,8 +12,11 @@ import {
   MOCK_JWKS,
   MOCK_ENROLLMENTS,
   MOCK_CAPABILITIES,
+  MOCK_SDK_MATRIX,
+  SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
+import packageLock from '@/package-lock.json';
 
 describe('mock scenarios', () => {
   it('covers the full catalog', () => {
@@ -29,6 +32,55 @@ describe('mock scenarios', () => {
     for (const s of MOCK_SCENARIOS) {
       expect(['single', 'dual', 'cross_org']).toContain(s.registry_mode);
     }
+  });
+});
+
+describe('SDK matrix', () => {
+  it("the acdp-rs row matches the version this console's wasm is locked to", () => {
+    const wasmVersion: string =
+      packageLock.packages['node_modules/@agentcontextdistributionprotocol/acdp-wasm'].version;
+    const wasmMajorMinor = wasmVersion.split('.').slice(0, 2).join('.');
+    const rustRow = MOCK_SDK_MATRIX.find((r) => r.component === 'acdp-rs library');
+    expect(rustRow).toBeDefined();
+    const rustMajorMinor = rustRow!.version.split('.').slice(0, 2).join('.');
+    expect(rustMajorMinor).toBe(wasmMajorMinor);
+  });
+
+  it('the ACDP spec row is 0.4.0 Final (RFC-ACDP-0015 promoted 2026-08-28)', () => {
+    const specRow = MOCK_SDK_MATRIX.find((r) => r.component === 'ACDP spec');
+    expect(specRow?.version).toBe('0.4.0 Final');
+  });
+
+  it('every row has a non-empty component, version and ok status', () => {
+    for (const row of MOCK_SDK_MATRIX) {
+      expect(row.component.length).toBeGreaterThan(0);
+      expect(row.version.length).toBeGreaterThan(0);
+      expect(row.status).toBe('ok');
+    }
+  });
+});
+
+describe('mock scenarios > catalog parity', () => {
+  it('the catalog has 33 scenarios matching the playground catalog', () => {
+    expect(SCENARIO_COUNT).toBe(33);
+  });
+
+  it('includes s21_capabilities_p256 and s33_anchors', () => {
+    const ids = new Set(MOCK_SCENARIOS.map((s) => s.id));
+    expect(ids.has('s21_capabilities_p256')).toBe(true);
+    expect(ids.has('s33_anchors')).toBe(true);
+  });
+
+  it('scenario ids are unique and contiguous s1..s33', () => {
+    const ids = MOCK_SCENARIOS.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const numbers = ids
+      .map((id) => {
+        const m = id.match(/^s(\d+)_/);
+        return m ? Number(m[1]) : NaN;
+      })
+      .sort((a, b) => a - b);
+    expect(numbers).toEqual(Array.from({ length: 33 }, (_, i) => i + 1));
   });
 });
 

@@ -43,7 +43,7 @@ const DID_B = 'did:web:registry-b.local:agents:cross-b';
 const DID_SOLO = 'did:web:registry-a.local:agents:solo';
 const DID_KEY = DID_KEY_PRODUCER; // ephemeral did:key agent (real key, minted in mock-crypto)
 
-// ── Scenarios (mirrors playground catalog, S1–S20) ────────────────────
+// ── Scenarios (mirrors playground catalog, S1–S21) ────────────────────
 export const MOCK_SCENARIOS: ScenarioDef[] = [
   {
     id: 's1_single_publish',
@@ -225,6 +225,16 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
     framework: 'langchain',
     default_inputs: { topic: 'tenant onboarding' },
   },
+  {
+    id: 's21_capabilities_p256',
+    name: 'CP Capability P-256 Declaration',
+    description:
+      'A P-256 agent self-declares a capability with the ecdsa-p256 signature the control plane\'s capability DTO now accepts; fully offline, signature self-verified.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: {},
+  },
   // ── ACDP 0.2 trust & hardening scenarios (S22–S26) ──────────────────
   {
     id: 's22_receipts',
@@ -325,6 +335,17 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
     agent_count: 1,
     framework: 'langchain',
     default_inputs: { topic: 'revoked producer key' },
+  },
+  // ── RFC-ACDP-0016 external anchors (0.5.0 line, Draft) ──────────────
+  {
+    id: 's33_anchors',
+    name: 'External Anchors',
+    description:
+      'A producer ties a context to an artifact in an external system via a signed anchor (RFC-ACDP-0016); a scheme-unaware verifier still verifies fully without ever dereferencing the anchor URI.',
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'anchored disclosure' },
   },
 ];
 
@@ -917,10 +938,10 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 // ── SDK matrix (config page) ──────────────────────────────────────────
 export const MOCK_SDK_MATRIX = [
   { component: 'ACDP spec', version: '0.4.0 Final', status: 'ok' },
-  { component: 'acdp-rs library', version: '0.8.1', status: 'ok' },
-  { component: 'acdp-py binding', version: '0.7.0', status: 'ok' },
-  { component: 'acdp-node binding', version: '0.7.0', status: 'ok' },
+  { component: 'acdp-rs library', version: '0.8.3', status: 'ok' },
+  { component: 'acdp-py binding', version: '0.8.0', status: 'ok' },
+  { component: 'acdp-node binding', version: '0.8.0', status: 'ok' },
   { component: 'Registry (Rust/axum)', version: '0.4.0 (witness aggregation)', status: 'ok' },
   { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)', status: 'ok' },
-  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S31)', status: 'ok' },
+  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S33)', status: 'ok' },
 ];
