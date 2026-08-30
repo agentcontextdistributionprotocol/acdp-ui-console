@@ -3,13 +3,13 @@
 # Produces a lean runtime image from Next's standalone output.
 
 # ── deps: install node_modules from the lockfile ────────────────────────
-FROM node:22-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
 # ── builder: compile the Next.js app ────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -24,7 +24,7 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
 RUN npm run build
 
 # ── runner: minimal image with just the standalone server ───────────────
-FROM node:22-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
