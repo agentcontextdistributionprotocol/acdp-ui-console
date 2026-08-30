@@ -25,6 +25,7 @@ import type { FullContext, LifecycleEvent } from '@/lib/types';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { MOCK_DID_DOCS } from '@/lib/data/mock-data';
 import { useContextVerdicts } from '@/lib/verify/use-verdicts';
+import { useNow } from '@/lib/hooks/use-now';
 import type { Verdict } from '@/lib/verify/verify';
 
 /**
@@ -174,8 +175,9 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const didDocs = demoMode ? MOCK_DID_DOCS : undefined;
   const verdicts = useContextVerdicts(ctx, didDocs);
+  const now = useNow();
 
-  const expired = b.expires_at ? new Date(b.expires_at).getTime() < Date.now() : false;
+  const expired = b.expires_at ? new Date(b.expires_at).getTime() < now : false;
 
   const status = ctx.registry_state.status;
   const retracted = status === 'retracted';
@@ -183,7 +185,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
   const retraction = latestEvent(lifecycleEvents, 'retracted');
 
   const lhr = ctx.lineage_head_receipt;
-  const lhrAgeMs = lhr ? Date.now() - new Date(lhr.as_of).getTime() : 0;
+  const lhrAgeMs = lhr ? now - new Date(lhr.as_of).getTime() : 0;
   const lhrStale = lhr ? lhrAgeMs > HEAD_RECEIPT_STALE_MS : false;
 
   const inclusion = ctx.log_inclusion;
@@ -475,7 +477,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
             <BindingChip label="root hash" ok={witnessesBindRoot} />
           </div>
           {witnesses.map((w, i) => {
-            const ageMs = Date.now() - new Date(w.witnessed_at).getTime();
+            const ageMs = now - new Date(w.witnessed_at).getTime();
             const stale = ageMs > WITNESS_COSIG_STALE_MS;
             return (
               <div

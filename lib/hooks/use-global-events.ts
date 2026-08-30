@@ -42,14 +42,14 @@ function normalize(raw: Record<string, unknown>): CpContextEvent {
 export function useGlobalEvents(enabled: boolean) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const [events, setEvents] = useState<CpContextEvent[]>([]);
-  const [live, setLive] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const live = enabled && connected;
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     if (!enabled) {
       esRef.current?.close();
       esRef.current = null;
-      setLive(false);
       return;
     }
 
@@ -58,17 +58,17 @@ export function useGlobalEvents(enabled: boolean) {
       listCpEvents({ limit: MAX }, true).then((res) => {
         if (cancelled) return;
         setEvents(res.data);
-        setLive(true);
+        setConnected(true);
       });
       return () => {
         cancelled = true;
-        setLive(false);
+        setConnected(false);
       };
     }
 
     const es = new EventSource('/api/stream/events');
     esRef.current = es;
-    es.onopen = () => setLive(true);
+    es.onopen = () => setConnected(true);
     const handle = (e: MessageEvent) => {
       try {
         const ev = normalize(JSON.parse(e.data));
@@ -92,12 +92,12 @@ export function useGlobalEvents(enabled: boolean) {
       'context_republished',
       'search_executed',
     ].forEach((t) => es.addEventListener(t, handle as EventListener));
-    es.onerror = () => setLive(false);
+    es.onerror = () => setConnected(false);
 
     return () => {
       es.close();
       esRef.current = null;
-      setLive(false);
+      setConnected(false);
     };
   }, [enabled, demoMode]);
 

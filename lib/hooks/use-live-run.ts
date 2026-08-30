@@ -56,17 +56,25 @@ function cpEventToStep(e: CpContextEvent): StepEvent {
  */
 export function useLiveRun(runId: string, runStatus?: RunStatus) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
+  const initialStatus = (): LiveStatus =>
+    demoMode && !isTerminalRun(runStatus) ? 'live' : 'connecting';
   const [events, setEvents] = useState<StepEvent[]>([]);
-  const [status, setStatus] = useState<LiveStatus>('connecting');
+  const [status, setStatus] = useState<LiveStatus>(initialStatus);
   const [lineage, setLineage] = useState<LineageGraph | undefined>(undefined);
   const esRef = useRef<EventSource | null>(null);
   const retriesRef = useRef(0);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
-  useEffect(() => {
+  const resetKey = `${runId}|${runStatus ?? ''}|${demoMode}`;
+  const [prevKey, setPrevKey] = useState(resetKey);
+  if (prevKey !== resetKey) {
+    setPrevKey(resetKey);
     setEvents([]);
-    setStatus('connecting');
+    setStatus(initialStatus());
     setLineage(undefined);
+  }
+
+  useEffect(() => {
     retriesRef.current = 0;
 
     const append = (ev: StepEvent) => {
@@ -101,7 +109,6 @@ export function useLiveRun(runId: string, runStatus?: RunStatus) {
     // ── Demo replay (active run) ─────────────────────────────────────────
     if (demoMode) {
       const frames = getMockRunEvents(runId);
-      setStatus('live');
       frames.forEach((frame, i) => {
         const timer = setTimeout(() => append(frame), i * DEMO_INTERVAL);
         timersRef.current.push(timer);
