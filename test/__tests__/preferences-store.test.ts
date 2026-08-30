@@ -57,4 +57,22 @@ describe('preferences store — persistence', () => {
     expect(state.demoMode).toBe(false);
     expect(state.jaegerUrl).toBe('https://jaeger.seeded');
   });
+
+  it('regression lock: persists only demoMode/jaegerUrl — never a credential (API key, password, token, etc.)', () => {
+    usePreferencesStore.getState().setDemoMode(false);
+    usePreferencesStore.getState().setJaegerUrl('https://jaeger.prod');
+
+    const raw = localStorage.getItem(STORAGE_KEY);
+    expect(raw).not.toBeNull();
+    const persisted = JSON.parse(raw as string).state as Record<string, unknown>;
+
+    expect(Object.keys(persisted).sort()).toEqual(['demoMode', 'jaegerUrl']);
+
+    // Belt-and-suspenders: no key or value anywhere in the persisted payload
+    // should look like a secret, however this store evolves.
+    const serialized = JSON.stringify(persisted).toLowerCase();
+    for (const forbidden of ['password', 'passphrase', 'apikey', 'api_key', 'token', 'secret', 'bearer']) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
 });
