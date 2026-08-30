@@ -11,6 +11,13 @@ updates:
         update-types: [minor, patch]
       major-updates:
         update-types: [major]
+    ignore:
+      # typescript-eslint hard-throws on TS >=7 (no stable compiler API until
+      # TS 7.1); typescript-eslint#10940 tracks it. 6.1+ also exceeds its
+      # `<6.1.0` peer, so the guard sits below 7, not at it.
+      # Remove once typescript-eslint ships TS 7 support.
+      - dependency-name: typescript
+        versions: ['>=6.1']
 
   - package-ecosystem: github-actions
     directory: /
