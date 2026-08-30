@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Play } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Card } from '@/components/ui/card';
@@ -27,7 +27,11 @@ export default function RunsPage() {
   const { data, isLoading, error } = useRuns(status === 'all' ? {} : { status });
   const { data: scenarios } = useScenarios();
 
-  useEffect(() => setVisible(PAGE), [status]);
+  const [prevStatus, setPrevStatus] = useState(status);
+  if (prevStatus !== status) {
+    setPrevStatus(status);
+    setVisible(PAGE);
+  }
 
   const scenarioName = useMemo(() => {
     const map = new Map((scenarios ?? []).map((s) => [s.id, s.name]));

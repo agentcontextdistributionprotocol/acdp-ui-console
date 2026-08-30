@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
+
+const subscribe = () => () => {};
 
 /**
  * Returns false on the server / first client render, true after mount. Use to
@@ -8,7 +10,5 @@ import { useEffect, useState } from 'react';
  * client paint agree, avoiding hydration mismatches.
  */
 export function useMounted(): boolean {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  return mounted;
+  return useSyncExternalStore(subscribe, () => true, () => false);
 }

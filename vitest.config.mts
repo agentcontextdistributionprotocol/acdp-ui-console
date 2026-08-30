@@ -12,10 +12,17 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       include: ['lib/**/*.ts', 'app/api/**/*.ts'],
-      // Pure type modules and the data-fetching React hooks (covered by
-      // integration, not unit). use-debounced / use-mounted do have unit tests,
-      // but the whole hooks dir stays excluded to keep the coverage config simple.
-      exclude: ['lib/types.ts', 'lib/colors.ts', 'lib/hooks/**'],
+      exclude: [
+        'lib/types.ts',
+        'lib/colors.ts',
+        // React Query wrappers — covered by integration, not unit.
+        'lib/hooks/use-dashboard.ts',
+        'lib/hooks/use-registries.ts',
+        'lib/hooks/use-runs.ts',
+        'lib/hooks/use-scenarios.ts',
+        'lib/hooks/use-security.ts',
+        'lib/hooks/use-trust.ts',
+      ],
     },
   },
   resolve: {

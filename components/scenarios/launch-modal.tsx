@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
@@ -19,14 +19,17 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!scenario) return;
-    const init: Record<string, string> = {};
-    for (const [k, v] of Object.entries(scenario.default_inputs)) init[k] = String(v ?? '');
-    setInputs(init);
-    setMode(scenario.registry_mode);
-    setError(null);
-  }, [scenario]);
+  const [prevScenarioId, setPrevScenarioId] = useState(scenario?.id ?? null);
+  if (prevScenarioId !== (scenario?.id ?? null)) {
+    setPrevScenarioId(scenario?.id ?? null);
+    if (scenario) {
+      const init: Record<string, string> = {};
+      for (const [k, v] of Object.entries(scenario.default_inputs)) init[k] = String(v ?? '');
+      setInputs(init);
+      setMode(scenario.registry_mode);
+      setError(null);
+    }
+  }
 
   if (!scenario) return null;
 

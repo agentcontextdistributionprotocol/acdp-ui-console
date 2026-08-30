@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { GitBranch } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
@@ -65,23 +65,20 @@ function ByRun({ demoMode }: { demoMode: boolean }) {
   const [activeCtx, setActiveCtx] = useState<string | null>(null);
 
   const runs = useMemo(() => (runsData?.data ?? []).filter((r) => r.contextsCount > 0), [runsData]);
-
-  useEffect(() => {
-    if (!runId && runs.length > 0) setRunId(runs[0].runId);
-  }, [runs, runId]);
+  const selectedRunId = runId ?? runs[0]?.runId ?? null;
 
   const scenarioName = (id: string) => scenarios?.find((s) => s.id === id)?.name ?? id;
 
   const lineage = useQuery({
-    queryKey: ['lineage-graph', runId, demoMode],
-    queryFn: () => getRunLineageGraph(runId!, demoMode),
-    enabled: !!runId,
+    queryKey: ['lineage-graph', selectedRunId, demoMode],
+    queryFn: () => getRunLineageGraph(selectedRunId!, demoMode),
+    enabled: !!selectedRunId,
   });
 
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <select className="form-input" style={{ width: 320 }} value={runId ?? ''} onChange={(e) => setRunId(e.target.value)}>
+        <select className="form-input" style={{ width: 320 }} value={selectedRunId ?? ''} onChange={(e) => setRunId(e.target.value)}>
           {runs.map((r) => (
             <option key={r.runId} value={r.runId}>
               {scenarioName(r.scenarioId)} · {r.runId}
@@ -91,7 +88,7 @@ function ByRun({ demoMode }: { demoMode: boolean }) {
       </div>
       {isLoading && <LoadingSkeleton rows={1} height={420} />}
       {!isLoading && runs.length === 0 && <EmptyState title="No runs with lineage yet" />}
-      {runId && (
+      {selectedRunId && (
         <div className="card" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--topbar-h) - 150px)' }}>
           <div className="feed-header">
             <h2>Lineage Graph</h2>

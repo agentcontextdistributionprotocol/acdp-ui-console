@@ -39,9 +39,14 @@ export function useContextVerdicts(ctx: FullContext, docs: DidDocMap): ContextVe
   // Re-run whenever the verified material or the available DID docs change.
   const key = `${ctx.body.ctx_id}:${ctx.body.content_hash}`;
 
+  const [prevKey, setPrevKey] = useState(key);
+  if (prevKey !== key) {
+    setPrevKey(key);
+    setState({ ready: false });
+  }
+
   useEffect(() => {
     let cancelled = false;
-    setState({ ready: false });
 
     (async () => {
       try {
