@@ -31,7 +31,7 @@ export function SdkMatrix() {
 
   return (
     <Card>
-      <CardHeader title="SDK Matrix" sub={demoMode ? 'demo' : 'live status'} />
+      <CardHeader title="SDK Matrix" sub={demoMode ? 'demo' : 'live status · reference versions'} />
       <table className="data-table">
         <thead>
           <tr>
