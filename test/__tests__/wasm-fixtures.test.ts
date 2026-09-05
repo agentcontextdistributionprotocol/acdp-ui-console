@@ -10,159 +10,77 @@
 // variant), so it is hand-fed the binary exactly as
 // `scripts/gen-mock-crypto.mjs` already does for the fixture generator
 // itself: `readFileSync` the `_bg.wasm` and pass the bytes to `init()`.
+//
+// Boundary: because this file hand-feeds bytes to `init()` directly, it does
+// NOT exercise `getAcdpWasm()`'s dynamic-`import()` + webpack
+// `new URL('..._bg.wasm', import.meta.url)` path (`lib/verify/wasm.ts:20-31`)
+// — the very path an acdp-wasm bump touching `__wbg_load` would affect. A
+// green gate here plus a green `next build` still leaves the browser loader
+// itself unverified.
 // ══════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import path from 'node:path';
+import { createRequire } from 'node:module';
 import { beforeAll, describe, expect, it } from 'vitest';
 import init, * as acdp from '@agentcontextdistributionprotocol/acdp-wasm';
 import type { ContextBody, LogInclusion, RegistryReceipt } from '@/lib/types';
-import { MOCK_CONTEXTS } from '@/lib/data/mock-data';
+import { MOCK_CONTEXTS, MOCK_LINEAGE_CHAINS } from '@/lib/data/mock-data';
 import { LIN_ATTESTED, MOCK_CRYPTO, MOCK_DID_DOCS, WITNESS_BETA_DID } from '@/lib/data/mock-crypto';
-import { resolveDidDocument } from '@/lib/verify/resolve';
+import { resolveDidDocument, resolveEd25519Raw, resolveVerificationKey } from '@/lib/verify/resolve';
 
 const REGISTRY_A_DID = 'did:web:registry-a.playground.local';
-const AUTH_A = 'registry-a.playground.local';
-const AUTH_B = 'registry-b.playground.local';
 
-// ── hand-rolled key extraction ──────────────────────────────────────────
-// `lib/verify/wasm.ts:17-19` hard-rejects `getAcdpWasm()` when
-// `typeof window === 'undefined'`, so `lib/verify/verify.ts` and the key
-// resolvers in `lib/verify/resolve.ts` (`resolveVerificationKey`,
-// `resolveEd25519Raw`) are unusable from a node test. Their raw-key
-// extraction helpers (`multibaseEd25519Raw`, `b64urlToBytes`,
-// `base58decode`) are module-private and not exported — exporting them
-// purely to satisfy a test would widen resolve.ts's public surface for no
-// production benefit, so this file duplicates the ~30 lines instead.
-// `resolveDidDocument` (resolve.ts:159) *is* pure, sync and wasm-free, so
-// it is imported and reused rather than re-implemented below.
-const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-function base58decode(s: string): Uint8Array {
-  const bytes: number[] = [0];
-  for (const ch of s) {
-    const val = B58.indexOf(ch);
-    if (val < 0) throw new Error(`invalid base58 char '${ch}'`);
-    let carry = val;
-    for (let j = 0; j < bytes.length; j++) {
-      carry += bytes[j] * 58;
-      bytes[j] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) {
-      bytes.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  let zeros = 0;
-  for (const ch of s) {
-    if (ch === '1') zeros++;
-    else break;
-  }
-  const out = new Uint8Array(zeros + bytes.length);
-  for (let i = 0; i < bytes.length; i++) out[zeros + i] = bytes[bytes.length - 1 - i];
-  return out;
-}
-/** `z…` multibase (base58btc) with an ed25519-pub multicodec prefix (0xed 0x01) → raw 32-byte key. */
-function multibaseEd25519Raw(mb: string): Uint8Array {
-  if (!mb.startsWith('z')) throw new Error('unsupported multibase (expected base58btc "z")');
-  const decoded = base58decode(mb.slice(1));
-  if (decoded[0] === 0xed && decoded[1] === 0x01) return decoded.slice(2);
-  return decoded;
-}
-/** JWK EC P-256 x/y (base64url) → SEC1-uncompressed 65-byte key. */
-function jwkP256ToSec1(x: string, y: string): Uint8Array {
-  const xb = Buffer.from(x, 'base64url');
-  const yb = Buffer.from(y, 'base64url');
-  const out = new Uint8Array(1 + xb.length + yb.length);
-  out[0] = 0x04;
-  out.set(xb, 1);
-  out.set(yb, 1 + xb.length);
-  return out;
-}
-
-interface DidDocLike {
-  verificationMethod?: Array<{
-    id: string;
-    publicKeyMultibase?: string;
-    publicKeyJwk?: { x?: string; y?: string };
-  }>;
-}
-/** Raw ed25519 public key (base64) from a did:web doc's (sole) verification method. */
-function ed25519RawB64FromDoc(did: string): string {
-  const doc = MOCK_DID_DOCS[did] as DidDocLike;
-  const method = doc.verificationMethod?.[0];
-  if (!method?.publicKeyMultibase) throw new Error(`no ed25519 multibase key on ${did}`);
-  return Buffer.from(multibaseEd25519Raw(method.publicKeyMultibase)).toString('base64');
+// ── key extraction ───────────────────────────────────────────────────
+// `resolveVerificationKey` / `resolveEd25519Raw` (lib/verify/resolve.ts)
+// only call the wasm-gated `getAcdpWasm()` inside their `did:key:` branch;
+// the `did:web` branch (`findMethod` → `keyFromMethod`) is pure, sync-safe
+// logic over `btoa`/`atob`, which are ordinary Node globals. Every lookup in
+// this file is `did:web`, so the real resolver is used directly here rather
+// than a hand-rolled duplicate — a side benefit is that this gate now also
+// exercises `lib/verify/resolve.ts` itself (in coverage scope), not a
+// parallel copy of it that isn't.
+async function ed25519RawB64FromDoc(did: string): Promise<string> {
+  const raw = await resolveEd25519Raw(did, MOCK_DID_DOCS);
+  if (!raw) throw new Error(`no ed25519 key resolved for ${did}`);
+  return raw;
 }
 /** SEC1 P-256 public key (base64) from a did:web doc's (sole) verification method. */
-function p256Sec1B64FromDoc(did: string): string {
-  const doc = MOCK_DID_DOCS[did] as DidDocLike;
-  const jwk = doc.verificationMethod?.[0]?.publicKeyJwk;
-  if (!jwk?.x || !jwk?.y) throw new Error(`no P-256 JWK key on ${did}`);
-  return Buffer.from(jwkP256ToSec1(jwk.x, jwk.y)).toString('base64');
+async function p256Sec1B64FromDoc(did: string): Promise<string> {
+  const key = await resolveVerificationKey(did, MOCK_DID_DOCS);
+  if (!key || key.algorithm !== 'ecdsa-p256') throw new Error(`no P-256 key resolved for ${did}`);
+  return key.pubKeyB64;
 }
 
 /** SHA-256 of a UTF-8 string, hex — this is a node test file, so node's real `crypto` is used directly (same as `gen-mock-crypto.mjs`). */
 const sha256Hex = (input: string) => createHash('sha256').update(input, 'utf8').digest('hex');
 
-// ── the five MOCK_CRYPTO entries' identity fields ───────────────────────
-// content_hash excludes ctx_id/lineage_id/origin_registry/created_at from its
-// preimage (see the comment above `MOCK_CONTEXTS` in mock-data.ts, and the
-// drift assertion below, which depends on it) — but these are the *actual*
-// values `scripts/gen-mock-crypto.mjs` used when minting each entry, so the
-// bodies reconstructed here are byte-for-byte what was signed, not just
-// "some value that happens to still verify".
-const IDENTITY: Record<keyof typeof MOCK_CRYPTO, Pick<ContextBody, 'ctx_id' | 'lineage_id' | 'origin_registry' | 'created_at'>> = {
-  arcticSource: {
-    ctx_id: `acdp://${AUTH_A}/f4a2c9e1-1d2b-4a3c-9e8f-001`,
-    lineage_id: 'lin-arctic-001',
-    origin_registry: AUTH_A,
-    created_at: '2026-07-06T11:59:00.000Z',
-  },
-  arcticDeriv: {
-    ctx_id: `acdp://${AUTH_B}/9c11a7f2-7b6c-4d5e-8a9b-002`,
-    lineage_id: 'lin-arctic-002',
-    origin_registry: AUTH_B,
-    created_at: '2026-07-06T12:30:00.000Z',
-  },
-  cashV1: {
-    ctx_id: `acdp://${AUTH_A}/2e78f01a-solo`,
-    lineage_id: 'lin-cashflow-001',
-    origin_registry: AUTH_A,
-    created_at: '2026-07-06T09:00:00.000Z',
-  },
-  cashV2: {
-    ctx_id: `acdp://${AUTH_A}/2e78f01a-solo-v2`,
-    lineage_id: 'lin-cashflow-001',
-    origin_registry: AUTH_A,
-    created_at: '2026-07-05T12:00:00.000Z',
-  },
-  attested: {
-    ctx_id: `acdp://${AUTH_A}/attested-001`,
-    lineage_id: LIN_ATTESTED,
-    origin_registry: AUTH_A,
-    created_at: '2026-07-06T11:57:00.000Z',
-  },
+// ── full ContextBody per MOCK_CRYPTO entry ──────────────────────────────
+// Sourced from the SAME assembled bodies the app actually serves
+// (mock-data.ts), rather than a third hand-copied identity table: four of
+// the five are `MOCK_CONTEXTS` entries directly, and `cashV2` (which never
+// surfaces in `MOCK_CONTEXTS` — see the drift-canary comment below) is the
+// second entry of its lineage chain. Typing this as
+// `Record<keyof typeof MOCK_CRYPTO, ContextBody>` preserves the
+// exhaustiveness guard: a 6th `MOCK_CRYPTO` entry without a matching body
+// here fails `npm run typecheck`.
+const FULL_BODY: Record<keyof typeof MOCK_CRYPTO, ContextBody> = {
+  arcticSource: MOCK_CONTEXTS[0].body,
+  arcticDeriv: MOCK_CONTEXTS[1].body,
+  cashV1: MOCK_CONTEXTS[2].body,
+  cashV2: MOCK_LINEAGE_CHAINS['lin-cashflow-001'][1].body,
+  attested: MOCK_CONTEXTS[3].body,
 };
 
-/** Reassemble a full ContextBody for a MOCK_CRYPTO entry (mirrors mock-data.ts's own assembly). */
 function fullBodyOf(key: keyof typeof MOCK_CRYPTO): ContextBody {
-  const entry = MOCK_CRYPTO[key];
-  return {
-    ...IDENTITY[key],
-    ...entry.hashed,
-    content_hash: entry.content_hash,
-    signature: entry.signature,
-  } as ContextBody;
+  return FULL_BODY[key];
 }
 
 const MOCK_CRYPTO_KEYS = Object.keys(MOCK_CRYPTO) as Array<keyof typeof MOCK_CRYPTO>;
 
 describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
   beforeAll(async () => {
-    const wasmPath = path.join(
-      process.cwd(),
-      'node_modules/@agentcontextdistributionprotocol/acdp-wasm/acdp_wasm_bg.wasm',
+    const wasmPath = createRequire(import.meta.url).resolve(
+      '@agentcontextdistributionprotocol/acdp-wasm/acdp_wasm_bg.wasm',
     );
     // Load once for the whole file — the binary is ~757KB. A load failure
     // here must fail the whole suite loudly; nothing downstream swallows it.
@@ -173,10 +91,13 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
   // These counts are load-bearing for coverage: MOCK_CRYPTO_KEYS drives the
   // content-hash/signature loops below (5 entries: 4 Ed25519 + 1 P-256) and
   // MOCK_CONTEXTS drives the drift-canary loop (4 entries). Emptying either
-  // array already fails loudly (vitest errors on an empty `it.each` table),
-  // but silently *shrinking* one (5→3, 4→2) would quietly reduce how much of
-  // the wasm surface this gate exercises on an otherwise green run — nothing
-  // else in the repo asserts these counts.
+  // array already fails loudly (vitest errors on an empty `it.each` table).
+  // `toHaveLength` also fires symmetrically on *growth* (5→6, 4→5), not just
+  // shrinkage — that's fine: a deliberate fixture addition is expected to
+  // touch this line, and doing so consciously is correct behavior. What this
+  // guards against is either direction happening *silently*, quietly
+  // changing how much of the wasm surface this gate exercises on an
+  // otherwise green run — nothing else in the repo asserts these counts.
   it('fixture counts have not silently shrunk', () => {
     expect(MOCK_CRYPTO_KEYS).toHaveLength(5);
     expect(MOCK_CONTEXTS).toHaveLength(4);
@@ -190,31 +111,31 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
   });
 
   // ── 2. all 5 producer signatures verify (4 Ed25519 + 1 P-256) ──────────
-  it('arcticSource producer signature verifies (Ed25519, did:web)', () => {
+  it('arcticSource producer signature verifies (Ed25519, did:web)', async () => {
     const { content_hash, signature } = MOCK_CRYPTO.arcticSource;
-    const rawKey = ed25519RawB64FromDoc('did:web:registry-a.local:agents:cross-a');
+    const rawKey = await ed25519RawB64FromDoc('did:web:registry-a.local:agents:cross-a');
     const verdict = JSON.parse(acdp.verifySignatureEd25519(rawKey, signature.value, content_hash)) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });
 
-  it('arcticDeriv producer signature verifies (ECDSA-P256, did:web)', () => {
+  it('arcticDeriv producer signature verifies (ECDSA-P256, did:web)', async () => {
     const { content_hash, signature } = MOCK_CRYPTO.arcticDeriv;
     expect(signature.algorithm).toBe('ecdsa-p256');
-    const sec1Key = p256Sec1B64FromDoc('did:web:registry-b.local:agents:cross-b');
+    const sec1Key = await p256Sec1B64FromDoc('did:web:registry-b.local:agents:cross-b');
     const verdict = JSON.parse(acdp.verifySignatureP256(sec1Key, signature.value, content_hash)) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });
 
-  it('cashV1 producer signature verifies (Ed25519, did:web)', () => {
+  it('cashV1 producer signature verifies (Ed25519, did:web)', async () => {
     const { content_hash, signature } = MOCK_CRYPTO.cashV1;
-    const rawKey = ed25519RawB64FromDoc('did:web:registry-a.local:agents:solo');
+    const rawKey = await ed25519RawB64FromDoc('did:web:registry-a.local:agents:solo');
     const verdict = JSON.parse(acdp.verifySignatureEd25519(rawKey, signature.value, content_hash)) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });
 
-  it('cashV2 producer signature verifies (Ed25519, did:web)', () => {
+  it('cashV2 producer signature verifies (Ed25519, did:web)', async () => {
     const { content_hash, signature } = MOCK_CRYPTO.cashV2;
-    const rawKey = ed25519RawB64FromDoc('did:web:registry-a.local:agents:solo');
+    const rawKey = await ed25519RawB64FromDoc('did:web:registry-a.local:agents:solo');
     const verdict = JSON.parse(acdp.verifySignatureEd25519(rawKey, signature.value, content_hash)) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });
@@ -231,14 +152,14 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
   });
 
   // ── 3. registry receipt (RFC-ACDP-0010) ────────────────────────────────
-  it('registry receipt verifies (independently recomputed body hash + fingerprint)', () => {
+  it('registry receipt verifies (independently recomputed body hash + fingerprint)', async () => {
     const receipt = MOCK_CRYPTO.attested.registry_receipt as RegistryReceipt;
     const body = fullBodyOf('attested');
     // Recompute the body hash OURSELVES, same as verify.ts does — never trust
     // the receipt's echoed content_hash.
     const preimage = acdp.canonicalPreimage(JSON.stringify(body));
     const recomputed = `sha256:${sha256Hex(preimage)}`;
-    const registryKeyB64 = ed25519RawB64FromDoc(REGISTRY_A_DID);
+    const registryKeyB64 = await ed25519RawB64FromDoc(REGISTRY_A_DID);
     // Recompute the producer-key fingerprint OURSELVES too (verify.ts:120) —
     // never trust the receipt's echoed key_fingerprint. `attested`'s producer
     // key is a did:key (offline), resolved the same way as the standalone
@@ -252,11 +173,11 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     // Make the derivation load-bearing: it must land on the same fingerprint
     // the receipt itself carries, not just "some value that happens to verify".
     expect(fingerprint).toBe(receipt.key_fingerprint);
-    // ctx_id comes from IDENTITY (the value that was actually signed), not the
-    // receipt under test — production binds against `body.ctx_id`, an
+    // ctx_id comes from FULL_BODY (the value that was actually signed), not
+    // the receipt under test — production binds against `body.ctx_id`, an
     // independent value (verify.ts:122).
     const verdict = JSON.parse(
-      acdp.verifyReceipt(JSON.stringify(receipt), registryKeyB64, IDENTITY.attested.ctx_id, recomputed, fingerprint),
+      acdp.verifyReceipt(JSON.stringify(receipt), registryKeyB64, body.ctx_id, recomputed, fingerprint),
     ) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });
@@ -267,7 +188,7 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     const expected = {
       registry_did: REGISTRY_A_DID,
       lineage_id: LIN_ATTESTED,
-      head_ctx_id: IDENTITY.attested.ctx_id,
+      head_ctx_id: FULL_BODY.attested.ctx_id,
       head_version: 1,
       head_status: 'active',
     };
