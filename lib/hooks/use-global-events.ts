@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { listCpEvents } from '@/lib/api/client';
+import { confirmSessionOrRedirect } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { CpContextEvent } from '@/lib/types';
 
@@ -43,6 +44,13 @@ export function useGlobalEvents(enabled: boolean) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const [events, setEvents] = useState<CpContextEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  // True once the browser has given up for good (readyState CLOSED) and this
+  // hook — which never reconnects itself — will not open a new stream on its
+  // own. Distinct from the ordinary "not yet connected" state (initial open,
+  // or a transient blip the browser is still retrying at readyState
+  // CONNECTING), so callers can avoid promising an automatic retry that
+  // won't happen.
+  const [dropped, setDropped] = useState(false);
   const live = enabled && connected;
   const esRef = useRef<EventSource | null>(null);
 
@@ -92,14 +100,30 @@ export function useGlobalEvents(enabled: boolean) {
       'context_republished',
       'search_executed',
     ].forEach((t) => es.addEventListener(t, handle as EventListener));
-    es.onerror = () => setConnected(false);
+    es.onerror = () => {
+      setConnected(false);
+      // This hook never manually closes/reconnects — it relies on the
+      // browser's own EventSource retry. A transient blip leaves readyState
+      // CONNECTING (the browser is already retrying on its own); readyState
+      // only lands on CLOSED when the browser has given up for good, which
+      // is exactly what happens when the gate rejects the reconnect with a
+      // fatal 401 because the operator's session expired mid-session. Only
+      // that terminal case is worth a confirm request — and it's also the
+      // only case where `dropped` should flip, since CONNECTING means a
+      // retry genuinely is in flight.
+      if (es.readyState === EventSource.CLOSED) {
+        setDropped(true);
+        void confirmSessionOrRedirect();
+      }
+    };
 
     return () => {
       es.close();
       esRef.current = null;
       setConnected(false);
+      setDropped(false);
     };
   }, [enabled, demoMode]);
 
-  return { events, live };
+  return { events, live, dropped };
 }

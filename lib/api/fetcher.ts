@@ -1,3 +1,4 @@
+import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { ProxyService } from '@/lib/types';
 
 export class ApiError extends Error {
@@ -62,4 +63,27 @@ export async function fetchText(service: ProxyService, path: string): Promise<st
     throw new ApiError(response.status, message, service, path);
   }
   return response.text();
+}
+
+// A native EventSource's `onerror` carries no HTTP status, so a caller can't
+// tell "the operator session expired mid-connection" (401 — should redirect
+// to /login) from an ordinary network blip (should just keep retrying) from
+// the error event alone. Callers use this to confirm AFTER an SSE error,
+// never before connecting: a pre-flight check would spend a request on every
+// happy-path SSE open to guard a case (cold-load 401) every page already
+// handles via its own gated fetchJson call before the stream ever opens. It
+// issues one cheap gated GET and lets fetchJson's existing
+// `redirectToLoginOn401` do the redirect if (and only if) the session really
+// has expired; any other failure (network blip, upstream down) is not this
+// helper's concern, so it's swallowed.
+export async function confirmSessionOrRedirect(): Promise<void> {
+  // Demo mode has no proxy session to confirm and must never touch the
+  // proxy. Guarded here — not just by caller discipline — so a future
+  // caller can't accidentally fire a real request from demo mode.
+  if (usePreferencesStore.getState().demoMode) return;
+  try {
+    await fetchJson('control-plane', '/healthz');
+  } catch {
+    /* fetchJson already redirected if this was a 401 */
+  }
 }

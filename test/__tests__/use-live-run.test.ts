@@ -6,10 +6,15 @@ import type { CpContextEvent } from '@/lib/types';
 
 const getCpRunEvents = vi.fn();
 const getMockRunEvents = vi.fn();
+const confirmSessionOrRedirect = vi.fn();
 
 vi.mock('@/lib/api/client', () => ({
   getCpRunEvents: (...args: unknown[]) => getCpRunEvents(...args),
   getMockRunEvents: (...args: unknown[]) => getMockRunEvents(...args),
+}));
+
+vi.mock('@/lib/api/fetcher', () => ({
+  confirmSessionOrRedirect: (...args: unknown[]) => confirmSessionOrRedirect(...args),
 }));
 
 class FakeEventSource {
@@ -192,5 +197,91 @@ describe('useLiveRun', () => {
     const { result } = renderHook(() => useLiveRun('run-1', 'cancelled'));
     await waitFor(() => expect(result.current.status).toBe('complete'));
     expect(result.current.events).toEqual([]);
+  });
+
+  describe('mid-session expiry (confirm-after-error)', () => {
+    it('confirms the session on the first error of a reconnect cycle', async () => {
+      const { result } = renderHook(() => useLiveRun('run-1'));
+      const es = FakeEventSource.instances[0];
+      act(() => es.emitOpen());
+      await waitFor(() => expect(result.current.status).toBe('live'));
+
+      act(() => es.emitError());
+      expect(confirmSessionOrRedirect).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not confirm again on subsequent retries within the same reconnect cycle', async () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useLiveRun('run-1'));
+        const es1 = FakeEventSource.instances[0];
+        act(() => es1.emitOpen());
+        expect(result.current.status).toBe('live');
+
+        // First failure of the cycle — confirms once.
+        act(() => es1.emitError());
+        expect(confirmSessionOrRedirect).toHaveBeenCalledTimes(1);
+        expect(result.current.status).toBe('connecting');
+
+        // Advance past the first backoff (1000ms) so the hook reconnects.
+        // `connect()` runs synchronously off the timer callback, so the new
+        // EventSource exists as soon as the timer fires — no waitFor needed.
+        act(() => {
+          vi.advanceTimersByTime(1000);
+        });
+        expect(FakeEventSource.instances).toHaveLength(2);
+        const es2 = FakeEventSource.instances[1];
+
+        // A second failure in the SAME cycle (the socket never reached
+        // `onopen`, so retriesRef was never reset to 0) must not confirm again.
+        act(() => es2.emitError());
+        expect(confirmSessionOrRedirect).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('confirms again when a successful reconnect starts a new failure episode', () => {
+      vi.useFakeTimers();
+      try {
+        const { result } = renderHook(() => useLiveRun('run-1'));
+        const es1 = FakeEventSource.instances[0];
+        act(() => es1.emitOpen());
+        expect(result.current.status).toBe('live');
+
+        act(() => es1.emitError());
+        expect(confirmSessionOrRedirect).toHaveBeenCalledTimes(1);
+
+        act(() => {
+          vi.advanceTimersByTime(1000);
+        });
+        const es2 = FakeEventSource.instances[1];
+        // Reconnect succeeds — `onopen` resets retriesRef to 0, so the next
+        // failure is a new episode, not a retry of this one.
+        act(() => es2.emitOpen());
+        expect(result.current.status).toBe('live');
+
+        act(() => es2.emitError());
+        expect(confirmSessionOrRedirect).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('demo mode never opens an EventSource, so the confirm check never fires', () => {
+      usePreferencesStore.setState({ demoMode: true });
+      getMockRunEvents.mockReturnValue([]);
+
+      renderHook(() => useLiveRun('run-1'));
+      expect(FakeEventSource.instances).toHaveLength(0);
+      expect(confirmSessionOrRedirect).not.toHaveBeenCalled();
+    });
+
+    it('a terminal run hydrates history and never opens an EventSource, so the confirm check never fires', async () => {
+      getCpRunEvents.mockResolvedValue({ data: [] });
+      const { result } = renderHook(() => useLiveRun('run-1', 'completed'));
+      await waitFor(() => expect(result.current.status).toBe('complete'));
+      expect(confirmSessionOrRedirect).not.toHaveBeenCalled();
+    });
   });
 });

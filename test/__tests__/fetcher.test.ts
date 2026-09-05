@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, proxyUrl, fetchJson, fetchText } from '@/lib/api/fetcher';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, proxyUrl, fetchJson, fetchText, confirmSessionOrRedirect } from '@/lib/api/fetcher';
+import { usePreferencesStore } from '@/lib/stores/preferences-store';
 
 function response(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
   const { ok = true, status = 200 } = init;
@@ -16,6 +17,13 @@ function mockFetch(impl: () => Response) {
   vi.stubGlobal('fetch', fn);
   return fn;
 }
+
+beforeEach(() => {
+  // These tests exercise real-mode behavior; confirmSessionOrRedirect has a
+  // demo-mode guard, so it needs demoMode explicitly false unless a test
+  // says otherwise (see 'does nothing in demo mode' below).
+  usePreferencesStore.setState({ demoMode: false });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -131,5 +139,38 @@ describe('401 → redirect to /login', () => {
     mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
     await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 401 });
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  describe('confirmSessionOrRedirect', () => {
+    it('redirects to /login when the confirm request comes back 401', async () => {
+      const assign = stubLocation();
+      const fetchMock = mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+      await confirmSessionOrRedirect();
+      expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/healthz');
+      expect(assign).toHaveBeenCalledWith('/login');
+    });
+
+    it('does not redirect and does not throw on a non-401 failure (e.g. a network blip)', async () => {
+      const assign = stubLocation();
+      mockFetch(() => response('boom', { ok: false, status: 502 }));
+      await expect(confirmSessionOrRedirect()).resolves.toBeUndefined();
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it('resolves quietly on success (the happy path)', async () => {
+      const assign = stubLocation();
+      mockFetch(() => response({ ok: true }));
+      await expect(confirmSessionOrRedirect()).resolves.toBeUndefined();
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it('does nothing in demo mode — no request, no redirect', async () => {
+      usePreferencesStore.setState({ demoMode: true });
+      const assign = stubLocation();
+      const fetchMock = mockFetch(() => response({ ok: true }));
+      await expect(confirmSessionOrRedirect()).resolves.toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
+    });
   });
 });
