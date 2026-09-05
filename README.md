@@ -73,6 +73,8 @@ Coverage spans `lib/**` and the `app/api/**` route handlers. What's covered:
   (`app/api/stream/*`): header allow-listing, server-side bearer injection, response scrubbing, and
   502 fallbacks. Because these import `next/server`, their test files opt into the Node environment
   with a `// @vitest-environment node` docblock.
+- **The real wasm verifier** — `wasm-fixtures.test.ts` loads the actual `acdp_wasm_bg.wasm` instead
+  of mocking it, and drives it over the committed demo fixtures; it is the gate for acdp-wasm bumps.
 - **Auth gate** — the root `middleware.ts` (session validation, fail-open/closed env-var behavior,
   CSRF/Origin check) and `app/api/auth/{login,logout}` (`middleware.test.ts`, `auth-route.test.ts`).
 - **Store & hooks** — the preferences store (incl. localStorage persistence) and `useDebounced` /

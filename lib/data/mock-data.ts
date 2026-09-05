@@ -938,7 +938,7 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 // ── SDK matrix (config page) ──────────────────────────────────────────
 export const MOCK_SDK_MATRIX = [
   { component: 'ACDP spec', version: '0.4.0 Final', status: 'ok' },
-  { component: 'acdp-rs library', version: '0.8.3', status: 'ok' },
+  { component: 'acdp-rs library', version: '0.8.5', status: 'ok' },
   { component: 'acdp-py binding', version: '0.8.0', status: 'ok' },
   { component: 'acdp-node binding', version: '0.8.0', status: 'ok' },
   { component: 'Registry (Rust/axum)', version: '0.4.0 (witness aggregation)', status: 'ok' },
