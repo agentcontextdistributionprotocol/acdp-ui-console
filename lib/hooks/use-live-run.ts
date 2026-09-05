@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getCpRunEvents, getMockRunEvents } from '@/lib/api/client';
+import { confirmSessionOrRedirect } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { CpContextEvent, LineageGraph, RunStatus, StepEvent, StepEventType } from '@/lib/types';
 
@@ -157,6 +158,19 @@ export function useLiveRun(runId: string, runStatus?: RunStatus) {
         esRef.current = null;
         if (closed || done || reconnecting) return;
         reconnecting = true;
+        // Unlike use-global-events, this hook always force-closes and
+        // reconnects itself, so readyState is CLOSED on every single error
+        // regardless of cause — it can't distinguish a blip from a fatal
+        // 401 here. Instead: confirm once, on the *first* error of this
+        // connect cycle, not on every retry. If the session actually
+        // expired, every subsequent reconnect attempt would fail identically
+        // (an immediate 401 → onerror), so retrying up to MAX_RECONNECT times
+        // before checking would just spend ~60s of futile backoff before the
+        // operator ever sees a sign-in prompt; checking up front lets a real
+        // expiry redirect immediately instead.
+        if (retriesRef.current === 0) {
+          void confirmSessionOrRedirect();
+        }
         if (retriesRef.current >= MAX_RECONNECT) {
           setStatus('error');
           return;

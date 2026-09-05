@@ -5,14 +5,24 @@ import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { CpContextEvent } from '@/lib/types';
 
 const listCpEvents = vi.fn();
+const confirmSessionOrRedirect = vi.fn();
 
 vi.mock('@/lib/api/client', () => ({
   listCpEvents: (...args: unknown[]) => listCpEvents(...args),
 }));
 
+vi.mock('@/lib/api/fetcher', () => ({
+  confirmSessionOrRedirect: (...args: unknown[]) => confirmSessionOrRedirect(...args),
+}));
+
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
+  // Mirrors the real EventSource readyState constants the hook reads.
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSED = 2;
   url: string;
+  readyState = FakeEventSource.CONNECTING;
   onopen: (() => void) | null = null;
   onmessage: ((e: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
@@ -33,10 +43,12 @@ class FakeEventSource {
   }
 
   close() {
+    this.readyState = FakeEventSource.CLOSED;
     this.closed = true;
   }
 
   emitOpen() {
+    this.readyState = FakeEventSource.OPEN;
     this.onopen?.();
   }
 
@@ -48,7 +60,12 @@ class FakeEventSource {
     (this.listeners[type] ?? []).forEach((cb) => cb(new MessageEvent(type, { data: JSON.stringify(data) })));
   }
 
-  emitError() {
+  // Defaults to CLOSED — the fatal case (e.g. the browser gave up after the
+  // gate rejected a reconnect with 401) — since that's the case under test
+  // most often; pass CONNECTING to simulate a transient blip the browser is
+  // already retrying on its own.
+  emitError(readyState: number = FakeEventSource.CLOSED) {
+    this.readyState = readyState;
     this.onerror?.();
   }
 }
@@ -138,5 +155,37 @@ describe('useGlobalEvents', () => {
     );
     await waitFor(() => expect(result.current.events).toHaveLength(1));
     expect(result.current.events[0].eventType).toBe('context_published');
+  });
+
+  describe('mid-session expiry (confirm-after-error)', () => {
+    it('a fatal error (readyState CLOSED) confirms the session — a 401 there redirects to /login', async () => {
+      const { result } = renderHook(() => useGlobalEvents(true));
+      const es = FakeEventSource.instances[0];
+      act(() => es.emitOpen());
+      await waitFor(() => expect(result.current.live).toBe(true));
+
+      act(() => es.emitError(FakeEventSource.CLOSED));
+      await waitFor(() => expect(confirmSessionOrRedirect).toHaveBeenCalledTimes(1));
+    });
+
+    it('a transient error (readyState CONNECTING — the browser is already retrying) does not confirm', async () => {
+      const { result } = renderHook(() => useGlobalEvents(true));
+      const es = FakeEventSource.instances[0];
+      act(() => es.emitOpen());
+      await waitFor(() => expect(result.current.live).toBe(true));
+
+      act(() => es.emitError(FakeEventSource.CONNECTING));
+      expect(confirmSessionOrRedirect).not.toHaveBeenCalled();
+    });
+
+    it('demo mode never opens an EventSource, so the confirm check never fires', async () => {
+      usePreferencesStore.setState({ demoMode: true });
+      listCpEvents.mockResolvedValue({ data: [], total: 0 });
+
+      const { result } = renderHook(() => useGlobalEvents(true));
+      await waitFor(() => expect(result.current.live).toBe(true));
+      expect(FakeEventSource.instances).toHaveLength(0);
+      expect(confirmSessionOrRedirect).not.toHaveBeenCalled();
+    });
   });
 });

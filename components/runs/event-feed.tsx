@@ -35,8 +35,15 @@ export function EventFeed({
             LIVE
           </span>
         ) : (
-          <span className={`badge ${status === 'error' ? 'badge-failed' : 'badge-complete'}`}>
-            {status === 'error' ? '✗ error' : '● ended'}
+          <span
+            className={`badge ${status === 'error' ? 'badge-failed' : 'badge-complete'}`}
+            title={
+              status === 'error'
+                ? 'Lost the run stream after repeated retries. Refresh to try again, or sign in again if your session expired.'
+                : undefined
+            }
+          >
+            {status === 'error' ? '✗ disconnected — refresh to retry' : '● ended'}
           </span>
         )}
       </div>

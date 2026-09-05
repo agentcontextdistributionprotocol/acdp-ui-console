@@ -53,7 +53,7 @@ export default function EventsPage() {
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 
-  const { events: liveEvents, live } = useGlobalEvents(liveOn);
+  const { events: liveEvents, live, dropped } = useGlobalEvents(liveOn);
 
   // Flatten every fetched page, deduping by id (the boundary row of a keyset page
   // can repeat) and folding the live SSE feed on top of the persisted history.
@@ -112,9 +112,16 @@ export default function EventsPage() {
           style={{ marginLeft: 'auto' }}
           aria-pressed={liveOn}
           onClick={() => setLiveOn((v) => !v)}
+          title={
+            liveOn && dropped
+              ? 'Live feed disconnected and won’t retry on its own — toggle live off and back on to reconnect. If your session expired, you’ll be redirected to sign in.'
+              : liveOn && !live
+                ? 'Connecting to the live feed…'
+                : undefined
+          }
         >
           <span className={`dot ${liveOn && live ? 'ok pulse' : 'err'}`} />
-          {liveOn ? 'Live SSE' : 'Live off'}
+          {liveOn ? (live ? 'Live SSE' : dropped ? 'Disconnected' : 'Connecting…') : 'Live off'}
         </button>
       </div>
 
