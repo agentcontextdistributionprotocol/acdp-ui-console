@@ -23,7 +23,20 @@ export class ApiError extends Error {
   readonly status: number;
   readonly service: ProxyService;
   readonly path: string;
-  /** Federation-proxy error code (e.g. `CONTEXT_ID_MISMATCH`), when the body is a structured control-plane error. */
+  /**
+   * Structured upstream error code, when the body carried one.
+   *
+   * **Not control-plane-exclusive.** The top-level `errorCode` is the control
+   * plane's (SCREAMING_SNAKE — `CONTEXT_ID_MISMATCH`,
+   * `FEDERATION_UPSTREAM_RATE_LIMITED`), but the nested `error.code` fallback
+   * above also matches the registry's own RFC-ACDP-0007 §5 wire envelope
+   * (`acdp-registry-types/src/error.rs:83-92`), so a direct registry call
+   * populates this with lowercase snake_case (`schema_violation`,
+   * `rate_limited`, `not_authorized`). The two vocabularies do not collide
+   * today, but nothing enforces that — so anything keyed by this value must
+   * match exactly and must not infer provenance from the code alone. See
+   * `lib/utils/api-error-messages.ts`.
+   */
   readonly errorCode?: string;
 
   constructor(status: number, body: string, service: ProxyService, path: string) {

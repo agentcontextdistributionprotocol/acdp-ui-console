@@ -14,6 +14,7 @@ import { ContextDetail } from '@/components/contexts/context-detail';
 import { searchContexts, getContext } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { contextErrorMessage } from '@/lib/utils/api-error-messages';
 import { KEY_REVOCATION_TYPE } from '@/lib/utils/revocation';
 import { C } from '@/lib/colors';
 import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
@@ -66,14 +67,6 @@ export default function ContextsPage() {
     queryFn: () => getContext(openCtx!, demoMode),
     enabled: !!openCtx,
   });
-
-  // The federation proxy's verifyCtxIdBinding check (fail-closed, 502) rejecting
-  // this fetch is a worse signal than "not found" or "service down" — the
-  // registry served a body that doesn't match its own claimed ctx_id — so it
-  // gets a distinct, trust-hostile message rather than the generic one below.
-  const bindingMismatch =
-    detail.error instanceof ApiError &&
-    (detail.error.errorCode === 'CONTEXT_ID_MISMATCH' || detail.error.errorCode === 'CONTEXT_BINDING_UNVERIFIABLE');
 
   // A hit the search index knows about but for which no body can be fetched.
   // Distinct from the generic failure because it is not a failure: the index
@@ -267,16 +260,29 @@ export default function ContextsPage() {
 
       <Modal open={!!openCtx} onClose={() => setOpenCtx(null)} title={detail.data?.body.title ?? 'Context'}>
         {detail.isLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</div>}
-        {detail.error && bindingMismatch && (
-          <ErrorPanel message="Registry served a context that doesn't match its own claimed id — this response cannot be trusted." />
-        )}
-        {detail.error && !bindingMismatch && bodyUnavailable && (
+        {/* 404 keeps its own affordance and is checked FIRST: an index/store
+            disagreement is not a failure, so it gets the neutral EmptyState
+            rather than a red panel. The DESCRIPTION still comes from the shared
+            map, so this surface and `context-inspector.tsx` say the same thing
+            about the same status — only the framing differs. */}
+        {detail.error && bodyUnavailable && (
           <EmptyState
             title="No context body available"
-            description="The registry index lists this context, but no body was returned for its id. Nothing here has failed verification — there is simply nothing to verify."
+            // The lead clause is this page's own — the operator got here by
+            // clicking a SEARCH HIT, so "the index lists it" is information
+            // only this surface has, and dropping it lost the reason the two
+            // sources disagree. The rest is the shared map's sentence,
+            // verbatim, so the run inspector still says the same thing about
+            // the same status.
+            description={`The registry index lists this context. ${contextErrorMessage(detail.error)}`}
           />
         )}
-        {detail.error && !bindingMismatch && !bodyUnavailable && <ErrorPanel message="Could not load context." />}
+        {/* Everything else, including both federation-proxy binding codes, is
+            the shared map's job. `CONTEXT_BINDING_UNVERIFIABLE` no longer
+            borrows `CONTEXT_ID_MISMATCH`'s sentence — the control plane is
+            explicit that no mismatch was established for it, so claiming one
+            here was a lie the console told on upstream's behalf. */}
+        {detail.error && !bodyUnavailable && <ErrorPanel message={contextErrorMessage(detail.error)} />}
         {/* requestedCtxId is `openCtx` (the search hit the operator clicked), never
             `detail.data.body.ctx_id` — a genuine independent request/response pair,
             so the ctxIdBinding chip actually catches a registry serving the wrong

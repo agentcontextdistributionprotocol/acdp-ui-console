@@ -324,3 +324,99 @@ describe('proxy route — response header scrubbing & errors', () => {
     expect(body.detail).toContain('ECONNREFUSED');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// The non-2xx passthrough.
+//
+// Everything the console does with a structured upstream error — the
+// federation proxy's `CONTEXT_ID_MISMATCH` / `CONTEXT_BINDING_UNVERIFIABLE`
+// split, `FEDERATION_UPSTREAM_RATE_LIMITED`, `ApiError.errorCode` and the
+// message map keyed off it — rests on the error BODY surviving this hop
+// intact. Every existing assertion here is about status, headers or the
+// request; none of them read a relayed error body, so a change that swallowed
+// or rewrote one (an error-shaped JSON wrapper, say) would have left this
+// suite green while every error message in the console silently degraded to
+// its status fallback.
+// ══════════════════════════════════════════════════════════════════════
+describe('proxy route — a non-2xx upstream body is relayed byte-for-byte', () => {
+  /** A one-chunk stream, so the relayed bytes are the upstream's own. */
+  function streamOf(text: string): ReadableStream<Uint8Array> {
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    });
+  }
+
+  it('a 502 structured error round-trips, errorCode and all', async () => {
+    const upstreamBody = JSON.stringify({
+      statusCode: 502,
+      errorCode: 'CONTEXT_BINDING_UNVERIFIABLE',
+      message: "upstream registry 'registry-a.playground.local' returned a response whose ctx_id binding could not be verified",
+      error: { code: 'CONTEXT_BINDING_UNVERIFIABLE', message: 'could not verify' },
+    });
+    mockFetch(() =>
+      upstream({
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        body: streamOf(upstreamBody),
+      }),
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/control-plane/contexts/acdp%3A%2F%2Fa%2Fb'),
+      ctx('control-plane', ['contexts', 'acdp://a/b']),
+    );
+
+    expect(res.status).toBe(502);
+    // Byte-for-byte: the exact string, not a re-serialization of a parsed copy.
+    await expect(res.text()).resolves.toBe(upstreamBody);
+  });
+
+  it('the relayed body is what ApiError reads its errorCode from', async () => {
+    // The end-to-end link, asserted rather than assumed: the passthrough above
+    // is only useful because `ApiError` parses exactly those bytes, and the
+    // message map then keys off the result.
+    const { ApiError } = await import('@/lib/api/fetcher');
+    const upstreamBody = JSON.stringify({ errorCode: 'FEDERATION_UPSTREAM_RATE_LIMITED', message: "upstream 'r' is rate limiting (Retry-After: 30)" });
+    mockFetch(() =>
+      upstream({
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: new Headers({ 'content-type': 'application/json' }),
+        body: streamOf(upstreamBody),
+      }),
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/control-plane/contexts/acdp%3A%2F%2Fa%2Fb'),
+      ctx('control-plane', ['contexts', 'acdp://a/b']),
+    );
+    const relayed = await res.text();
+    expect(new ApiError(res.status, relayed, 'control-plane', '/contexts/x').errorCode).toBe(
+      'FEDERATION_UPSTREAM_RATE_LIMITED',
+    );
+  });
+
+  it('a non-JSON error body is relayed unchanged too, rather than being coerced', async () => {
+    // A proxy or WAF in front of a registry answering with HTML is one of the
+    // documented causes of CONTEXT_BINDING_UNVERIFIABLE upstream. This hop must
+    // not turn it into something that parses — an `errorCode` invented here
+    // would be a claim no upstream made.
+    const html = '<html><head><title>504 Gateway Time-out</title></head><body>nginx</body></html>';
+    mockFetch(() =>
+      upstream({
+        status: 504,
+        statusText: 'Gateway Timeout',
+        headers: new Headers({ 'content-type': 'text/html' }),
+        body: streamOf(html),
+      }),
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/registry-a/contexts/search'),
+      ctx('registry-a', ['contexts', 'search']),
+    );
+    expect(res.status).toBe(504);
+    await expect(res.text()).resolves.toBe(html);
+  });
+});
