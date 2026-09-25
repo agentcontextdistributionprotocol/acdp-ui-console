@@ -20,7 +20,7 @@ export function SdkMatrix() {
       retry: false,
     })),
   });
-  const healthByService = new Map(services.map((s, i) => [s, healths[i].data?.ok]));
+  const healthByService = new Map(services.map((s, i) => [s, healths[i].data]));
   const rows = buildSdkMatrixRows(demoMode, healthByService);
 
   return (

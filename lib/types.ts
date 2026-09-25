@@ -558,6 +558,14 @@ export interface HealthResult {
   ok: boolean;
   latencyMs?: number;
   detail?: string;
+  /**
+   * The service's own `/healthz` version string, when the response carried one
+   * and could be parsed (registry-rs/control-plane/playground all now expose
+   * `version` on this route, in differently-shaped envelopes). Per registry-rs's
+   * own `docs/HTTP-API.md`, this field MUST be treated as opaque — display it
+   * verbatim, never parse or compare it as a semver.
+   */
+  version?: string;
 }
 
 export interface PrometheusMetric {

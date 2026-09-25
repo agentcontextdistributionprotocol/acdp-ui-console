@@ -1,5 +1,5 @@
 import { MOCK_SDK_MATRIX } from '@/lib/data/mock-data';
-import type { ProxyService } from '@/lib/types';
+import type { HealthResult, ProxyService } from '@/lib/types';
 
 /**
  * Component -> backing proxy service, for the rows that map to a running
@@ -23,16 +23,21 @@ export interface SdkMatrixRowView {
 }
 
 /**
- * None of the three backend services (control-plane, playground,
- * registry-rs) expose a version field on /healthz or any other route today,
- * so a live version can never be derived — only reachability can. Rendering
- * MOCK_SDK_MATRIX's version string as if it were live-checked would let a
- * real operator see a stale or nonexistent version with no indication it
- * was never actually confirmed against the running service.
+ * All three backend services (control-plane, playground, registry-rs) expose a
+ * `version` field on /healthz today — this console just never read it. A row
+ * only ever claims `versionIsLive: true` when a real, reachable /healthz
+ * response actually carried a parseable version string; a service that's
+ * down, still loading, or running an older deployment predating this field
+ * falls back to MOCK_SDK_MATRIX's static reference string, explicitly marked
+ * unconfirmed (`versionIsLive: false`) rather than silently substituted.
+ * Demo mode's own `versionIsLive: true` branch just below is issue #69a's
+ * defect (reference-ness reading as live-confirmed in demo mode), tracked
+ * and fixed separately — this function's real-mode path below it is what
+ * this phase corrects, and deliberately doesn't touch the demo branch.
  */
 export function buildSdkMatrixRows(
   demoMode: boolean,
-  healthByService: ReadonlyMap<ProxyService, boolean | undefined>,
+  healthByService: ReadonlyMap<ProxyService, HealthResult | undefined>,
 ): SdkMatrixRowView[] {
   return MOCK_SDK_MATRIX.map((row) => {
     const service = SDK_MATRIX_ROW_SERVICE[row.component];
@@ -45,12 +50,13 @@ export function buildSdkMatrixRows(
       return { component: row.component, version: row.version, versionIsLive: false, status: 'reference' };
     }
 
-    const ok = healthByService.get(service);
+    const health = healthByService.get(service);
+    const liveVersion = health?.version;
     return {
       component: row.component,
-      version: row.version,
-      versionIsLive: false,
-      status: ok === undefined ? 'unknown' : ok ? 'ok' : 'down',
+      version: liveVersion ?? row.version,
+      versionIsLive: liveVersion !== undefined,
+      status: health === undefined ? 'unknown' : health.ok ? 'ok' : 'down',
     };
   });
 }

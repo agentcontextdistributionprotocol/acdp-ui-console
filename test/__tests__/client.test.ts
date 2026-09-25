@@ -12,6 +12,7 @@ import {
   listEnrollments,
   enrollRegistry,
   getLineage,
+  pingHealth,
 } from '@/lib/api/client';
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
@@ -141,6 +142,49 @@ describe('getCpMetrics', () => {
     const names = (await getCpMetrics(false)).map((m) => m.name);
     expect(names).toContain('acdp_good');
     expect(names).not.toContain('acdp_bad');
+  });
+});
+
+describe('pingHealth (real mode)', () => {
+  it('hits /healthz and parses registry-rs\'s {status, storage, version} envelope', async () => {
+    mockFetch(() => jsonResponse({ status: 'ok', storage: true, version: '0.1.0+g4f8a1c2' }));
+    const result = await pingHealth('registry-a', false);
+    expect(result.ok).toBe(true);
+    expect(result.version).toBe('0.1.0+g4f8a1c2');
+  });
+
+  it('parses control-plane/playground\'s {ok, service, version} envelope identically', async () => {
+    mockFetch(() => jsonResponse({ ok: true, service: 'acdp-control-plane', version: '1.4.2' }));
+    const result = await pingHealth('control-plane', false);
+    expect(result.ok).toBe(true);
+    expect(result.version).toBe('1.4.2');
+  });
+
+  it('leaves version undefined when the response has none (older deployment predating the field)', async () => {
+    mockFetch(() => jsonResponse({ status: 'ok', storage: true }));
+    const result = await pingHealth('registry-b', false);
+    expect(result.ok).toBe(true);
+    expect(result.version).toBeUndefined();
+  });
+
+  it('leaves version undefined (not a crash) when the response body is not an object', async () => {
+    mockFetch(() => jsonResponse('not an object'));
+    const result = await pingHealth('playground', false);
+    expect(result.ok).toBe(true);
+    expect(result.version).toBeUndefined();
+  });
+
+  it('reports ok: false with no version when the service is down', async () => {
+    mockFetch(() => jsonResponse('down', false, 503));
+    const result = await pingHealth('registry-a', false);
+    expect(result.ok).toBe(false);
+    expect(result.version).toBeUndefined();
+  });
+
+  it('hits the same /healthz path for every service (the dead-ternary cleanup)', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ ok: true, version: '0.3.0' }));
+    await pingHealth('playground', false);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/playground/healthz');
   });
 });
 

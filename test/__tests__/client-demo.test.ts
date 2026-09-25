@@ -18,6 +18,7 @@ import {
   deleteWebhook,
   listEnrollments,
   enrollRegistry,
+  pingHealth,
   LIVE_RUN_ID,
   COMPLETED_RUN_ID,
   FAILED_RUN_ID,
@@ -31,6 +32,15 @@ import {
 } from '@/lib/data/mock-data';
 
 const DEMO = true;
+
+// ── pingHealth (demo mode never claims a live-checked version) ─────────
+describe('pingHealth (demo)', () => {
+  it('is ok with no version — demo mode reports no live version, per issue #73\'s conservative reading', async () => {
+    const result = await pingHealth('registry-a', DEMO);
+    expect(result.ok).toBe(true);
+    expect(result.version).toBeUndefined();
+  });
+});
 
 // ── searchContexts (demo filtering + keyset pagination) ────────────────
 describe('searchContexts (demo)', () => {

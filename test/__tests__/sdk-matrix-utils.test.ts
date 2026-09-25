@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MOCK_SDK_MATRIX } from '@/lib/data/mock-data';
 import { SDK_MATRIX_ROW_SERVICE, buildSdkMatrixRows } from '@/lib/utils/sdk-matrix';
-import type { ProxyService } from '@/lib/types';
+import type { HealthResult, ProxyService } from '@/lib/types';
 
 const SERVICE_BACKED = Object.keys(SDK_MATRIX_ROW_SERVICE);
 const REFERENCE_ONLY = MOCK_SDK_MATRIX.map((r) => r.component).filter((c) => !SERVICE_BACKED.includes(c));
@@ -16,22 +16,46 @@ describe('buildSdkMatrixRows', () => {
     }
   });
 
-  it('live mode: service-backed rows never claim a live version, since no backend exposes one', () => {
-    const health = new Map<ProxyService, boolean | undefined>(
-      Object.values(SDK_MATRIX_ROW_SERVICE).map((s) => [s, true]),
+  it('live mode: a service-backed row claims a live version when /healthz actually returned one', () => {
+    const health = new Map<ProxyService, HealthResult | undefined>(
+      Object.values(SDK_MATRIX_ROW_SERVICE).map((s) => [s, { ok: true, version: `${s}-v9.9.9` }]),
+    );
+    const rows = buildSdkMatrixRows(false, health);
+    for (const row of rows) {
+      if (SERVICE_BACKED.includes(row.component)) {
+        const service = SDK_MATRIX_ROW_SERVICE[row.component];
+        expect(row.versionIsLive).toBe(true);
+        expect(row.version).toBe(`${service}-v9.9.9`);
+      }
+    }
+  });
+
+  it('live mode: a healthy service-backed row with no version in the response falls back to the reference string, not live', () => {
+    const health = new Map<ProxyService, HealthResult | undefined>(
+      Object.values(SDK_MATRIX_ROW_SERVICE).map((s) => [s, { ok: true }]),
     );
     const rows = buildSdkMatrixRows(false, health);
     for (const row of rows) {
       if (SERVICE_BACKED.includes(row.component)) {
         expect(row.versionIsLive).toBe(false);
+        expect(row.version).toBe(MOCK_SDK_MATRIX.find((m) => m.component === row.component)?.version);
       }
     }
   });
 
+  it('live mode: a down service never claims a live version, even if one rode a prior response', () => {
+    const health = new Map<ProxyService, HealthResult | undefined>([['registry-a', { ok: false }]]);
+    const rows = buildSdkMatrixRows(false, health);
+    const row = rows.find((r) => r.component === 'Registry (Rust/axum)');
+    expect(row?.status).toBe('down');
+    expect(row?.versionIsLive).toBe(false);
+    expect(row?.version).toBe(MOCK_SDK_MATRIX.find((m) => m.component === 'Registry (Rust/axum)')?.version);
+  });
+
   it('live mode: service-backed row status reflects actual health, up/down/unknown', () => {
-    const health = new Map<ProxyService, boolean | undefined>([
-      ['registry-a', true],
-      ['control-plane', false],
+    const health = new Map<ProxyService, HealthResult | undefined>([
+      ['registry-a', { ok: true, version: '0.1.0' }],
+      ['control-plane', { ok: false }],
       // playground intentionally omitted -> still loading -> unknown
     ]);
     const rows = buildSdkMatrixRows(false, health);
