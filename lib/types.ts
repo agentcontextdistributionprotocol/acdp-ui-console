@@ -150,7 +150,18 @@ export interface RunTrustSummary {
   revoked?: Array<{
     eventId: string;
     ctxId: string | null;
-    status: 'pre_compromise' | 'revoked_at_or_after' | 'revoked_time_unverifiable';
+    /**
+     * RFC-ACDP-0014 §7 revocation verdict. **The vocabulary is open**, like
+     * `ContextStatus` below: upstream's `key_revocation_status` column is
+     * `varchar(32)` with no DB CHECK constraint, so a control plane newer than
+     * this console can legitimately emit a fourth value. `(string & {})`
+     * preserves it without collapsing the union to `string`.
+     *
+     * An unrecognised value is treated as **fail-closed** by
+     * `lib/utils/revocation.ts` — the safe direction for an unknown trust
+     * verdict is "this may be a violation", never "this is authorized".
+     */
+    status: 'pre_compromise' | 'revoked_at_or_after' | 'revoked_time_unverifiable' | (string & {});
     boundary: string;
     trustClass: 'producer_signed' | 'registry_attested';
     sources: Array<{ ctxId: string; publisher: string }>;

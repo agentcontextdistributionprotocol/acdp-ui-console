@@ -605,20 +605,22 @@ export const MOCK_RUNS: CpRun[] = [
     status: 'completed',
     startedAt: iso(1900),
     completedAt: iso(1850),
-    contextsCount: 2,
+    contextsCount: 3,
     registries: [AUTH_A],
     inputs: { topic: 'revoked producer key' },
     // DID_A's signing key was revoked mid-window (RFC-ACDP-0014, see the
-    // key-revocation context fixture in MOCK_CONTEXTS). Both contexts pass the
-    // baseline RFC-ACDP-0010 receipt audit (verified: 2) — compromise doesn't
-    // invalidate the signature math, only its trustworthiness (§7) — which is
-    // exactly why the orthogonal revocation check below matters: one context
-    // published before the compromise boundary remains historically
-    // authorized, one published at/after it fails closed despite its valid
-    // receipt.
+    // key-revocation context fixture in MOCK_CONTEXTS). All three contexts pass
+    // the baseline RFC-ACDP-0010 receipt audit (verified: 3) — compromise
+    // doesn't invalidate the signature math, only its trustworthiness (§7) —
+    // which is exactly why the orthogonal revocation check below matters, and
+    // why this fixture carries one event of each verdict class: one published
+    // before the compromise boundary is historically authorized, one published
+    // at/after it fails closed despite its valid receipt, and one whose signing
+    // time can't be established fails closed too, because an unprovable
+    // ordering is not an authorization.
     trust: {
-      audited: 2,
-      verified: 2,
+      audited: 3,
+      verified: 3,
       verifiedHistorical: 0,
       structural: 0,
       noReceipt: 0,
@@ -626,7 +628,12 @@ export const MOCK_RUNS: CpRun[] = [
       flagged: [],
       keyRevocationPreCompromise: 1,
       keyRevocationRevokedAtOrAfter: 1,
-      keyRevocationRevokedTimeUnverifiable: 0,
+      // MOCK_DASHBOARD.keyRevocation advertises a `revokedTimeUnverifiable`,
+      // but no run fixture produced one — so the amber chip branch and the
+      // fail-closed-but-not-at-or-after path were unreachable in demo mode,
+      // and an operator clicking through from that KPI found nothing. This is
+      // the only way a human can exercise them before deploy.
+      keyRevocationRevokedTimeUnverifiable: 1,
       revoked: [
         {
           eventId: 'ev-revoked-1',
@@ -642,6 +649,19 @@ export const MOCK_RUNS: CpRun[] = [
           status: 'revoked_at_or_after',
           boundary: '2026-08-01 00:00:00+00',
           trustClass: 'producer_signed',
+          sources: [{ ctxId: `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`, publisher: DID_A }],
+        },
+        {
+          // RFC-ACDP-0014 §7: the signing time could not be established, so it
+          // cannot be shown to precede the boundary. Fail-closed — an
+          // unprovable ordering is not an authorization. `registry_attested`
+          // rather than `producer_signed` because this is exactly the class
+          // where the receipt's attested time is what is missing or untrusted.
+          eventId: 'ev-revoked-3',
+          ctxId: `acdp://${AUTH_A}/f1c9d3b7-5a2e-4c8d-b6f0-3e7a1d5c9b2f`,
+          status: 'revoked_time_unverifiable',
+          boundary: '2026-08-01 00:00:00+00',
+          trustClass: 'registry_attested',
           sources: [{ ctxId: `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`, publisher: DID_A }],
         },
       ],

@@ -355,3 +355,37 @@ describe('trust mocks (ACDP 0.2)', () => {
     expect(dash.keyRevocation).toEqual(MOCK_DASHBOARD.keyRevocation);
   });
 });
+
+describe('run-revoked-1: the RFC-ACDP-0014 fixture', () => {
+  const revokedRun = MOCK_RUNS.find((r) => r.runId === 'run-revoked-1');
+
+  it('carries one entry of each of the three verdict classes', () => {
+    // Without all three, demo mode cannot reach the amber
+    // `revoked_time_unverifiable` chip or the fail-closed-but-not-at-or-after
+    // path at all — and MOCK_DASHBOARD.keyRevocation advertises exactly that
+    // status, so its KPI led an operator to a run that did not contain one.
+    const statuses = (revokedRun?.trust?.revoked ?? []).map((r) => r.status);
+    expect(statuses).toContain('pre_compromise');
+    expect(statuses).toContain('revoked_at_or_after');
+    expect(statuses).toContain('revoked_time_unverifiable');
+  });
+
+  it("its own counters agree with its revoked[] rows", () => {
+    // The counters and the rows are two independent representations of the
+    // same fact on the wire. If a fixture edit updates one and not the other,
+    // every assertion derived from either silently describes a state the
+    // backend could never produce.
+    const t = revokedRun?.trust;
+    const rows = t?.revoked ?? [];
+    const count = (s: string) => rows.filter((r) => r.status === s).length;
+    expect(t?.keyRevocationPreCompromise).toBe(count('pre_compromise'));
+    expect(t?.keyRevocationRevokedAtOrAfter).toBe(count('revoked_at_or_after'));
+    expect(t?.keyRevocationRevokedTimeUnverifiable).toBe(count('revoked_time_unverifiable'));
+  });
+
+  it('audits at least as many events as it has revocation verdicts', () => {
+    // Revocation classification is per audited event, so more verdicts than
+    // audited events is a fixture that could not exist upstream.
+    expect(revokedRun?.trust?.audited ?? 0).toBeGreaterThanOrEqual((revokedRun?.trust?.revoked ?? []).length);
+  });
+});

@@ -3,6 +3,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { getCpDashboard, getCpRun, listCpRuns } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import {
+  failClosedEntries,
+  hasFailClosedRevocation,
+  preCompromiseEntries,
+  violationCount,
+} from '@/lib/utils/revocation';
 import type { CpDashboardOverview, CpRun, RunTrustSummary } from '@/lib/types';
 
 const MAX_RUNS = 25;
@@ -21,8 +27,18 @@ export interface TrustTotals {
   errors: number;
   flaggedRuns: number;
   flaggedEvents: number;
+  /**
+   * Runs / events carrying a FAIL-CLOSED revocation verdict
+   * (`revoked_at_or_after`, `revoked_time_unverifiable`, or an unrecognised
+   * status). These deliberately EXCLUDE `pre_compromise`, which the control
+   * plane defines as historically authorized — see `lib/utils/revocation.ts`.
+   * They previously counted every `revoked[]` row, so an authorized event was
+   * summed into a KPI labelled "signed at/after a compromise boundary".
+   */
   revokedRuns: number;
   revokedEvents: number;
+  /** Historically-authorized events, surfaced separately — never a violation. */
+  preCompromiseEvents: number;
 }
 
 export interface TrustOverview {
@@ -53,8 +69,11 @@ export function useTrust(window = '24h') {
       const runs: RunTrust[] = detailed
         .filter((r): r is CpRun & { trust: RunTrustSummary } => !!r && !!r.trust)
         .map((r) => ({ run: r, trust: r.trust }))
-        // Surface runs with flagged discrepancies first.
-        .sort((a, b) => b.trust.flagged.length - a.trust.flagged.length);
+        // Surface runs with VIOLATIONS first — a flagged discrepancy and a
+        // fail-closed revocation verdict are both violations, via different
+        // mechanisms. Sorting on `flagged.length` alone sank a revoked-only
+        // run to the bottom of the page whose whole job is surfacing it.
+        .sort((a, b) => violationCount(b.trust) - violationCount(a.trust));
 
       const totals = runs.reduce<TrustTotals>(
         (acc, { trust }) => ({
@@ -66,8 +85,9 @@ export function useTrust(window = '24h') {
           errors: acc.errors + trust.errors,
           flaggedRuns: acc.flaggedRuns + (trust.flagged.length > 0 ? 1 : 0),
           flaggedEvents: acc.flaggedEvents + trust.flagged.length,
-          revokedRuns: acc.revokedRuns + ((trust.revoked?.length ?? 0) > 0 ? 1 : 0),
-          revokedEvents: acc.revokedEvents + (trust.revoked?.length ?? 0),
+          revokedRuns: acc.revokedRuns + (hasFailClosedRevocation(trust.revoked) ? 1 : 0),
+          revokedEvents: acc.revokedEvents + failClosedEntries(trust.revoked).length,
+          preCompromiseEvents: acc.preCompromiseEvents + preCompromiseEntries(trust.revoked).length,
         }),
         {
           audited: 0,
@@ -80,6 +100,7 @@ export function useTrust(window = '24h') {
           flaggedEvents: 0,
           revokedRuns: 0,
           revokedEvents: 0,
+          preCompromiseEvents: 0,
         },
       );
 

@@ -258,13 +258,19 @@ describe('demo lookups that should throw on miss', () => {
 describe('run trust: revoked-key events (demo pass-through)', () => {
   it('getCpRun surfaces trust.revoked with the RFC-ACDP-0014 counters, not silently dropped', async () => {
     const run = await getCpRun('run-revoked-1', DEMO);
-    expect(run.trust?.revoked?.length).toBe(2);
+    expect(run.trust?.revoked?.length).toBe(3);
     expect(run.trust?.keyRevocationPreCompromise).toBe(1);
     expect(run.trust?.keyRevocationRevokedAtOrAfter).toBe(1);
-    expect(run.trust?.keyRevocationRevokedTimeUnverifiable).toBe(0);
+    expect(run.trust?.keyRevocationRevokedTimeUnverifiable).toBe(1);
+    // All three verdict classes must be present in the demo dataset. Without
+    // the third, the amber chip branch and the fail-closed-but-not-at-or-after
+    // path are unreachable without a backend — and MOCK_DASHBOARD's own
+    // revocation tile advertises a `revokedTimeUnverifiable` that no run
+    // fixture produced, so clicking through from that KPI found nothing.
     const statuses = new Set(run.trust?.revoked?.map((r) => r.status));
     expect(statuses.has('pre_compromise')).toBe(true);
     expect(statuses.has('revoked_at_or_after')).toBe(true);
+    expect(statuses.has('revoked_time_unverifiable')).toBe(true);
   });
 
   it('a run with no revoked events has an empty/absent array, not a crash', async () => {
