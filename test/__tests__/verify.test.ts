@@ -249,13 +249,62 @@ describe('verifyCtxIdBinding', () => {
     expect(result.detail).toContain('ctx_id mismatch');
   });
 
-  it('a throw (malformed expected_ctx_id, e.g. CtxId::parse) is caught as failed, not an unhandled throw', async () => {
+  // ── could-not-check ≠ failed (UI-3 Phase 1) ──────────────────────────────
+  // NOTE on why these are mocked here AND exercised for real in
+  // wasm-fixtures.test.ts: the mocks below prove the MAPPING (prefix → status,
+  // detail, label) in isolation, including branches the real binary cannot be
+  // made to produce on demand (an unrecognized throw). They cannot prove the
+  // prefixes are the ones upstream actually emits — a mocked message that no
+  // real binary ever throws would keep these green while the shipped behavior
+  // was the opposite. That half is pinned against the real 0.14.1 binary in
+  // wasm-fixtures.test.ts, which is exactly the gap that let this defect ship.
+
+  it('a body the acdp-rs Body schema rejects → unavailable, blaming the served body', async () => {
+    verifyCtxIdBindingWasm.mockImplementation(() => {
+      throw new Error('invalid body JSON: missing field `signature` at line 1 column 1175');
+    });
+    const result = await verifyCtxIdBinding(bodyWithSignature(), 'acdp://requester.example/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(result.status).toBe('unavailable');
+    expect(result.unavailableLabel).toBe('body not parseable');
+    expect(result.detail).toContain('served body');
+    expect(result.detail).not.toContain('requested ctx_id');
+  });
+
+  it('a malformed expected_ctx_id → unavailable, explicitly NOT blaming the served body', async () => {
+    // The same body returns {valid:true} under a good id (see the first case in
+    // this describe block), so the served body is demonstrably not at fault —
+    // a shared "the body is bad" sentence here would accuse a correctly
+    // behaving registry, which is the defect this mapping exists to remove.
+    verifyCtxIdBindingWasm.mockImplementation(() => {
+      throw new Error("invalid expected_ctx_id: schema violation: ctx_id must start with 'acdp://', got: not-a-ctx-id");
+    });
+    const result = await verifyCtxIdBinding(bodyWithSignature(), 'not-a-real-ctx-id');
+    expect(result.status).toBe('unavailable');
+    expect(result.unavailableLabel).toBe('requested id malformed');
+    expect(result.detail).toContain('requested ctx_id');
+    expect(result.detail).toContain('the served body was not the problem');
+  });
+
+  it('a throw matching NEITHER prefix stays failed (fail-safe direction for an unknown condition)', async () => {
+    // A future acdp-wasm throw class, a late wasm-init failure, an OOM: none of
+    // these are a documented could-not-check, so they must keep rendering red
+    // (over-alarm) rather than being silently absorbed as amber (under-alarm).
     verifyCtxIdBindingWasm.mockImplementation(() => {
       throw new Error('invalid ctx_id: malformed authority/uuid');
     });
     const result = await verifyCtxIdBinding(bodyWithSignature(), 'not-a-real-ctx-id');
     expect(result.status).toBe('failed');
     expect(result.detail).toBe('malformed material: invalid ctx_id: malformed authority/uuid');
+    expect(result.unavailableLabel).toBeUndefined();
+  });
+
+  it('a clean {valid:false} substitution verdict is NOT softened to unavailable', async () => {
+    verifyCtxIdBindingWasm.mockReturnValue(
+      JSON.stringify({ valid: false, error: 'context substitution: requested X, registry served Y' }),
+    );
+    const result = await verifyCtxIdBinding(bodyWithSignature(), 'acdp://requester.example/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    expect(result.status).toBe('failed');
+    expect(result.detail).toContain('context substitution');
   });
 });
 

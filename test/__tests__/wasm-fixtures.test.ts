@@ -21,12 +21,25 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import init, * as acdp from '@agentcontextdistributionprotocol/acdp-wasm';
 import type { ContextBody, LogInclusion, RegistryReceipt } from '@/lib/types';
 import { MOCK_CONTEXTS, MOCK_LINEAGE_CHAINS } from '@/lib/data/mock-data';
 import { LIN_ATTESTED, MOCK_CRYPTO, MOCK_DID_DOCS, WITNESS_BETA_DID } from '@/lib/data/mock-crypto';
 import { resolveDidDocument, resolveEd25519Raw, resolveVerificationKey } from '@/lib/verify/resolve';
+import { verifyCtxIdBinding } from '@/lib/verify/verify';
+
+// Route `lib/verify/verify.ts`'s own mapping over the REAL binary. Only the
+// LOADER is replaced: `getAcdpWasm()` rejects outside a browser
+// (`lib/verify/wasm.ts:17-19`), so it is swapped for one that hands back the
+// very module instance `beforeAll` initializes below. The verifier, its parser
+// and its error messages are the real 0.14.1 ones — which is the entire point:
+// the throw→verdict mapping added in UI-3 Phase 1 is a string match on
+// upstream's message text, and mocking that text would make the gate
+// tautological (exactly how `verify.test.ts`'s mocked throws missed this).
+vi.mock('@/lib/verify/wasm', () => ({
+  getAcdpWasm: async () => await import('@agentcontextdistributionprotocol/acdp-wasm'),
+}));
 
 const REGISTRY_A_DID = 'did:web:registry-a.playground.local';
 
@@ -39,6 +52,14 @@ const REGISTRY_A_DID = 'did:web:registry-a.playground.local';
 // than a hand-rolled duplicate — a side benefit is that this gate now also
 // exercises `lib/verify/resolve.ts` itself (in coverage scope), not a
 // parallel copy of it that isn't.
+//
+// NOTE, since the guarantee changed shape: this used to be enforced by
+// accident. `getAcdpWasm()` rejects outside a browser, so a fixture that
+// switched to `did:key` would have failed LOUDLY here. The `vi.mock` above now
+// makes that loader resolve successfully in this file, so the `did:key` branch
+// would run silently instead. The guarantee is therefore "no fixture in
+// MOCK_DID_DOCS uses did:key", not "it would throw if one did" — if that ever
+// stops holding, this block needs a real assertion rather than a comment.
 async function ed25519RawB64FromDoc(did: string): Promise<string> {
   const raw = await resolveEd25519Raw(did, MOCK_DID_DOCS);
   if (!raw) throw new Error(`no ed25519 key resolved for ${did}`);
@@ -339,12 +360,155 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     },
   );
 
-  it('ctx_id binding fails against a DIFFERENT context\'s ctx_id (the real red-chip case)', () => {
+  // The same five bodies, one level up — through verify.ts's mapping rather
+  // than the raw binary. The assertion above checks `{valid:true}`, which has
+  // no `status` field; this one is what proves the console renders them green.
+  it.each(MOCK_CONTEXTS.map((c, i) => [i, c] as const))(
+    'ctx_id binding maps to Verdict.status "verified" (MOCK_CONTEXTS[%i])',
+    async (_i, ctx) => {
+      const verdict = await verifyCtxIdBinding(ctx.body, ctx.body.ctx_id);
+      expect(verdict.status).toBe('verified');
+      expect(verdict.unavailableLabel).toBeUndefined();
+    },
+  );
+
+  it('ctx_id binding fails against a DIFFERENT context\'s ctx_id (the real red-chip case)', async () => {
     const served = MOCK_CONTEXTS[0].body;
     const requestedInstead = MOCK_CONTEXTS[1].body.ctx_id;
     const verdict = JSON.parse(
       acdp.verifyCtxIdBinding(JSON.stringify(served), requestedInstead),
     ) as { valid: boolean; error?: string };
     expect(verdict.valid).toBe(false);
+    // …and the mapped verdict stays RED. This is the check the whole module
+    // exists for; the could-not-check mapping below must not blunt it.
+    const mapped = await verifyCtxIdBinding(served, requestedInstead);
+    expect(mapped.status).toBe('failed');
+    expect(mapped.detail).toContain('does not match the requested ctx_id');
+  });
+
+  // ── 11. could-not-check ≠ failed (UI-3 Phase 1) ───────────────────────────
+  // acdp-wasm 0.14.1 THROWS (rather than returning a `{valid:false}` verdict)
+  // from two strict-parse gates. `lib/verify/verify.ts` string-matches the two
+  // message prefixes to map them to `unavailable`, so THIS is the test that
+  // pins the upstream message text that mapping depends on: if a future bump
+  // changes the wording, criterion-1 below fails loudly here instead of the
+  // mapping silently reverting every such context to a red
+  // "✗ ctx_id binding · verification failed" — an accusation of registry
+  // substitution against a registry that served exactly what was asked for.
+
+  /** Clone a body without one of its (type-level optional) protocol fields. */
+  function without(body: ContextBody, field: 'signature' | 'data_refs'): ContextBody {
+    const clone: ContextBody = { ...body };
+    delete clone[field];
+    return clone;
+  }
+
+  const BASE = MOCK_CONTEXTS[0].body;
+
+  const UNCHECKABLE: ReadonlyArray<{
+    name: string;
+    body: ContextBody;
+    expectedCtxId: string;
+    prefix: string;
+    label: string;
+    detailNeedle: string;
+  }> = [
+    {
+      name: 'body with `signature` deleted',
+      body: without(BASE, 'signature'),
+      expectedCtxId: BASE.ctx_id,
+      prefix: 'invalid body JSON:',
+      label: 'body not parseable',
+      detailNeedle: 'served body',
+    },
+    {
+      name: 'body with `data_refs` deleted',
+      body: without(BASE, 'data_refs'),
+      expectedCtxId: BASE.ctx_id,
+      prefix: 'invalid body JSON:',
+      label: 'body not parseable',
+      detailNeedle: 'served body',
+    },
+    {
+      name: "body with visibility 'internal'",
+      body: { ...BASE, visibility: 'internal' },
+      expectedCtxId: BASE.ctx_id,
+      prefix: 'invalid body JSON:',
+      label: 'body not parseable',
+      detailNeedle: 'served body',
+    },
+    {
+      name: 'body with an unknown `type`',
+      body: { ...BASE, type: 'wat' },
+      expectedCtxId: BASE.ctx_id,
+      prefix: 'invalid body JSON:',
+      label: 'body not parseable',
+      detailNeedle: 'served body',
+    },
+    {
+      name: 'well-formed body, malformed expectedCtxId',
+      body: BASE,
+      expectedCtxId: 'not-a-ctx-id',
+      prefix: 'invalid expected_ctx_id:',
+      label: 'requested id malformed',
+      detailNeedle: 'requested ctx_id',
+    },
+  ];
+
+  it.each(UNCHECKABLE.map((c) => [c.name, c] as const))(
+    'the real binary throws with the pinned prefix — %s',
+    (_name, c) => {
+      let thrown: unknown;
+      try {
+        acdp.verifyCtxIdBinding(JSON.stringify(c.body), c.expectedCtxId);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown, 'expected the binary to THROW, not return a verdict').toBeInstanceOf(Error);
+      expect((thrown as Error).message.startsWith(c.prefix)).toBe(true);
+    },
+  );
+
+  it.each(UNCHECKABLE.map((c) => [c.name, c] as const))(
+    'maps to `unavailable`, not `failed` — %s',
+    async (_name, c) => {
+      const verdict = await verifyCtxIdBinding(c.body, c.expectedCtxId);
+      expect(verdict.status).toBe('unavailable');
+      expect(verdict.unavailableLabel).toBe(c.label);
+      expect(verdict.detail).toContain(c.detailNeedle);
+      expect(verdict.detail).not.toContain('malformed material');
+    },
+  );
+
+  // The two arms implicate OPPOSITE parties, so one shared sentence would be
+  // actively false on one of them: the same body that throws under a bad id
+  // returns `{"valid":true}` under a good one, so blaming the served body there
+  // would accuse a correctly-behaving registry. Falsified by string comparison.
+  //
+  // The plan's criterion 8 asks that "neither string appears on the other arm".
+  // Taken literally that is unsatisfiable against the plan's OWN prescribed
+  // detail strings: the id arm deliberately ends "…the served body was not the
+  // problem", which contains the substring "served body" — and that clause is
+  // the whole point of the arm, so the strings are right and the criterion's
+  // wording is what is imprecise. Resolved by asserting the distinction where it
+  // is actually unambiguous: the two `unavailableLabel`s (which are what the
+  // operator reads on the chip) are mutually exclusive, and the detail needle is
+  // narrowed to the accusatory clause "served body does not conform" rather than
+  // the bare noun phrase. Still falsifiable by string comparison, no judgement.
+  it('the body-schema arm and the requested-id arm never share their wording', async () => {
+    const bodyArm = await verifyCtxIdBinding(without(BASE, 'signature'), BASE.ctx_id);
+    const idArm = await verifyCtxIdBinding(BASE, 'not-a-ctx-id');
+
+    expect(bodyArm.detail).toContain('served body');
+    expect(bodyArm.detail).not.toContain('requested ctx_id');
+    expect(bodyArm.unavailableLabel).toBe('body not parseable');
+
+    expect(idArm.detail).toContain('requested ctx_id');
+    expect(idArm.detail).not.toContain('served body does not conform');
+    expect(idArm.unavailableLabel).toBe('requested id malformed');
+
+    // …and the id arm's claim that "the served body was not the problem" is
+    // true of THAT EXACT BODY: it verifies cleanly under its own ctx_id.
+    expect((await verifyCtxIdBinding(BASE, BASE.ctx_id)).status).toBe('verified');
   });
 });

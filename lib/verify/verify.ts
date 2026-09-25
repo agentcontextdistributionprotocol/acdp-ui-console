@@ -7,11 +7,22 @@
 //
 //   status: 'verified'    → cryptographically checked and valid
 //           'failed'      → cryptographically checked and INVALID (tamper/mismatch)
-//           'unavailable' → could not check because a required signer key / DID
-//                           document is not on hand (honest "material only")
+//           'unavailable' → COULD NOT CHECK. Two distinct causes, both of them
+//                           "we have no verdict", neither of them a finding:
+//                             (a) a required signer key / DID document is not
+//                                 on hand — the original case, rendered as
+//                                 "material only";
+//                             (b) the material itself could not be parsed well
+//                                 enough for the check to run at all (see
+//                                 `verifyCtxIdBinding` below, which carries its
+//                                 own `unavailableLabel` so the chip does not
+//                                 claim a missing key it does have).
 //
-// `unavailable` is NEVER rendered as a pass. Absence of a key is not a failure
-// of the proof, but it is also not a verification — so it gets its own state.
+// `unavailable` is NEVER rendered as a pass. Neither a missing key nor an
+// unparseable body is a failure of the proof — but neither is a verification,
+// so they share this third state rather than being forced into `failed`.
+// A verdict producer that reaches `unavailable` for reason (b) SHOULD set
+// `unavailableLabel`, because the default chip copy names reason (a).
 // ══════════════════════════════════════════════════════════════════════
 import type {
   ContextBody,
@@ -32,11 +43,24 @@ export type VerdictStatus = 'verified' | 'failed' | 'unavailable';
 export interface Verdict {
   status: VerdictStatus;
   detail: string;
+  /**
+   * Optional replacement for the chip's default `unavailable` status word
+   * ("material only"). That default is copy written for the key-not-on-hand
+   * case every other `unavailable` in this module represents; a producer that
+   * reaches `unavailable` for a DIFFERENT reason sets this so the chip does not
+   * say something untrue. Consumed by `VerdictChip`
+   * (`components/contexts/context-detail.tsx`); absent for every other verdict,
+   * which keeps the default rendering unchanged.
+   */
+  unavailableLabel?: string;
 }
 
 const verified = (detail: string): Verdict => ({ status: 'verified', detail });
 const failed = (detail: string): Verdict => ({ status: 'failed', detail });
-const unavailable = (detail: string): Verdict => ({ status: 'unavailable', detail });
+const unavailable = (detail: string, unavailableLabel?: string): Verdict =>
+  unavailableLabel
+    ? { status: 'unavailable', detail, unavailableLabel }
+    : { status: 'unavailable', detail };
 
 interface WasmVerdict {
   valid: boolean;
@@ -89,6 +113,44 @@ export async function verifyProducerSignature(body: ContextBody, docs: DidDocMap
   );
 }
 
+/**
+ * The two strict-parse gates acdp-wasm 0.14.1's `verifyCtxIdBinding` THROWS
+ * from, and how each maps to an honest `unavailable`.
+ *
+ * `acdp_wasm.d.ts` documents that this function "Throws on malformed body JSON
+ * or a malformed `expectedCtxId`" — i.e. EVERY documented throw from it is a
+ * could-not-check, never a verdict about the served body's authenticity. There
+ * is no structured discriminator to switch on: the throws are plain `Error`s
+ * with no `code` and no own enumerable keys (confirmed against the installed
+ * binary), so the message prefix is the only signal available.
+ *
+ * The two prefixes implicate OPPOSITE parties and therefore must not share one
+ * sentence. `invalid body JSON:` means the registry's body did not conform to
+ * the acdp-rs `Body` schema. `invalid expected_ctx_id:` means the id THIS
+ * CONSOLE asked about is not a canonical ACDP id — the served body may be
+ * perfectly well-formed, and the same body that throws under a bad id returns
+ * `{"valid":true}` under a good one. Blaming the body on that arm would accuse
+ * a correctly-behaving registry, which is the exact defect this mapping exists
+ * to remove.
+ */
+const CTX_ID_BINDING_UNCHECKABLE: ReadonlyArray<{
+  prefix: string;
+  detail: string;
+  unavailableLabel: string;
+}> = [
+  {
+    prefix: 'invalid body JSON:',
+    detail: 'served body does not conform to the acdp-rs Body schema — ctx_id binding not checked',
+    unavailableLabel: 'body not parseable',
+  },
+  {
+    prefix: 'invalid expected_ctx_id:',
+    detail:
+      'the requested ctx_id is not a canonical ACDP id — binding not checked; the served body was not the problem',
+    unavailableLabel: 'requested id malformed',
+  },
+];
+
 // ── ctx_id binding (acdp-wasm 0.14.1) — catches a registry silently serving a
 // DIFFERENT context than the one requested. `content_hash` alone can't catch
 // this: a body can be perfectly self-consistent and still be the wrong body.
@@ -96,26 +158,100 @@ export async function verifyProducerSignature(body: ContextBody, docs: DidDocMap
 // (a search hit's id, a URL param, a graph node's id) — NEVER read back off
 // `body.ctx_id` itself, which would make this tautologically green.
 //
-// TWO independent strict-parse gates can throw here (confirmed against the
-// real binary), unlike `verifyContentHash`'s single permissive check above:
-// (1) `body_json` must fully conform to acdp-rs's current Body schema — same
-//     class of gate `verifyReceipt` hit (see ASSUMPTIONS.md's body_json entry),
-//     now widened from "receipt-present contexts only" to every context this
-//     chip renders on; (2) `expected_ctx_id` is ALSO strict-parsed, and in real
-//     mode it's upstream data (a registry search result, a control-plane run
-//     event) this console doesn't control. `fromWasm`'s catch branch already
-//     labels a throw distinctly from a clean mismatch (`malformed material:
-//     <wasm message>` vs. the fail-prefix below), so a malformed caller-side id
-//     is NOT rendered with the same detail text as a genuine substitution —
-//     but that distinction only reaches an operator via the chip's hover
-//     tooltip (no VerdictCaption in the Integrity group), and the chip LABEL
-//     itself ("✗ ctx_id binding · verification failed") is identical either
-//     way. See ASSUMPTIONS.md ("UI-2 Phase 2: ctxIdBinding's two strict-parse
-//     failure surfaces") for the full reasoning and blast radius.
+// THIS FUNCTION DOES NOT USE `fromWasm`'s THROW MAPPING, deliberately.
+// `fromWasm` turns every throw into `failed` — correct for its other callers,
+// whose comment (above) reads a throw as "malformed host input (RFC-ACDP spec
+// violation in the material itself)". That reading does not hold here, and the
+// dominant trigger shows why: a body with NO `signature` throws
+// `invalid body JSON: missing field \`signature\``, yet `lib/types.ts:310`
+// declares `signature?` optional, `:318` declares `data_refs?` optional, and
+// `context-detail.tsx` renders an unsigned context with a neutral `unsigned`
+// chip as a legitimate state. Mapping that to `failed` renders
+// "✗ ctx_id binding · verification failed" — the one verdict in this module
+// that alleges a HOSTILE REGISTRY — against a registry that served exactly
+// what it was asked for. A false allegation of tampering is not the same cost
+// as a false alarm. `verifyRegistryReceipt` (below) already returns
+// `unavailable` for this same missing-signature case, so this also makes the
+// function consistent with its own module contract and its own neighbour.
+//
+// A CLEAN `{valid:false}` VERDICT STAYS `failed`. The binary returns that for
+// genuine substitution ("context substitution: requested …, registry served
+// …"), which is the finding this check exists for and is not blunted here.
+// An unrecognized throw message ALSO stays `failed` — see below.
+//
+// THE `invalid body JSON:` ARM IS ATTACKER-REACHABLE. Stating this plainly,
+// because the rest of this reasoning is about accidental failure and a reader
+// should not mistake it for an exhaustive threat model. A hostile registry that
+// wants to suppress its own red chip can do it deterministically: serve the
+// substituted body AND make that body fail acdp-rs `Body` deserialization (drop
+// `data_refs`, use an unknown `type`, …). Before this change that rendered red;
+// now it renders amber. Three things make that acceptable rather than a
+// regression, and all three are load-bearing:
+//   1. The pre-change red was never a DETECTION. The binary threw before
+//      running the binding comparison, on both sides of this change — so the
+//      old red chip was an accident of the catch-all mapping, not evidence of
+//      substitution. Nothing that was previously proven is now unproven.
+//   2. `unavailable` is never rendered as a pass, and the caption says
+//      verbatim that the binding was NOT checked. The console asserts nothing
+//      it cannot prove, which is the invariant that actually matters here.
+//   3. A receipt-bearing context still goes red independently, via
+//      `verifyRegistryReceipt` — which this phase deliberately leaves on
+//      `fromWasm`'s throw→`failed` mapping.
+// What is genuinely lost is a red chip on a receipt-LESS context with an
+// unparseable body. If that becomes a real concern, the fix is a positive
+// signal (a registry-receipt requirement, or an upstream structured error
+// discriminator), not reverting to an accusation the verifier never made.
+//
+// WHY A PREFIX MATCH RATHER THAN A BLANKET `catch → unavailable`. A blanket
+// catch is defensible on the documentation alone and would carry no string
+// debt, but it fails in the wrong direction: a genuinely new throw class in a
+// future acdp-wasm would be silently absorbed as `unavailable` (an
+// UNDER-alarm). Under a prefix match, a changed message merely stops matching
+// and reverts to today's red `failed` (an OVER-alarm). That asymmetry, not
+// elegance, is why the prefix match wins — and
+// `test/__tests__/wasm-fixtures.test.ts` pins both prefixes against the real
+// binary so a bump that changes the text fails CI loudly instead of silently
+// reverting this behavior.
+//
+// THIS OVERRIDES TWO RECORDED, CONFIRMED REJECTIONS, both named so a future
+// simplification pass does not re-reject the change by pointing at them:
+// `ASSUMPTIONS.md` alternative (c) of "UI-2 Phase 2: ctxIdBinding's two
+// strict-parse failure surfaces" (the `invalid expected_ctx_id:` arm) and
+// alternative (a) of the `fromWasm` entry (the `invalid body JSON:` arm).
+// Their stated grounds were (i) string matching is brittle across acdp-wasm
+// versions — now answered by the real-binary prefix test, which did not exist
+// when they were written; (ii) the hover tooltip already carries the needed
+// information "for anyone who hovers" — a `title` attribute is invisible on
+// touch, invisible to keyboard, and unreliably announced, so the distinction
+// is now surfaced inline via the chip's own label and a `VerdictCaption`; and
+// (iii) the over-alarm is "low and one-directional" — true for a genuinely
+// malformed body, but priced as uniform when on this arm it is a substitution
+// accusation against a correctly-behaving registry.
+//
+// NOT touched: `verifyReceipt`'s mapping (`verifyRegistryReceipt` below) and
+// `fromWasm` itself. Widening this to `fromWasm` would silently re-decide
+// DECISIONS.md's deferred question about `verifyReceipt`'s strict `body_json`
+// parse on a schema-drifted-but-cryptographically-valid REAL body, which is
+// pending a live-registry smoke test. The cost of that scoping, stated: on a
+// body carrying a `signature` but no `data_refs`, one view shows
+// `ctx_id binding · body not parseable` (amber) beside
+// `registry receipt · verification failed` (red) — two colours for one cause.
+// Deliberate, and debt to retire when that deferred entry resolves.
 export async function verifyCtxIdBinding(body: ContextBody, expectedCtxId: string): Promise<Verdict> {
   const wasm = await getAcdpWasm();
+  let raw: string;
+  try {
+    raw = wasm.verifyCtxIdBinding(JSON.stringify(body), expectedCtxId);
+  } catch (e) {
+    const message = (e as Error)?.message ?? String(e);
+    const uncheckable = CTX_ID_BINDING_UNCHECKABLE.find((m) => message.startsWith(m.prefix));
+    if (uncheckable) return unavailable(uncheckable.detail, uncheckable.unavailableLabel);
+    // Fail-safe direction for an unknown condition: an unrecognized throw
+    // (a late wasm-init failure, OOM, a future throw class) stays `failed`.
+    return failed(`malformed material: ${message}`);
+  }
   return fromWasm(
-    () => wasm.verifyCtxIdBinding(JSON.stringify(body), expectedCtxId),
+    () => raw,
     'served body is bound to the requested ctx_id',
     'served body does not match the requested ctx_id',
   );
