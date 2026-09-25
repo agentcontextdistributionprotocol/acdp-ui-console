@@ -201,6 +201,11 @@ export interface CpDashboardOverview {
   // ACDP 0.2: per-registry receipt coverage + producer DID-method breakdown.
   receiptCoverage?: Array<{ registry_authority: string; publish_count: number; receipt_count: number }>;
   didMethods?: Array<{ method: 'did:web' | 'did:key' | 'other'; publish_count: number }>;
+  // RFC-ACDP-0014: window-scoped key-revocation counters. Absent when the
+  // control-plane instance predates this field, or has
+  // KEY_REVOCATION_CHECK_ENABLED=false (the default) — both render as "section
+  // absent," not a crash or a misleading zero-filled tile.
+  keyRevocation?: { preCompromise: number; revokedAtOrAfter: number; revokedTimeUnverifiable: number };
 }
 
 export interface KnownAgent {

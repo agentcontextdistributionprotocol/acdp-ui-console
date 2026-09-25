@@ -638,6 +638,7 @@ export const MOCK_DASHBOARD: CpDashboardOverview = {
     { method: 'did:key', publish_count: 58 },
     { method: 'other', publish_count: 6 },
   ],
+  keyRevocation: { preCompromise: 9, revokedAtOrAfter: 2, revokedTimeUnverifiable: 1 },
 };
 
 // ── Agents ────────────────────────────────────────────────────────────
