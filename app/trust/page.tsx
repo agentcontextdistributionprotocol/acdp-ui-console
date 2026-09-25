@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BadgeCheck, ShieldAlert, FileCheck2, Fingerprint } from 'lucide-react';
+import { BadgeCheck, ShieldAlert, FileCheck2, Fingerprint, Ban } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Card, CardHeader, CardBody } from '@/components/ui/card';
 import { KpiCard } from '@/components/dashboard/kpi-card';
@@ -47,6 +47,7 @@ export default function TrustPage() {
         <KpiCard label="Verified" value={t.verified} accent="var(--success)" icon={<BadgeCheck size={28} />} />
         <KpiCard label="Historical" value={t.verifiedHistorical} accent="var(--warning)" icon={<FileCheck2 size={28} />} hint="Valid, signed by a retired key (§9)" />
         <KpiCard label="Flagged events" value={t.flaggedEvents} accent="var(--danger)" icon={<ShieldAlert size={28} />} />
+        <KpiCard label="Revoked events" value={t.revokedEvents} accent="var(--danger)" icon={<Ban size={28} />} hint="RFC-ACDP-0014 · signed at/after a compromise boundary" />
         <KpiCard label="No receipt" value={t.noReceipt} accent="var(--muted)" icon={<Fingerprint size={28} />} />
       </div>
 

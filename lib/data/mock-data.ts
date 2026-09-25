@@ -588,6 +588,55 @@ export const MOCK_RUNS: CpRun[] = [
     // §9 historically authorized) — cryptographically valid, just not current.
     trust: { audited: 1, verified: 0, verifiedHistorical: 1, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
+  {
+    runId: 'run-revoked-1',
+    tenantId: 'default',
+    scenarioId: 's32_key_revocation',
+    status: 'completed',
+    startedAt: iso(1900),
+    completedAt: iso(1850),
+    contextsCount: 2,
+    registries: [AUTH_A],
+    inputs: { topic: 'revoked producer key' },
+    // DID_A's signing key was revoked mid-window (RFC-ACDP-0014, see the
+    // key-revocation context fixture in MOCK_CONTEXTS). Both contexts pass the
+    // baseline RFC-ACDP-0010 receipt audit (verified: 2) — compromise doesn't
+    // invalidate the signature math, only its trustworthiness (§7) — which is
+    // exactly why the orthogonal revocation check below matters: one context
+    // published before the compromise boundary remains historically
+    // authorized, one published at/after it fails closed despite its valid
+    // receipt.
+    trust: {
+      audited: 2,
+      verified: 2,
+      verifiedHistorical: 0,
+      structural: 0,
+      noReceipt: 0,
+      errors: 0,
+      flagged: [],
+      keyRevocationPreCompromise: 1,
+      keyRevocationRevokedAtOrAfter: 1,
+      keyRevocationRevokedTimeUnverifiable: 0,
+      revoked: [
+        {
+          eventId: 'ev-revoked-1',
+          ctxId: `acdp://${AUTH_A}/d3a8c1e2-9f4b-4a6d-8c5e-2b7f1a9d3c6e`,
+          status: 'pre_compromise',
+          boundary: '2026-08-01 00:00:00+00',
+          trustClass: 'producer_signed',
+          sources: [{ ctxId: `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`, publisher: DID_A }],
+        },
+        {
+          eventId: 'ev-revoked-2',
+          ctxId: `acdp://${AUTH_A}/e7b2f4a1-3d6c-4f8e-9a1b-5c3d7e9f2a4b`,
+          status: 'revoked_at_or_after',
+          boundary: '2026-08-01 00:00:00+00',
+          trustClass: 'producer_signed',
+          sources: [{ ctxId: `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`, publisher: DID_A }],
+        },
+      ],
+    },
+  },
 ];
 
 // ── Context events (global firehose / history) ────────────────────────

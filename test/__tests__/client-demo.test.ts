@@ -244,6 +244,25 @@ describe('demo lookups that should throw on miss', () => {
   });
 });
 
+// ── RFC-ACDP-0014 revoked-key events on a run's trust summary ──────────
+describe('run trust: revoked-key events (demo pass-through)', () => {
+  it('getCpRun surfaces trust.revoked with the RFC-ACDP-0014 counters, not silently dropped', async () => {
+    const run = await getCpRun('run-revoked-1', DEMO);
+    expect(run.trust?.revoked?.length).toBe(2);
+    expect(run.trust?.keyRevocationPreCompromise).toBe(1);
+    expect(run.trust?.keyRevocationRevokedAtOrAfter).toBe(1);
+    expect(run.trust?.keyRevocationRevokedTimeUnverifiable).toBe(0);
+    const statuses = new Set(run.trust?.revoked?.map((r) => r.status));
+    expect(statuses.has('pre_compromise')).toBe(true);
+    expect(statuses.has('revoked_at_or_after')).toBe(true);
+  });
+
+  it('a run with no revoked events has an empty/absent array, not a crash', async () => {
+    const run = await getCpRun('run-historical-1', DEMO);
+    expect(run.trust?.revoked ?? []).toEqual([]);
+  });
+});
+
 // ── Lineage chains ─────────────────────────────────────────────────────
 describe('lineage chains (demo)', () => {
   it('getLineage returns the full ordered chain', async () => {

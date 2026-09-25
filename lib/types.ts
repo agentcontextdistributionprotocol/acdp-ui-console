@@ -138,6 +138,23 @@ export interface RunTrustSummary {
     status: string; // 'discrepancy'
     discrepancies: string[]; // prefix-coded flag strings, e.g. 'content_hash_mismatch:…'
   }>;
+  // RFC-ACDP-0014: revoked-key events. Semantically distinct from `flagged`
+  // above — `flagged` is a content/signature discrepancy, `revoked` is a
+  // signing key whose authority was later revoked (RFC-ACDP-0014 §7). Absent
+  // when the control-plane instance predates this field, or has
+  // KEY_REVOCATION_CHECK_ENABLED=false (the default) — same "field absent"
+  // degrade-gracefully path as Phase 3's dashboard tile.
+  keyRevocationPreCompromise?: number;
+  keyRevocationRevokedAtOrAfter?: number;
+  keyRevocationRevokedTimeUnverifiable?: number;
+  revoked?: Array<{
+    eventId: string;
+    ctxId: string | null;
+    status: 'pre_compromise' | 'revoked_at_or_after' | 'revoked_time_unverifiable';
+    boundary: string;
+    trustClass: 'producer_signed' | 'registry_attested';
+    sources: Array<{ ctxId: string; publisher: string }>;
+  }>;
 }
 
 export interface CpRun {
