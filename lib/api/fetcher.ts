@@ -1,10 +1,30 @@
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { ProxyService } from '@/lib/types';
 
+// control-plane's GlobalExceptionFilter (src/errors/exception.filter.ts) formats
+// structured errors as `{statusCode, errorCode, message, error: {code, message}}`
+// with a top-level `errorCode` — `error.code` carries the same value, nested, as a
+// fallback. Most call sites' bodies aren't JSON at all (plain text, an upstream's
+// own error page), so a parse failure is expected, not exceptional — never let it
+// mask the original HTTP error by throwing here.
+function parseErrorCode(body: string): string | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as { errorCode?: unknown; error?: { code?: unknown } };
+    if (typeof parsed.errorCode === 'string') return parsed.errorCode;
+    if (typeof parsed.error?.code === 'string') return parsed.error.code;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly service: ProxyService;
   readonly path: string;
+  /** Federation-proxy error code (e.g. `CONTEXT_ID_MISMATCH`), when the body is a structured control-plane error. */
+  readonly errorCode?: string;
 
   constructor(status: number, body: string, service: ProxyService, path: string) {
     super(body || `Request failed with status ${status}`);
@@ -12,6 +32,7 @@ export class ApiError extends Error {
     this.status = status;
     this.service = service;
     this.path = path;
+    this.errorCode = parseErrorCode(body);
   }
 
   get isNotFound() {

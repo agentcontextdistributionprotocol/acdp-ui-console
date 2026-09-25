@@ -57,6 +57,42 @@ describe('ApiError', () => {
   it('isNotFound is false for non-404 statuses', () => {
     expect(new ApiError(403, 'forbidden', 'control-plane', '/x').isNotFound).toBe(false);
   });
+
+  describe('errorCode (federation-proxy verifyCtxIdBinding error envelope)', () => {
+    it('parses the top-level errorCode from a structured control-plane error body', () => {
+      const body = JSON.stringify({
+        statusCode: 502,
+        errorCode: 'CONTEXT_ID_MISMATCH',
+        message: 'served body does not match requested ctx_id',
+        error: { code: 'CONTEXT_ID_MISMATCH', message: 'served body does not match requested ctx_id' },
+      });
+      const err = new ApiError(502, body, 'control-plane', '/contexts/x');
+      expect(err.errorCode).toBe('CONTEXT_ID_MISMATCH');
+    });
+
+    it('falls back to the nested error.code when errorCode is absent', () => {
+      const body = JSON.stringify({ error: { code: 'CONTEXT_BINDING_UNVERIFIABLE', message: '…' } });
+      const err = new ApiError(502, body, 'control-plane', '/contexts/x');
+      expect(err.errorCode).toBe('CONTEXT_BINDING_UNVERIFIABLE');
+    });
+
+    it('stays undefined for a plain-text body', () => {
+      expect(new ApiError(503, 'service unavailable', 'playground', '/runs').errorCode).toBeUndefined();
+    });
+
+    it('stays undefined for a malformed-JSON body rather than throwing', () => {
+      expect(() => new ApiError(502, '{not json', 'control-plane', '/contexts/x')).not.toThrow();
+      expect(new ApiError(502, '{not json', 'control-plane', '/contexts/x').errorCode).toBeUndefined();
+    });
+
+    it('stays undefined for an empty body', () => {
+      expect(new ApiError(500, '', 'registry-a', '/x').errorCode).toBeUndefined();
+    });
+
+    it('stays undefined for valid JSON that carries neither field', () => {
+      expect(new ApiError(500, JSON.stringify({ message: 'boom' }), 'registry-a', '/x').errorCode).toBeUndefined();
+    });
+  });
 });
 
 describe('fetchJson', () => {

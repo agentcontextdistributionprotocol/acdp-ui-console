@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ContextCard } from '@/components/contexts/context-card';
 import { ContextDetail } from '@/components/contexts/context-detail';
 import { searchContexts, getContext } from '@/lib/api/client';
+import { ApiError } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { C } from '@/lib/colors';
 import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
@@ -61,6 +62,14 @@ export default function ContextsPage() {
     queryFn: () => getContext(openCtx!, demoMode),
     enabled: !!openCtx,
   });
+
+  // The federation proxy's verifyCtxIdBinding check (fail-closed, 502) rejecting
+  // this fetch is a worse signal than "not found" or "service down" — the
+  // registry served a body that doesn't match its own claimed ctx_id — so it
+  // gets a distinct, trust-hostile message rather than the generic one below.
+  const bindingMismatch =
+    detail.error instanceof ApiError &&
+    (detail.error.errorCode === 'CONTEXT_ID_MISMATCH' || detail.error.errorCode === 'CONTEXT_BINDING_UNVERIFIABLE');
 
   const matches = search.data?.pages.flatMap((p) => p.matches) ?? [];
   const partial = search.data?.pages.some((p) => p.partial) ?? false;
@@ -187,7 +196,10 @@ export default function ContextsPage() {
 
       <Modal open={!!openCtx} onClose={() => setOpenCtx(null)} title={detail.data?.body.title ?? 'Context'}>
         {detail.isLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</div>}
-        {detail.error && <ErrorPanel message="Could not load context." />}
+        {detail.error && bindingMismatch && (
+          <ErrorPanel message="Registry served a context that doesn't match its own claimed id — this response cannot be trusted." />
+        )}
+        {detail.error && !bindingMismatch && <ErrorPanel message="Could not load context." />}
         {/* requestedCtxId is `openCtx` (the search hit the operator clicked), never
             `detail.data.body.ctx_id` — a genuine independent request/response pair,
             so the ctxIdBinding chip actually catches a registry serving the wrong
