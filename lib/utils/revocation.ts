@@ -53,6 +53,45 @@ export function failClosedEntries(revoked: RevocationEntry[] | undefined): Revoc
   return (revoked ?? []).filter((r) => isFailClosed(r.status));
 }
 
+/**
+ * How many fail-closed verdicts this run carries, reading BOTH the per-event
+ * array and the aggregate counters.
+ *
+ * The two describe the same rows upstream today — `summarizeByRun` derives
+ * both from one `.limit(500)` result set — so this is `max` of two numbers that
+ * currently always agree. It exists because they are not *contractually*
+ * bound to agree, and this module already hardens the status vocabulary
+ * against a control plane newer than this console while leaving the payload
+ * SHAPE unhardened in the fail-OPEN direction. That asymmetry was reachable:
+ * a payload with `revokedAtOrAfter: 2` and an empty `revoked[]` had
+ * `runRevocationReported` (which reads the counters) saying "we checked" while
+ * `hasTrustViolation` (which read only the array) said "clean" — a green
+ * check-mark beside a rendered `Revoked 0`. That is the precise outcome this
+ * module exists to prevent, arrived at through its own newer half.
+ *
+ * `max`, not the array alone and not the counters alone: either source
+ * reporting a fail-closed verdict is enough to disqualify the run, and neither
+ * may be silently trusted to be complete.
+ */
+export function failClosedCount(trust: RunTrustSummary): number {
+  return Math.max(
+    failClosedEntries(trust.revoked).length,
+    (trust.keyRevocationRevokedAtOrAfter ?? 0) + (trust.keyRevocationRevokedTimeUnverifiable ?? 0),
+  );
+}
+
+/**
+ * How many fail-closed verdicts were counted but arrived with no per-event
+ * detail. Non-zero only on a payload whose counters outrun its array — which
+ * upstream cannot currently produce. Surfaced rather than swallowed: a run
+ * that reddens its icon must never render an empty findings table, which is
+ * the failure mode Phase 2 removed and which counting the counters would
+ * otherwise reintroduce for exactly this payload.
+ */
+export function undetailedFailClosedCount(trust: RunTrustSummary): number {
+  return Math.max(0, failClosedCount(trust) - failClosedEntries(trust.revoked).length);
+}
+
 /** Historically-authorized entries — surfaced separately, never as violations. */
 export function preCompromiseEntries(revoked: RevocationEntry[] | undefined): RevocationEntry[] {
   return (revoked ?? []).filter((r) => isHistoricallyAuthorized(r.status));
@@ -96,7 +135,9 @@ export function revocationChipClass(status: string): string {
 
 /** Does this run carry a disqualifying finding of either kind? */
 export function hasTrustViolation(trust: RunTrustSummary): boolean {
-  return trust.flagged.length > 0 || hasFailClosedRevocation(trust.revoked);
+  // Via `failClosedCount`, not `revoked[]` alone — see its docblock for the
+  // fail-open payload that distinction closes.
+  return trust.flagged.length > 0 || failClosedCount(trust) > 0;
 }
 
 /**
@@ -105,7 +146,7 @@ export function hasTrustViolation(trust: RunTrustSummary): boolean {
  * they are shown, and are summed here purely so "worst first" is well-defined.
  */
 export function violationCount(trust: RunTrustSummary): number {
-  return trust.flagged.length + failClosedEntries(trust.revoked).length;
+  return trust.flagged.length + failClosedCount(trust);
 }
 
 // ── was revocation checked AT ALL? ─────────────────────────────────────
@@ -181,14 +222,25 @@ export function runRevocationReported(trust: RunTrustSummary): boolean {
   return counted > 0;
 }
 
+/** The dashboard overview's window-scoped revocation counters. */
+export type DashboardRevocation = {
+  preCompromise: number;
+  revokedAtOrAfter: number;
+  revokedTimeUnverifiable: number;
+};
+
 /**
- * Same question for the window-scoped dashboard tile. No proof arm is
+ * Same question for the window-scoped dashboard tile. Written as a TYPE
+ * PREDICATE so the three KPIs that follow a true result read
+ * `d.keyRevocation.preCompromise` rather than asserting past the optional with
+ * `!` — the guarantee is then checked by the compiler instead of promised in a
+ * comment. No proof arm is
  * available here — the overview payload carries no `audited` total to lean on
  * — so this is heuristic only.
  */
 export function dashboardRevocationReported(
-  keyRevocation: { preCompromise: number; revokedAtOrAfter: number; revokedTimeUnverifiable: number } | undefined,
-): boolean {
+  keyRevocation: DashboardRevocation | undefined,
+): keyRevocation is DashboardRevocation {
   if (!keyRevocation) return false; // pre-Phase-14 backend: genuinely absent
   return (
     keyRevocation.preCompromise > 0 ||

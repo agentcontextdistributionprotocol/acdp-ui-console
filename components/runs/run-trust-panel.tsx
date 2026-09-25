@@ -3,11 +3,12 @@
 import { BadgeCheck, ShieldAlert } from 'lucide-react';
 import { formatCtxId } from '@/lib/utils/acdp';
 import {
-  failClosedEntries,
+  failClosedCount,
   hasTrustViolation,
   preCompromiseEntries,
   revocationChipClass,
   runRevocationReported,
+  undetailedFailClosedCount,
 } from '@/lib/utils/revocation';
 import { C } from '@/lib/colors';
 import type { RunTrustSummary } from '@/lib/types';
@@ -40,13 +41,17 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
   const hasFlags = trust.flagged.length > 0;
   const revoked = trust.revoked ?? [];
   const hasRevoked = revoked.length > 0;
-  const failClosed = failClosedEntries(revoked);
   const preCompromise = preCompromiseEntries(revoked);
   // The header verdict must reflect BOTH violation mechanisms — via the one
   // shared predicate, so this panel, `/trust`'s filter and `useTrust`'s sort
   // cannot drift apart again.
   const hasViolation = hasTrustViolation(trust);
   const revocationReported = runRevocationReported(trust);
+  // Counted across BOTH the per-event array and the aggregate counters, so a
+  // payload reporting fail-closed verdicts without per-event detail still
+  // reddens this panel rather than rendering a reassuring zero.
+  const failedClosedTotal = failClosedCount(trust);
+  const undetailed = undetailedFailClosedCount(trust);
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       <div className="feed-header">
@@ -78,7 +83,7 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
           <Stat label="No receipt" value={trust.noReceipt} tone={C.muted} />
           <Stat label="Flagged" value={trust.flagged.length} tone={hasFlags ? C.danger : C.muted} />
           {revocationReported && (
-            <Stat label="Revoked" value={failClosed.length} tone={failClosed.length > 0 ? C.danger : C.muted} />
+            <Stat label="Revoked" value={failedClosedTotal} tone={failedClosedTotal > 0 ? C.danger : C.muted} />
           )}
           <Stat label="Errors" value={trust.errors} tone={C.muted} />
         </div>
@@ -94,6 +99,17 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
             {trust.audited === 0
               ? ' — no receipt-audit events, so no revocation classification could have run.'
               : ' — no revocation verdicts were classified, and the control plane emits these counters whether or not the check ran.'}
+          </div>
+        )}
+
+        {/* A reddened panel must never render an empty findings table — that
+            was the Phase 2 defect, and counting the aggregate counters would
+            reintroduce it for the one payload where they outrun the array.
+            Say what is known instead of showing nothing. */}
+        {undetailed > 0 && (
+          <div style={{ fontSize: 10.5, color: C.danger, marginBottom: 10 }}>
+            {undetailed} fail-closed revocation verdict{undetailed === 1 ? '' : 's'} counted for this run
+            with no per-event detail in the payload — the count is reported, the events are not listed below.
           </div>
         )}
 

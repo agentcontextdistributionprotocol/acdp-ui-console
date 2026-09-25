@@ -783,8 +783,12 @@ export function demoDashboardForWindow(window: string): CpDashboardOverview {
 
   // Receipts ride the same per-registry publish counts, so coverage can never
   // report more receipts than publishes.
-  const receiptCoverage = MOCK_DASHBOARD.receiptCoverage?.map((r, i) => {
-    const publish_count = byRegistry[i]?.event_count ?? n(r.publish_count);
+  // Keyed by authority, NOT by index: the two lists happen to be in the same
+  // order today, and a positional join would go silently wrong the moment
+  // either is reordered or a third registry is added.
+  const eventsByAuthority = new Map(byRegistry.map((r) => [r.registry_authority, r.event_count]));
+  const receiptCoverage = MOCK_DASHBOARD.receiptCoverage?.map((r) => {
+    const publish_count = eventsByAuthority.get(r.registry_authority) ?? n(r.publish_count);
     return { ...r, publish_count, receipt_count: Math.min(publish_count, n(r.receipt_count)) };
   });
 

@@ -510,6 +510,15 @@ export async function searchContexts(
   // name the same context if a registry serves both), never across registries:
   // the same ctx_id served by two authorities is a real federation observation
   // the combined view has always shown, and collapsing it here would hide it.
+  // A merge that lost EVERY upstream is a failure, not an empty result. Without
+  // this, selecting the revocation facet against a down registry degraded from
+  // the `ErrorPanel` every other facet raises into an amber "did not respond"
+  // plus "No matches in this view" — a security investigation against a dead
+  // registry, rendered as a search that found nothing.
+  if (settled.length > 0 && settled.every((r) => r.status === 'rejected')) {
+    throw (settled[0] as PromiseRejectedResult).reason;
+  }
+
   const seen = new Set<string>();
   const matches: SearchHit[] = [];
   // `total_estimate` must come from the UPSTREAM estimates, not from

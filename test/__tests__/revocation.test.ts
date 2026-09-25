@@ -12,6 +12,10 @@ import {
   isHistoricallyAuthorized,
   preCompromiseEntries,
   revocationChipClass,
+  failClosedCount,
+  undetailedFailClosedCount,
+  hasTrustViolation,
+  violationCount,
   runRevocationReported,
   dashboardRevocationReported,
   isKeyRevocationFacet,
@@ -88,6 +92,62 @@ describe('counting', () => {
     expect(hasFailClosedRevocation([])).toBe(false);
     expect(failClosedEntries(undefined)).toEqual([]);
     expect(preCompromiseEntries(undefined)).toEqual([]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The one place the two phases modelled the same payload differently.
+//
+// Phase 3 taught "was revocation reported?" to read the aggregate COUNTERS.
+// Phase 2's "is this a violation?" still read only the per-event ARRAY. So a
+// payload with `revokedAtOrAfter: 2` and an empty `revoked[]` had the newer
+// half saying "we checked" and the older half saying "clean" — a green
+// check-mark beside a rendered `Revoked 0`, which is the exact outcome Phase 2
+// exists to prevent, reached through Phase 3's own gate.
+//
+// Upstream cannot currently emit it (both derive from one row set), but this
+// module already hardens the status VOCABULARY against a newer control plane;
+// leaving the payload SHAPE unhardened in the fail-OPEN direction contradicted
+// its own stated posture.
+// ══════════════════════════════════════════════════════════════════════
+describe('failClosedCount — neither source is trusted to be complete', () => {
+  const counterOnly = summary({
+    revoked: [],
+    keyRevocationRevokedAtOrAfter: 2,
+    keyRevocationRevokedTimeUnverifiable: 0,
+  });
+
+  it('counts fail-closed verdicts the counters report but the array omits', () => {
+    expect(failClosedCount(counterOnly)).toBe(2);
+    expect(undetailedFailClosedCount(counterOnly)).toBe(2);
+  });
+
+  it('DISCRIMINATES: such a run is a violation, not a green check-mark', () => {
+    expect(hasTrustViolation(counterOnly)).toBe(true);
+    expect(violationCount(counterOnly)).toBe(2);
+  });
+
+  it('counts entries the counters omit, in the other direction', () => {
+    // An older control plane populating only the array.
+    const arrayOnly = summary({ revoked: [entry('revoked_at_or_after'), entry('revoked_time_unverifiable')] });
+    expect(failClosedCount(arrayOnly)).toBe(2);
+    expect(undetailedFailClosedCount(arrayOnly)).toBe(0);
+  });
+
+  it('does not double-count when the two sources agree, as upstream always makes them', () => {
+    const agreed = summary({
+      revoked: [entry('revoked_at_or_after'), entry('pre_compromise')],
+      keyRevocationRevokedAtOrAfter: 1,
+      keyRevocationPreCompromise: 1,
+    });
+    expect(failClosedCount(agreed)).toBe(1);
+    expect(undetailedFailClosedCount(agreed)).toBe(0);
+  });
+
+  it('never counts pre_compromise, from either source', () => {
+    const authorized = summary({ revoked: [entry('pre_compromise')], keyRevocationPreCompromise: 9 });
+    expect(failClosedCount(authorized)).toBe(0);
+    expect(hasTrustViolation(authorized)).toBe(false);
   });
 });
 

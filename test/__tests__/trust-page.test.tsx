@@ -148,8 +148,27 @@ describe('/trust — the revocation KPI', () => {
     // boundary", which describes one of the two fail-closed statuses summed
     // into the number beside it.
     expect(
-      screen.getByText('RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable'),
+      screen.getByText(/signed at\/after a compromise boundary, or signing time unverifiable/),
     ).toBeInTheDocument();
+  });
+
+  it('names its coverage: the gate is per-run but the number spans the view', () => {
+    // One reporting run un-suppresses a total summed across every run in the
+    // view, including runs that reported nothing — reachable on a deployment
+    // that enabled the check recently, since older audit rows classify as
+    // `none` and read as not-reported. The number is a lower bound and can
+    // never hide a known violation, but the hint must not imply completeness.
+    renderWith(
+      overview(
+        [
+          { runId: 'r1', trust: trust({ revoked: [revocation('revoked_at_or_after')] }) },
+          { runId: 'r2', trust: trust() },
+          { runId: 'r3', trust: trust() },
+        ],
+        { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+      ),
+    );
+    expect(screen.getByText(/across the 1 of 3 runs that reported a classification/)).toBeInTheDocument();
   });
 
   // ── Phase 3 ──────────────────────────────────────────────────────────
@@ -192,5 +211,64 @@ describe('/trust — the revocation KPI', () => {
     const header = screen.getByText('Trust violations').closest('.feed-header, .card') as HTMLElement;
     expect(header.textContent).toContain('2 revoked across 1 run');
     expect(header.textContent).not.toContain('revocation not reported');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The counter-only payload, on the aggregate surface.
+//
+// `/trust`'s violations filter and its table body read different things — the
+// filter asks "is this run a violation", the body flat-maps the per-event
+// arrays. A run admitted by aggregate counters it has no entries for would
+// therefore contribute zero rows: present in the count above, invisible in the
+// list below. That is the same false "nothing to see" as the original defect,
+// reached from the other side.
+// ══════════════════════════════════════════════════════════════════════
+describe('/trust — a run whose fail-closed verdicts have no per-event detail', () => {
+  const counterOnly = () =>
+    overview(
+      [
+        {
+          runId: 'run-counters-only',
+          trust: trust({ revoked: [], keyRevocationRevokedAtOrAfter: 2 }),
+        },
+      ],
+      { revokedEvents: 2, revokedRuns: 1, revocationReportedRuns: 1 },
+    );
+
+  it('is listed as a violation rather than falling into the empty state', () => {
+    const { container } = renderWith(counterOnly());
+    expect(screen.queryByText('No trust violations')).not.toBeInTheDocument();
+    expect(container.textContent).toContain('run-counters-only');
+  });
+
+  it('contributes a row saying the count is known and the events are not', () => {
+    const { container } = renderWith(counterOnly());
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(screen.getByText('reported without detail')).toBeInTheDocument();
+    expect(screen.getByText(/2 fail-closed verdicts counted with no per-event detail/)).toBeInTheDocument();
+  });
+
+  it('DISCRIMINATES: the ordinary payload gets its event rows and no such row', () => {
+    // Both sources populated from one row set — upstream's only real shape.
+    // If the extra row were unconditional this would render three rows for two
+    // findings, and the surface would over-report as reliably as it under-reported.
+    const { container } = renderWith(
+      overview(
+        [
+          {
+            runId: 'run-detailed',
+            trust: trust({
+              revoked: [revocation('revoked_at_or_after', 'a'), revocation('revoked_time_unverifiable', 'b')],
+              keyRevocationRevokedAtOrAfter: 1,
+              keyRevocationRevokedTimeUnverifiable: 1,
+            }),
+          },
+        ],
+        { revokedEvents: 2, revokedRuns: 1, revocationReportedRuns: 1 },
+      ),
+    );
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(screen.queryByText('reported without detail')).not.toBeInTheDocument();
   });
 });

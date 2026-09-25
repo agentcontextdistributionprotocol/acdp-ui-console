@@ -4,8 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getCpDashboard, getCpRun, listCpRuns } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import {
-  failClosedEntries,
-  hasFailClosedRevocation,
+  failClosedCount,
   preCompromiseEntries,
   runRevocationReported,
   violationCount,
@@ -99,8 +98,8 @@ export function useTrust(window = '24h') {
           errors: acc.errors + trust.errors,
           flaggedRuns: acc.flaggedRuns + (trust.flagged.length > 0 ? 1 : 0),
           flaggedEvents: acc.flaggedEvents + trust.flagged.length,
-          revokedRuns: acc.revokedRuns + (hasFailClosedRevocation(trust.revoked) ? 1 : 0),
-          revokedEvents: acc.revokedEvents + failClosedEntries(trust.revoked).length,
+          revokedRuns: acc.revokedRuns + (failClosedCount(trust) > 0 ? 1 : 0),
+          revokedEvents: acc.revokedEvents + failClosedCount(trust),
           preCompromiseEvents: acc.preCompromiseEvents + preCompromiseEntries(trust.revoked).length,
           revocationReportedRuns: acc.revocationReportedRuns + (runRevocationReported(trust) ? 1 : 0),
         }),

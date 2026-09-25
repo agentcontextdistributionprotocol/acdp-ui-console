@@ -10,7 +10,12 @@ import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ReceiptCoverageBars, DidMethodBars } from '@/components/trust/coverage-bars';
 import { useTrust } from '@/lib/hooks/use-trust';
-import { failClosedEntries, hasTrustViolation, revocationChipClass } from '@/lib/utils/revocation';
+import {
+  failClosedEntries,
+  hasTrustViolation,
+  revocationChipClass,
+  undetailedFailClosedCount,
+} from '@/lib/utils/revocation';
 import { formatCtxId } from '@/lib/utils/acdp';
 import { timeAgo } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
@@ -66,10 +71,19 @@ export default function TrustPage() {
             `pre_compromise` — an event the control plane defines as
             historically AUTHORIZED, and which this same app labels
             "(authorized)" in green on the dashboard. */}
-        {/* An em-dash rather than a 0 when no run in the window reported a
+        {/* An em-dash rather than a 0 when no run in this view reported a
             revocation classification. The control plane emits these counters
             whether or not the check ran (it is off by default), so a zero here
-            would be a confident "nothing is revoked" that nobody established. */}
+            would be a confident "nothing is revoked" that nobody established.
+
+            When it DOES render, the hint names its coverage. The gate is
+            per-run but the number is summed across the view, so one reporting
+            run un-suppresses a total that also spans runs which reported
+            nothing — reachable on a deployment that enabled the check
+            recently, since older audit rows carry `key_revocation_status =
+            'none'` and read as not-reported. The number is a lower bound and
+            can never hide a known violation, but it must not imply a
+            completeness it does not have. */}
         <KpiCard
           label="Revoked events"
           value={t.revocationReportedRuns > 0 ? t.revokedEvents : '—'}
@@ -77,7 +91,7 @@ export default function TrustPage() {
           icon={<Ban size={28} />}
           hint={
             t.revocationReportedRuns > 0
-              ? 'RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable'
+              ? `RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable · across the ${t.revocationReportedRuns} of ${runs.length} runs that reported a classification`
               : // "in this view", not "in this window": `useTrust` fetches runs
                 // via `listCpRuns({ limit })` with NO window parameter — only
                 // receiptCoverage/didMethods are window-scoped. Saying "window"
@@ -172,6 +186,26 @@ export default function TrustPage() {
                         <td style={{ color: C.muted }}>{when}</td>
                       </tr>
                     )),
+                    // Same rule as the run panel: a run that reached this list
+                    // on a counter-only payload must not contribute zero rows.
+                    ...(undetailedFailClosedCount(rt) > 0
+                      ? [
+                          <tr key={`u-${run.runId}`}>
+                            {runCell}
+                            <td className="did">—</td>
+                            <td>
+                              <span className="chip bad">reported without detail</span>
+                            </td>
+                            <td>
+                              <span className="did" style={{ fontSize: 10.5, color: C.danger }}>
+                                {undetailedFailClosedCount(rt)} fail-closed verdict
+                                {undetailedFailClosedCount(rt) === 1 ? '' : 's'} counted with no per-event detail
+                              </span>
+                            </td>
+                            <td style={{ color: C.muted }}>{when}</td>
+                          </tr>,
+                        ]
+                      : []),
                     ...failClosedEntries(rt.revoked).map((r) => (
                       <tr key={`r-${r.eventId}`}>
                         {runCell}

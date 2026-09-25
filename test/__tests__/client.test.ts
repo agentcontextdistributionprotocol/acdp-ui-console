@@ -364,3 +364,47 @@ describe('searchContexts — paging a fully-filtered result set terminates', () 
     expect(cursor).toBeUndefined();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// A merge that lost EVERY upstream is a failure, not an empty result.
+//
+// `Promise.allSettled` cannot fail, so the fan-out branch turned a total outage
+// into `matches: []` with `partial: true` — which `app/contexts/page.tsx`
+// renders as an amber "one of the upstream queries did not respond" above "No
+// matches in this view". Every non-fanned-out facet raises the `ErrorPanel`
+// instead. So selecting the revocation facet (or `authority: all`) against dead
+// registries downgraded a security investigation that could not run into a
+// search that found nothing.
+// ══════════════════════════════════════════════════════════════════════
+describe('searchContexts — every upstream down', () => {
+  it('THROWS rather than reporting an empty result set', async () => {
+    mockFetch(() => jsonResponse('boom', false, 503));
+    await expect(searchContexts('all', { type: 'key-revocation' }, false)).rejects.toThrow();
+  });
+
+  it('propagates the upstream status, so the page renders the real cause', async () => {
+    mockFetch(() => jsonResponse('boom', false, 503));
+    await expect(searchContexts('all', {}, false)).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('DISCRIMINATES: one surviving upstream is still a partial result, not a throw', async () => {
+    // The pairing that keeps the existing resilience honest — the throw must be
+    // conditional on TOTAL loss, not on any rejection.
+    mockFetch((url) =>
+      url.includes('registry-a') ? jsonResponse({ matches: [{ ctx_id: 'a1' }] }) : jsonResponse('boom', false, 503),
+    );
+    const res = await searchContexts('all', {}, false);
+    expect(res.partial).toBe(true);
+    expect(res.matches).toHaveLength(1);
+  });
+
+  it('DISCRIMINATES: a genuinely empty merge is still an empty merge', async () => {
+    // Zero matches from upstreams that all ANSWERED is a real result and must
+    // keep rendering the honest zero-match state, not an error panel.
+    mockFetch(() => jsonResponse({ matches: [], total_estimate: 0 }));
+    const res = await searchContexts('all', {}, false);
+    expect(res.matches).toHaveLength(0);
+    expect(res.partial).toBeUndefined();
+    expect(res.merged).toBe(true);
+  });
+});

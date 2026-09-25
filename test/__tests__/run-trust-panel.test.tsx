@@ -233,3 +233,69 @@ describe('RunTrustPanel — was revocation checked at all?', () => {
     expect(screen.queryByText(/not reported/)).toBeNull();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// The payload where the aggregate counters outrun the per-event array.
+//
+// Phase 3 taught the panel to read the counters for "was revocation reported";
+// Phase 2's violation verdict still read the array alone. A payload with
+// `revokedAtOrAfter: 2` and `revoked: []` therefore rendered the green
+// check-mark beside a `Revoked 0` — the exact reassurance this panel exists to
+// withhold, produced by the two halves of one feature disagreeing.
+// ══════════════════════════════════════════════════════════════════════
+describe('RunTrustPanel — fail-closed verdicts counted without per-event detail', () => {
+  const counterOnly = summary({
+    revoked: [],
+    keyRevocationPreCompromise: 0,
+    keyRevocationRevokedAtOrAfter: 2,
+    keyRevocationRevokedTimeUnverifiable: 0,
+  });
+
+  it('reddens the header — the counters alone establish a violation', () => {
+    const { container } = render(<RunTrustPanel trust={counterOnly} />);
+    expect(hasDangerIcon(container)).toBe(true);
+    expect(hasOkIcon(container)).toBe(false);
+  });
+
+  it('shows the counted total rather than the array length', () => {
+    render(<RunTrustPanel trust={counterOnly} />);
+    expect(statValue('Revoked')).toBe('2');
+  });
+
+  it('says the events are not listed, instead of reddening beside nothing', () => {
+    // A panel that goes red and then shows no findings is its own kind of
+    // unexplained alarm. The count is what is known; say exactly that.
+    render(<RunTrustPanel trust={counterOnly} />);
+    expect(screen.getByText(/2 fail-closed revocation verdicts counted for this run/)).toBeInTheDocument();
+    expect(screen.getByText(/no per-event detail in the payload/)).toBeInTheDocument();
+  });
+
+  it('DISCRIMINATES: when the array carries the same verdicts, no such line appears', () => {
+    // The pairing that proves the line above is conditional on the MISMATCH and
+    // not on any fail-closed verdict — the ordinary payload (both sources
+    // populated from one row set) lists its events and says nothing extra.
+    render(
+      <RunTrustPanel
+        trust={summary({
+          revoked: [revocation('revoked_at_or_after', 'a'), revocation('revoked_time_unverifiable', 'b')],
+          keyRevocationRevokedAtOrAfter: 1,
+          keyRevocationRevokedTimeUnverifiable: 1,
+        })}
+      />,
+    );
+    expect(statValue('Revoked')).toBe('2');
+    expect(screen.queryByText(/no per-event detail/)).toBeNull();
+  });
+
+  it('DISCRIMINATES: a counters-only PRE-COMPROMISE payload stays green', () => {
+    // Authorized history is not a violation from the counters either — the
+    // fail-closed reading must not become "any non-zero counter is bad".
+    const { container } = render(
+      <RunTrustPanel trust={summary({ revoked: [], keyRevocationPreCompromise: 4 })} />,
+    );
+    expect(hasOkIcon(container)).toBe(true);
+    expect(hasDangerIcon(container)).toBe(false);
+    expect(statValue('Revoked')).toBe('0');
+    expect(screen.queryByText(/no per-event detail/)).toBeNull();
+  });
+});

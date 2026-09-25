@@ -175,7 +175,31 @@ export default function DashboardPage() {
           right={<ShieldAlert size={18} style={{ color: 'var(--danger)' }} />}
         />
         <CardBody>
-          {!dashboardRevocationReported(d.keyRevocation) ? (
+          {/* `dashboardRevocationReported` is a type predicate, so the three
+              KPIs below read `d.keyRevocation.x` with no `!` — the compiler
+              checks the guarantee instead of taking our word for it. */}
+          {dashboardRevocationReported(d.keyRevocation) ? (
+            <div className="kpi-grid">
+              <KpiCard
+                label="Pre-compromise (authorized)"
+                value={formatNumber(d.keyRevocation.preCompromise)}
+                accent="var(--success)"
+                hint="Signed strictly before the compromise boundary — historically authorized"
+              />
+              <KpiCard
+                label="Revoked at/after boundary"
+                value={formatNumber(d.keyRevocation.revokedAtOrAfter)}
+                accent="var(--danger)"
+                hint="Fails closed under the strict profile — not attributable to the producer"
+              />
+              <KpiCard
+                label="Revoked time unverifiable"
+                value={formatNumber(d.keyRevocation.revokedTimeUnverifiable)}
+                accent="var(--warning)"
+                hint="No receipt-attested publish time to compare against the compromise boundary"
+              />
+            </div>
+          ) : (
             <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
               <strong style={{ color: 'var(--text)' }}>
                 Revocation checking is not reported by this deployment.
@@ -186,27 +210,6 @@ export default function DashboardPage() {
               would claim &ldquo;nothing is revoked&rdquo; without having looked. Figures appear as
               soon as anything is classified. Tracked upstream as{' '}
               <span className="did">acdp-control-plane#176</span>.
-            </div>
-          ) : (
-            <div className="kpi-grid">
-              <KpiCard
-                label="Pre-compromise (authorized)"
-                value={formatNumber(d.keyRevocation!.preCompromise)}
-                accent="var(--success)"
-                hint="Signed strictly before the compromise boundary — historically authorized"
-              />
-              <KpiCard
-                label="Revoked at/after boundary"
-                value={formatNumber(d.keyRevocation!.revokedAtOrAfter)}
-                accent="var(--danger)"
-                hint="Fails closed under the strict profile — not attributable to the producer"
-              />
-              <KpiCard
-                label="Revoked time unverifiable"
-                value={formatNumber(d.keyRevocation!.revokedTimeUnverifiable)}
-                accent="var(--warning)"
-                hint="No receipt-attested publish time to compare against the compromise boundary"
-              />
             </div>
           )}
         </CardBody>
