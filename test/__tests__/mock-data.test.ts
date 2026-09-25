@@ -158,6 +158,76 @@ describe('rich context bodies', () => {
     expect(hit?.type).toBe('key-revocation');
   });
 
+  it('carries exactly one INTERIM-form revocation hit, and it stays bodyless', () => {
+    // The fixture that makes the two-spelling fan-out reachable by a human.
+    // Pinned on both halves: without the hit the union path is demo-invisible;
+    // if someone later gives it a MOCK_CONTEXTS body, that body's `type` sits
+    // inside the signed preimage, so the fixture would be publishing a
+    // signature over content it did not sign.
+    const interim = MockData.MOCK_SEARCH_HITS.filter((h) => h.type === 'acdp:key-revocation');
+    expect(interim).toHaveLength(1);
+    expect(MOCK_CONTEXTS.some((c) => c.body.ctx_id === interim[0].ctx_id)).toBe(false);
+  });
+});
+
+describe('demo dashboard windows', () => {
+  it('24h is the untouched fixture — existing readers have not moved', () => {
+    expect(MockData.demoDashboardForWindow('24h')).toEqual({ ...MOCK_DASHBOARD, window: '24h' });
+  });
+
+  it('exactly one selectable window reaches the all-zero revocation payload', () => {
+    // The dashboard's not-reported branch was unreachable in demo mode, which
+    // is the "only correct in tests" gap this plan criticises elsewhere. One
+    // window must reach it; the rest must not, or the demo would teach that
+    // revocation is never reported.
+    const windows = ['1h', '6h', '24h', '7d', '30d'];
+    const allZero = windows.filter((w) => {
+      const k = MockData.demoDashboardForWindow(w).keyRevocation!;
+      return k.preCompromise === 0 && k.revokedAtOrAfter === 0 && k.revokedTimeUnverifiable === 0;
+    });
+    expect(allZero).toEqual(['1h']);
+  });
+
+  it('one window shows a non-zero count beside genuine zeros', () => {
+    const k = MockData.demoDashboardForWindow('6h').keyRevocation!;
+    expect(k.preCompromise).toBeGreaterThan(0);
+    expect(k.revokedAtOrAfter).toBe(0);
+    expect(k.revokedTimeUnverifiable).toBe(0);
+  });
+
+  it('aggregates grow monotonically with the window', () => {
+    const runs = ['1h', '6h', '24h', '7d', '30d'].map((w) => MockData.demoDashboardForWindow(w).totalRuns);
+    expect(runs).toEqual([...runs].sort((a, b) => a - b));
+  });
+
+  it('never advertises more recent runs than it counts', () => {
+    for (const w of ['1h', '6h', '24h', '7d', '30d']) {
+      const d = MockData.demoDashboardForWindow(w);
+      expect(d.recentRuns.length).toBeLessThanOrEqual(d.totalRuns);
+    }
+  });
+
+  it('every headline figure agrees with its own breakdown, in every window', () => {
+    // The 24 h fixture holds these by construction; scaling the totals and the
+    // breakdowns independently broke two of them (a scenario chart claiming
+    // MORE runs than the Total Runs KPI at 6h, DID-method bars off by one
+    // against Contexts Published at 1h and 7d). The picker exists so a human
+    // looks at this page, so an incoherent window is a visible defect, not a
+    // fixture detail.
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+    for (const w of ['1h', '6h', '24h', '7d', '30d']) {
+      const d = MockData.demoDashboardForWindow(w);
+      expect(sum(d.byScenario.map((s) => s.run_count)), `byScenario @ ${w}`).toBe(d.totalRuns);
+      expect(sum(d.byRegistry.map((r) => r.event_count)), `byRegistry @ ${w}`).toBe(d.totalContexts);
+      expect(sum((d.didMethods ?? []).map((m) => m.publish_count)), `didMethods @ ${w}`).toBe(d.totalContexts);
+      for (const r of d.receiptCoverage ?? []) {
+        expect(r.receipt_count, `receipts ≤ publishes @ ${w}`).toBeLessThanOrEqual(r.publish_count);
+      }
+      // Runs without agents would be incoherent in the other direction.
+      if (d.totalRuns > 0) expect(d.totalAgents, `agents @ ${w}`).toBeGreaterThan(0);
+    }
+  });
+
   // Cross-phase coherence (UI-2 Phases 4 + 5): every mock run's revoked-key
   // events reference sources[].ctxId as a narrative link to the context that
   // declared the revocation. Each phase's own tests were green in isolation,
@@ -347,12 +417,19 @@ describe('trust mocks (ACDP 0.2)', () => {
     for (const n of [preCompromise, revokedAtOrAfter, revokedTimeUnverifiable]) {
       expect(n).toBeGreaterThanOrEqual(0);
     }
-    // getCpDashboard's demo branch (lib/api/client.ts) spreads MOCK_DASHBOARD
-    // verbatim, so this fixture-level check is also the pass-through check —
-    // no separate field-mapping logic exists that could drop the new field.
+    // NO LONGER a pass-through. `getCpDashboard`'s demo branch now goes through
+    // `demoDashboardForWindow`, which is real field-mapping logic: it derives
+    // every aggregate from its scaled parts and substitutes `keyRevocation`
+    // wholesale on two windows. `'24h'` is the identity case by construction
+    // (scale 1), which is what makes this assertion meaningful — and the
+    // per-window behavior is covered in the `demo dashboard windows` block
+    // above, not here. Do not read this test as evidence that the demo branch
+    // is a spread.
     const { getCpDashboard } = await import('@/lib/api/client');
     const dash = await getCpDashboard('24h', true);
     expect(dash.keyRevocation).toEqual(MOCK_DASHBOARD.keyRevocation);
+    const short = await getCpDashboard('1h', true);
+    expect(short.keyRevocation).not.toEqual(MOCK_DASHBOARD.keyRevocation);
   });
 });
 

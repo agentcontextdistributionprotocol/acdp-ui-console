@@ -3,7 +3,7 @@
 // data with a small simulated delay; real mode goes through the proxy.
 // ══════════════════════════════════════════════════════════════════════
 
-import { fetchJson, fetchText } from '@/lib/api/fetcher';
+import { ApiError, fetchJson, fetchText } from '@/lib/api/fetcher';
 import {
   COMPLETED_RUN_ID,
   FAILED_RUN_ID,
@@ -12,7 +12,6 @@ import {
   MOCK_CAPABILITIES,
   MOCK_CONTEXTS,
   MOCK_CONTEXT_EVENTS,
-  MOCK_DASHBOARD,
   MOCK_JWKS,
   MOCK_LINEAGE,
   MOCK_LINEAGE_CHAINS,
@@ -26,7 +25,9 @@ import {
   MOCK_SCENARIOS,
   MOCK_SEARCH_HITS,
   MOCK_WEBHOOKS,
+  demoDashboardForWindow,
 } from '@/lib/data/mock-data';
+import { KEY_REVOCATION_TYPE_ALIASES, isKeyRevocationFacet } from '@/lib/utils/revocation';
 import { REGISTRY_AUTHORITIES } from '@/lib/types';
 import type {
   CpContextEvent,
@@ -52,6 +53,7 @@ import type {
   RegistryEnrollment,
   RevocationFeed,
   ScenarioDef,
+  SearchHit,
   SearchResponse,
   StepEvent,
   Webhook,
@@ -150,7 +152,10 @@ export function getMockRunEvents(runId: string): StepEvent[] {
 
 // ── Control plane ─────────────────────────────────────────────────────
 export async function getCpDashboard(window: string, demoMode: boolean): Promise<CpDashboardOverview> {
-  if (demoMode) return delay({ ...MOCK_DASHBOARD, window });
+  // Per-window demo payload: `{...MOCK_DASHBOARD, window}` returned identical
+  // figures for every window and an always-non-zero `keyRevocation`, which left
+  // the "revocation not reported" degrade path unreachable outside a test.
+  if (demoMode) return delay(demoDashboardForWindow(window));
   return fetchJson<CpDashboardOverview>('control-plane', `/dashboard/overview?window=${encodeURIComponent(window)}`);
 }
 
@@ -422,7 +427,13 @@ export async function searchContexts(
     if (search.visibility && search.visibility !== 'all')
       hits = hits.filter((h) => h.visibility === search.visibility);
     if (search.status) hits = hits.filter((h) => h.status === search.status);
-    if (search.type) hits = hits.filter((h) => h.type === search.type);
+    if (search.type) {
+      // Same union as the real branch — see `isKeyRevocationFacet`. Without it
+      // demo mode would silently disagree with real mode on the one facet this
+      // fan-out exists for.
+      const wanted = isKeyRevocationFacet(search.type) ? KEY_REVOCATION_TYPE_ALIASES : [search.type];
+      hits = hits.filter((h) => wanted.includes(h.type));
+    }
     if (search.agentId) hits = hits.filter((h) => h.agent_id?.includes(search.agentId!));
     // domain/tags live on the full body, not the search hit — look them up.
     const bodyOf = (ctxId: string) => MOCK_CONTEXTS.find((c) => c.body.ctx_id === ctxId)?.body;
@@ -441,42 +452,117 @@ export async function searchContexts(
     const start = search.cursor ? Number(search.cursor) || 0 : 0;
     const page = hits.slice(start, start + limit);
     const nextStart = start + limit;
-    const next_cursor = nextStart < hits.length ? String(nextStart) : undefined;
+    // The union facet is unpaginated in real mode (merged result sets have no
+    // coherent keyset cursor), so demo must suppress the cursor too — otherwise
+    // "Load more" appears here and nowhere else, and the demo teaches the
+    // opposite of the shipped behavior.
+    // BOTH merge axes, exactly as the real branch computes them — the type
+    // spellings and `authority === 'all'`. An earlier cut checked only the type
+    // axis, so demo mode offered a "Load more" on a federated search that
+    // production does not, and answered a zero-match federated search with the
+    // flat "No contexts found" this phase exists to remove.
+    const unioned = isKeyRevocationFacet(search.type) || authority === 'all';
+    const next_cursor = !unioned && nextStart < hits.length ? String(nextStart) : undefined;
     return delay({
       matches: page,
       total_estimate: hits.length,
+      ...(unioned ? { merged: true } : {}),
       ...(next_cursor ? { next_cursor } : {}),
     });
   }
-  const params = new URLSearchParams();
-  if (search.q) params.set('q', search.q);
-  if (search.type) params.set('type', search.type);
-  if (search.domain) params.set('domain', search.domain);
-  if (search.tags) params.set('tags', search.tags);
-  if (search.agentId) params.set('agent_id', search.agentId);
-  if (search.status) params.set('status', search.status);
-  if (search.visibility && search.visibility !== 'all') params.set('visibility', search.visibility);
-  if (search.cursor) params.set('cursor', search.cursor);
-  params.set('limit', String(limit));
-  if (authority === 'all') {
-    // A single down registry must not blank the combined view. Merged results
-    // can't be keyset-paginated coherently, so no next_cursor is returned.
-    const settled = await Promise.allSettled(
-      REGISTRY_AUTHORITIES.map((a) =>
-        fetchJson<SearchResponse>(authToService(a), `/contexts/search?${params.toString()}`),
-      ),
-    );
-    const matches = settled.flatMap((r) => (r.status === 'fulfilled' ? (r.value.matches ?? []) : []));
-    const partial = settled.some((r) => r.status === 'rejected');
-    return { matches, total_estimate: matches.length, ...(partial ? { partial: true } : {}) };
+  const queryFor = (type: string | undefined) => {
+    const params = new URLSearchParams();
+    if (search.q) params.set('q', search.q);
+    if (type) params.set('type', type);
+    if (search.domain) params.set('domain', search.domain);
+    if (search.tags) params.set('tags', search.tags);
+    if (search.agentId) params.set('agent_id', search.agentId);
+    if (search.status) params.set('status', search.status);
+    if (search.visibility && search.visibility !== 'all') params.set('visibility', search.visibility);
+    if (search.cursor) params.set('cursor', search.cursor);
+    params.set('limit', String(limit));
+    return params.toString();
+  };
+
+  // Registry search matches `type` exactly, and RFC-ACDP-0014 §10 gives the
+  // revocation type two equivalent spellings — so this ONE facet is queried
+  // under both and merged. Every other facet value keeps exactly its previous
+  // request count and its upstream `next_cursor`.
+  const types = isKeyRevocationFacet(search.type) ? KEY_REVOCATION_TYPE_ALIASES : [search.type];
+  const authorities = authority === 'all' ? REGISTRY_AUTHORITIES : [authority];
+
+  if (authorities.length === 1 && types.length === 1) {
+    return fetchJson<SearchResponse>(authToService(authorities[0]), `/contexts/search?${queryFor(types[0])}`);
   }
-  return fetchJson<SearchResponse>(authToService(authority), `/contexts/search?${params.toString()}`);
+
+  // Either fan-out merges result sets that cannot be keyset-paginated
+  // coherently, so no `next_cursor` is returned — the rule and its reason
+  // predate this function's second axis (it was the `authority === 'all'`
+  // branch). A cursor from one of several merged queries would silently skip
+  // or repeat rows, which is a correctness bug; a capped list is a visible,
+  // honest limit. A single down registry must still not blank the view.
+  const plan = authorities.flatMap((a) => types.map((t) => ({ authority: a, type: t })));
+  const settled = await Promise.allSettled(
+    plan.map((p) => fetchJson<SearchResponse>(authToService(p.authority), `/contexts/search?${queryFor(p.type)}`)),
+  );
+
+  // Deduped by ctx_id WITHIN a registry (the two type spellings can only ever
+  // name the same context if a registry serves both), never across registries:
+  // the same ctx_id served by two authorities is a real federation observation
+  // the combined view has always shown, and collapsing it here would hide it.
+  const seen = new Set<string>();
+  const matches: SearchHit[] = [];
+  // `total_estimate` must come from the UPSTREAM estimates, not from
+  // `matches.length`. The merged page is capped at `limit` per query and
+  // carries no cursor, so reporting the page size as the total told the
+  // operator "20 contexts" for a query that read only the first page of each —
+  // and suppressed the "N of ~M" hedge that would have said otherwise.
+  let estimate = 0;
+  let sawEstimate = false;
+  settled.forEach((r, i) => {
+    if (r.status !== 'fulfilled') return;
+    if (typeof r.value.total_estimate === 'number') {
+      estimate += r.value.total_estimate;
+      sawEstimate = true;
+    }
+    for (const hit of r.value.matches ?? []) {
+      const key = `${plan[i].authority}::${hit.ctx_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      matches.push(hit);
+    }
+  });
+  const partial = settled.some((r) => r.status === 'rejected');
+  return {
+    matches,
+    total_estimate: sawEstimate ? Math.max(estimate, matches.length) : matches.length,
+    merged: true,
+    ...(partial ? { partial: true } : {}),
+  };
 }
 
 export async function getContext(ctxId: string, demoMode: boolean): Promise<FullContext> {
   if (demoMode) {
     const ctx = MOCK_CONTEXTS.find((c) => c.body.ctx_id === ctxId);
-    if (!ctx) throw new Error(`Unknown context: ${ctxId}`);
+    // A search hit with no backing body is a defined demo state, not a bug:
+    // `MOCK_SEARCH_HITS` carries one synthetic interim-form revocation hit so
+    // the two-spelling facet fan-out is reachable without a backend, and that
+    // hit deliberately has no signed body (see the fixture's comment). Raised
+    // as the same structured 404 a registry would return for an unknown id, so
+    // it lands in the detail pane's existing error state instead of a bare
+    // `Error` whose message the UI would have had to string-match.
+    //
+    // It must NOT be answered with a fabricated body: the detail pane runs real
+    // signature and content-hash verification, so an invented body would render
+    // failed trust chips for a fixture — a worse lie than an honest absence.
+    if (!ctx) {
+      throw new ApiError(
+        404,
+        JSON.stringify({ errorCode: 'CONTEXT_NOT_FOUND', message: `Unknown context: ${ctxId}` }),
+        'control-plane',
+        `/contexts/${encodeURIComponent(ctxId)}`,
+      );
+    }
     return delay(ctx);
   }
   return fetchJson<FullContext>('control-plane', `/contexts/${encodeURIComponent(ctxId)}`);

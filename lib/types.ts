@@ -140,10 +140,23 @@ export interface RunTrustSummary {
   }>;
   // RFC-ACDP-0014: revoked-key events. Semantically distinct from `flagged`
   // above — `flagged` is a content/signature discrepancy, `revoked` is a
-  // signing key whose authority was later revoked (RFC-ACDP-0014 §7). Absent
-  // when the control-plane instance predates this field, or has
-  // KEY_REVOCATION_CHECK_ENABLED=false (the default) — same "field absent"
-  // degrade-gracefully path as Phase 3's dashboard tile.
+  // signing key whose authority was later revoked (RFC-ACDP-0014 §7).
+  //
+  // THESE FIELDS ARE NOT ABSENT WHEN THE CHECK IS DISABLED. An earlier version
+  // of this comment said they were, and that claim was load-bearing — it is
+  // why the consuming gates were written as presence checks. It is wrong:
+  // `receipt-audit.repository.ts` always emits `revoked` (as `[]` when
+  // disabled, which its own API docs state outright), the counters are built
+  // with `?? 0`, and migration `0023_receipt_audit_revocation.sql` makes
+  // `key_revocation_status` NOT NULL DEFAULT 'none'. `KEY_REVOCATION_CHECK_ENABLED`
+  // defaults to **false**, so the common case is a present, all-zero payload
+  // that is indistinguishable from "checked and clean".
+  //
+  // They ARE genuinely absent against a control plane that predates the field.
+  // Use `runRevocationReported()` (`lib/utils/revocation.ts`) rather than a
+  // presence check — it handles both, and carries the proof arm that
+  // `audited === 0` makes definitive. Tracked upstream as
+  // acdp-control-plane#176.
   keyRevocationPreCompromise?: number;
   keyRevocationRevokedAtOrAfter?: number;
   keyRevocationRevokedTimeUnverifiable?: number;
@@ -229,10 +242,19 @@ export interface CpDashboardOverview {
   // ACDP 0.2: per-registry receipt coverage + producer DID-method breakdown.
   receiptCoverage?: Array<{ registry_authority: string; publish_count: number; receipt_count: number }>;
   didMethods?: Array<{ method: 'did:web' | 'did:key' | 'other'; publish_count: number }>;
-  // RFC-ACDP-0014: window-scoped key-revocation counters. Absent when the
-  // control-plane instance predates this field, or has
-  // KEY_REVOCATION_CHECK_ENABLED=false (the default) — both render as "section
-  // absent," not a crash or a misleading zero-filled tile.
+  // RFC-ACDP-0014: window-scoped key-revocation counters.
+  //
+  // Absent ONLY against a control plane that predates the field. This comment
+  // previously also claimed absence when `KEY_REVOCATION_CHECK_ENABLED=false`,
+  // and said that was why the tile could never be "a misleading zero-filled
+  // tile" — which is precisely what shipped. `dashboard.service.ts` builds this
+  // object unconditionally with `?? 0` on all three members and no reference to
+  // the feature flag, and that flag defaults to **false**. So the gate this
+  // comment justified only ever fired against a pre-Phase-14 deployment.
+  //
+  // Use `dashboardRevocationReported()` (`lib/utils/revocation.ts`), which
+  // treats an all-zero payload as not-reported. Provisional until
+  // acdp-control-plane#176 gives us an explicit signal.
   keyRevocation?: { preCompromise: number; revokedAtOrAfter: number; revokedTimeUnverifiable: number };
 }
 
@@ -495,8 +517,27 @@ export interface SearchResponse {
   matches: SearchHit[];
   total_estimate?: number;
   next_cursor?: string;
-  /** Set when a multi-registry search had at least one registry fail. */
+  /**
+   * Set when at least one of a merged response's upstream queries failed —
+   * several registries, several `type` spellings, or both.
+   *
+   * It does **not** imply a registry is down: the type-spelling axis queries
+   * one registry twice, so a single failed `acdp:key-revocation` query sets
+   * this while every registry is up. The consuming banner used to say "one
+   * registry did not respond" and was therefore capable of blaming a healthy
+   * registry — a false claim on a trust surface, which is the defect class
+   * this whole phase exists to remove.
+   */
   partial?: boolean;
+  /**
+   * Set when this response is a CLIENT-SIDE MERGE of several upstream queries —
+   * several registries, several `type` spellings, or both. A merged response
+   * carries no `next_cursor` (merged result sets cannot be keyset-paginated
+   * coherently), so it is the first page of each query rather than the whole
+   * result set. Consumers must not present it as exhaustive: absence of a
+   * result here is not evidence of absence upstream.
+   */
+  merged?: boolean;
 }
 
 export interface RegistryCapabilities {

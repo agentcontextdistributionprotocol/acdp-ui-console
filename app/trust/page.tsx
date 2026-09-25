@@ -17,6 +17,14 @@ import { C } from '@/lib/colors';
 import type { TrustTotals } from '@/lib/hooks/use-trust';
 
 export default function TrustPage() {
+  // No window picker here, deliberately — unlike the dashboard, which gained
+  // one. `useTrust` passes `window` ONLY to `getCpDashboard` (for receipt
+  // coverage and DID methods); the runs behind every violation and KPI on this
+  // page come from `listCpRuns({ limit })`, which takes no window at all. A
+  // picker would therefore re-scope two bar charts while silently leaving the
+  // trust figures beside them unchanged — a control that claims a scope it does
+  // not apply. Window-scoping the run list is a real change with its own
+  // paging questions, not a fold-in.
   const trust = useTrust('24h');
 
   if (trust.isLoading) {
@@ -58,12 +66,24 @@ export default function TrustPage() {
             `pre_compromise` — an event the control plane defines as
             historically AUTHORIZED, and which this same app labels
             "(authorized)" in green on the dashboard. */}
+        {/* An em-dash rather than a 0 when no run in the window reported a
+            revocation classification. The control plane emits these counters
+            whether or not the check ran (it is off by default), so a zero here
+            would be a confident "nothing is revoked" that nobody established. */}
         <KpiCard
           label="Revoked events"
-          value={t.revokedEvents}
+          value={t.revocationReportedRuns > 0 ? t.revokedEvents : '—'}
           accent="var(--danger)"
           icon={<Ban size={28} />}
-          hint="RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable"
+          hint={
+            t.revocationReportedRuns > 0
+              ? 'RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable'
+              : // "in this view", not "in this window": `useTrust` fetches runs
+                // via `listCpRuns({ limit })` with NO window parameter — only
+                // receiptCoverage/didMethods are window-scoped. Saying "window"
+                // would describe a scope this page does not actually apply.
+                'Not reported by this deployment — no run in this view carried a revocation classification'
+          }
         />
         <KpiCard label="No receipt" value={t.noReceipt} accent="var(--muted)" icon={<Fingerprint size={28} />} />
       </div>
@@ -80,7 +100,13 @@ export default function TrustPage() {
           title="Trust violations"
           sub={
             `${t.flaggedEvents} flagged across ${t.flaggedRuns} run${t.flaggedRuns === 1 ? '' : 's'} · ` +
-            `${t.revokedEvents} revoked across ${t.revokedRuns} run${t.revokedRuns === 1 ? '' : 's'}` +
+            // Suppressing the KPI's number while this line restates it as
+            // "0 revoked across 0 runs" two inches below would defeat the whole
+            // point — the same unestablished claim in prose instead of a digit.
+            // Gated on the SAME predicate, so the two can never disagree.
+            (t.revocationReportedRuns > 0
+              ? `${t.revokedEvents} revoked across ${t.revokedRuns} run${t.revokedRuns === 1 ? '' : 's'}`
+              : 'revocation not reported') +
             (t.preCompromiseEvents > 0
               ? ` · ${t.preCompromiseEvents} pre-compromise (historically authorized, not violations)`
               : '') +
@@ -91,12 +117,14 @@ export default function TrustPage() {
           {violationRuns.length === 0 ? (
             // NB: the description deliberately says nothing about key
             // revocation. Adding "…under a key that was still authorized" here
-            // would affirm a fact this page has not established: with
-            // `KEY_REVOCATION_CHECK_ENABLED=false` (the control plane's
-            // documented default) `trust.revoked` is absent on every run, so
-            // the claim would be made without having looked — the exact defect
-            // Phase 3 exists to remove, introduced on a surface Phase 3's file
-            // list does not cover.
+            // would affirm a fact this page has not established. Be exact about
+            // why, because the obvious reason is wrong: with
+            // `KEY_REVOCATION_CHECK_ENABLED=false` (the documented default)
+            // `trust.revoked` is NOT absent — `receipt-audit.repository.ts`
+            // always emits it, as `[]`, and `docs/API.md` says so verbatim. An
+            // empty array is exactly what "checked, clean" also looks like, so
+            // the claim would be made without having looked. That
+            // indistinguishability is the whole reason this phase exists.
             <EmptyState title="No trust violations" description="Every audited receipt bound cleanly to its served context." />
           ) : (
             <table className="data-table">

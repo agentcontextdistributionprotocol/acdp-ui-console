@@ -720,6 +720,100 @@ export const MOCK_DASHBOARD: CpDashboardOverview = {
   keyRevocation: { preCompromise: 9, revokedAtOrAfter: 2, revokedTimeUnverifiable: 1 },
 };
 
+// ── Dashboard: per-window demo payloads ───────────────────────────────
+//
+// The demo branch used to return `{...MOCK_DASHBOARD, window}` for every
+// window, so the overview claimed the same 47 runs under "window 1h" as under
+// "window 30d" — and, because `keyRevocation` was always `{9, 2, 1}`, the
+// dashboard's "revocation not reported" degrade path was unreachable by a human
+// in the default mode. It could only ever be seen in a test, which is the gap
+// this console's own review standard calls out.
+//
+// The aggregates are scaled off the 24 h fixture rather than hand-authored five
+// times: they are illustrative, and five parallel fixtures would drift.
+const DEMO_WINDOW_SCALE: Record<string, number> = {
+  '1h': 0.06,
+  '6h': 0.3,
+  '24h': 1,
+  '7d': 4.2,
+  '30d': 12,
+};
+
+// `keyRevocation` is NOT scaled. It is the field the degrade path keys on, so
+// making the not-reported branch reachable must be a deliberate fixture rather
+// than an accident of where a rounding rule happens to land. Two windows are
+// pinned; every other window inherits the 24 h figures.
+//
+//   1h → all zero        → "not reported" (the degrade path)
+//   6h → one non-zero    → figures render, INCLUDING the two genuine zeros
+//                          beside it — the heuristic's other arm, also
+//                          otherwise invisible to a human.
+const DEMO_WINDOW_REVOCATION: Record<string, CpDashboardOverview['keyRevocation']> = {
+  '1h': { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 },
+  '6h': { preCompromise: 2, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 },
+};
+
+/**
+ * The demo `/dashboard/overview` payload for one window.
+ *
+ * **Every headline figure is DERIVED from its own scaled parts, never scaled
+ * independently.** Scaling the totals and the breakdowns separately rounds them
+ * apart: at `6h` an independently-scaled `totalRuns` came out 14 while its own
+ * scenario bars summed to 15, and the DID-method bars missed `totalContexts` by
+ * one at two windows. The 24 h fixture holds `Σ byScenario === totalRuns` and
+ * `Σ byRegistry === Σ didMethods === totalContexts`; a window picker that
+ * visibly breaks those is worse than no picker, since the whole reason the
+ * picker exists is to let a human look at this page.
+ */
+export function demoDashboardForWindow(window: string): CpDashboardOverview {
+  const scale = DEMO_WINDOW_SCALE[window] ?? 1;
+  const n = (v: number) => Math.round(v * scale);
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+  // Scenarios with no runs in a short window are dropped rather than drawn as
+  // zero-height bars — and the total is then read off what remains, so the
+  // chart and the KPI cannot disagree.
+  const byScenario = MOCK_DASHBOARD.byScenario
+    .map((s) => ({ ...s, run_count: n(s.run_count) }))
+    .filter((s) => s.run_count > 0);
+  const totalRuns = sum(byScenario.map((s) => s.run_count));
+
+  const byRegistry = MOCK_DASHBOARD.byRegistry.map((r) => ({ ...r, event_count: n(r.event_count) }));
+  const totalContexts = sum(byRegistry.map((r) => r.event_count));
+
+  // Receipts ride the same per-registry publish counts, so coverage can never
+  // report more receipts than publishes.
+  const receiptCoverage = MOCK_DASHBOARD.receiptCoverage?.map((r, i) => {
+    const publish_count = byRegistry[i]?.event_count ?? n(r.publish_count);
+    return { ...r, publish_count, receipt_count: Math.min(publish_count, n(r.receipt_count)) };
+  });
+
+  // The DID-method split must sum to `totalContexts` exactly, so the last
+  // bucket absorbs the rounding remainder instead of leaving the bars off by
+  // one against the KPI above them.
+  const didHead = (MOCK_DASHBOARD.didMethods ?? []).slice(0, -1).map((m) => ({ ...m, publish_count: n(m.publish_count) }));
+  const didLast = (MOCK_DASHBOARD.didMethods ?? []).at(-1);
+  const didMethods = didLast
+    ? [...didHead, { ...didLast, publish_count: Math.max(0, totalContexts - sum(didHead.map((m) => m.publish_count))) }]
+    : MOCK_DASHBOARD.didMethods;
+
+  return {
+    ...MOCK_DASHBOARD,
+    window,
+    totalRuns,
+    totalContexts,
+    // At least one agent whenever anything ran — `round(12 × 0.06)` is 1, but a
+    // narrower window must not report runs produced by nobody.
+    totalAgents: totalRuns > 0 ? Math.max(1, n(MOCK_DASHBOARD.totalAgents)) : 0,
+    recentRuns: MOCK_DASHBOARD.recentRuns.slice(0, Math.max(0, Math.min(MOCK_DASHBOARD.recentRuns.length, totalRuns))),
+    byScenario,
+    byRegistry,
+    receiptCoverage,
+    didMethods,
+    keyRevocation: DEMO_WINDOW_REVOCATION[window] ?? MOCK_DASHBOARD.keyRevocation,
+  };
+}
+
 // ── Agents ────────────────────────────────────────────────────────────
 export const MOCK_AGENTS: KnownAgent[] = [
   { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
@@ -1002,18 +1096,48 @@ export const MOCK_JWKS: Record<RegistryAuthority, JwkSet> = {
   },
 };
 
-export const MOCK_SEARCH_HITS: SearchHit[] = MOCK_CONTEXTS.map((c) => ({
-  ctx_id: c.body.ctx_id,
-  lineage_id: c.body.lineage_id,
-  agent_id: c.body.agent_id,
-  title: c.body.title,
-  type: c.body.type,
-  created_at: c.body.created_at,
-  status: c.registry_state?.status ?? 'active',
-  summary: c.body.summary,
-  domain: c.body.domain,
-  visibility: c.body.visibility,
-}));
+export const MOCK_SEARCH_HITS: SearchHit[] = [
+  ...MOCK_CONTEXTS.map((c) => ({
+    ctx_id: c.body.ctx_id,
+    lineage_id: c.body.lineage_id,
+    agent_id: c.body.agent_id,
+    title: c.body.title,
+    type: c.body.type,
+    created_at: c.body.created_at,
+    status: c.registry_state?.status ?? 'active',
+    summary: c.body.summary,
+    domain: c.body.domain,
+    visibility: c.body.visibility,
+  })),
+  // A revocation context published under the INTERIM type name
+  // (`acdp:key-revocation`, RFC-ACDP-0014 §10). Without it the `key-revocation`
+  // facet's two-spelling fan-out is unreachable in demo mode — the one search
+  // hit derived from MOCK_CONTEXTS carries the canonical spelling — and the
+  // fold-in would ship verifiable only by a test.
+  //
+  // Appended as a synthetic hit rather than a sixth MOCK_CONTEXTS entry on
+  // purpose: `type` sits inside the signed preimage, so a real entry would need
+  // its crypto regenerated, and `wasm-fixtures.test.ts` pins MOCK_CONTEXTS at 5
+  // to catch silent shrinkage of the acdp-wasm gate's surface. The cost is that
+  // this hit has NO body — `getContext`'s demo branch has a defined behavior for
+  // exactly that, and the detail pane surfaces it as an unavailable context
+  // rather than crashing. Do not "fix" it by fabricating a body: the detail pane
+  // runs real signature/hash verification, and an invented body would render
+  // failed trust chips for a fixture, which is worse than an honest absence.
+  {
+    ctx_id: `acdp://${AUTH_A}/7e9b0c12-33a4-4d55-8e66-9f0a1b2c3d4e`,
+    lineage_id: 'lin-key-revocation-interim-001',
+    agent_id: DID_SOLO,
+    title: 'Producer key revocation — interim type name',
+    type: 'acdp:key-revocation',
+    created_at: iso(86_400 * 120),
+    status: 'active',
+    summary:
+      'Published under the pre-0.5.0 `acdp:key-revocation` type name. A registry still serves it; an exact-match search for the canonical name would never return it.',
+    domain: 'security',
+    visibility: 'public',
+  },
+];
 
 // ── Prometheus metrics ────────────────────────────────────────────────
 export const MOCK_METRICS: PrometheusMetric[] = [

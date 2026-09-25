@@ -7,6 +7,7 @@ import {
   failClosedEntries,
   hasFailClosedRevocation,
   preCompromiseEntries,
+  runRevocationReported,
   violationCount,
 } from '@/lib/utils/revocation';
 import type { CpDashboardOverview, CpRun, RunTrustSummary } from '@/lib/types';
@@ -39,6 +40,19 @@ export interface TrustTotals {
   revokedEvents: number;
   /** Historically-authorized events, surfaced separately — never a violation. */
   preCompromiseEvents: number;
+  /**
+   * How many of the aggregated runs actually REPORTED a revocation
+   * classification. Zero means every run in this view is ambiguous (or
+   * definitively unchecked), so the revocation KPI must not render a number —
+   * a "0" there would claim a clean estate nobody established. See
+   * `runRevocationReported`.
+   *
+   * "In this view", not "in the window": `window` below is passed ONLY to
+   * `getCpDashboard`, for receipt coverage and DID methods. The runs behind
+   * every figure on `/trust` come from `listCpRuns({ limit })`, which takes no
+   * window at all. `app/trust/page.tsx` words its copy accordingly.
+   */
+  revocationReportedRuns: number;
 }
 
 export interface TrustOverview {
@@ -88,6 +102,7 @@ export function useTrust(window = '24h') {
           revokedRuns: acc.revokedRuns + (hasFailClosedRevocation(trust.revoked) ? 1 : 0),
           revokedEvents: acc.revokedEvents + failClosedEntries(trust.revoked).length,
           preCompromiseEvents: acc.preCompromiseEvents + preCompromiseEntries(trust.revoked).length,
+          revocationReportedRuns: acc.revocationReportedRuns + (runRevocationReported(trust) ? 1 : 0),
         }),
         {
           audited: 0,
@@ -101,6 +116,7 @@ export function useTrust(window = '24h') {
           revokedRuns: 0,
           revokedEvents: 0,
           preCompromiseEvents: 0,
+          revocationReportedRuns: 0,
         },
       );
 

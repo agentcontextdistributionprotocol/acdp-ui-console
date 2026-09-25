@@ -12,6 +12,10 @@ import {
   isHistoricallyAuthorized,
   preCompromiseEntries,
   revocationChipClass,
+  runRevocationReported,
+  dashboardRevocationReported,
+  isKeyRevocationFacet,
+  KEY_REVOCATION_TYPE_ALIASES,
   type RevocationEntry,
 } from '@/lib/utils/revocation';
 
@@ -100,5 +104,112 @@ describe('revocationChipClass', () => {
     // misleading possible rendering of a verdict we cannot interpret.
     expect(revocationChipClass('brand_new_status')).toBe('chip bad');
     expect(revocationChipClass('brand_new_status')).not.toBe('');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// Was revocation checked AT ALL? A different question from "is this verdict a
+// violation", and the payload cannot answer it directly: the counters are
+// always numbers (`?? 0`) and `revoked` is always present (`[]` when the check
+// is disabled), while `KEY_REVOCATION_CHECK_ENABLED` — default false — is on
+// no HTTP surface. Provisional until acdp-control-plane#176.
+// ══════════════════════════════════════════════════════════════════════
+function summary(over: Partial<Parameters<typeof runRevocationReported>[0]> = {}) {
+  return {
+    audited: 4,
+    verified: 4,
+    verifiedHistorical: 0,
+    structural: 0,
+    noReceipt: 0,
+    errors: 0,
+    flagged: [],
+    ...over,
+  } as Parameters<typeof runRevocationReported>[0];
+}
+
+describe('runRevocationReported', () => {
+  it('PROOF ARM: audited === 0 is not-reported even with non-zero counters', () => {
+    // Upstream enforces that the revocation check REQUIRES receipt audit, so
+    // zero audited events is evidence, not a guess. Counters that disagree are
+    // a payload to distrust, not a reason to render.
+    expect(
+      runRevocationReported(
+        summary({
+          audited: 0,
+          keyRevocationPreCompromise: 5,
+          keyRevocationRevokedAtOrAfter: 2,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('HEURISTIC ARM: all-zero counters with nothing in `revoked` is not-reported', () => {
+    expect(
+      runRevocationReported(
+        summary({
+          revoked: [],
+          keyRevocationPreCompromise: 0,
+          keyRevocationRevokedAtOrAfter: 0,
+          keyRevocationRevokedTimeUnverifiable: 0,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it('any single non-zero counter makes the whole payload trustworthy', () => {
+    // Including the zeros beside it: something was classified, so the zeros
+    // are a measurement rather than an unexamined default.
+    for (const k of [
+      'keyRevocationPreCompromise',
+      'keyRevocationRevokedAtOrAfter',
+      'keyRevocationRevokedTimeUnverifiable',
+    ] as const) {
+      expect(runRevocationReported(summary({ [k]: 1 }))).toBe(true);
+    }
+  });
+
+  it('a non-empty `revoked` array reports even when the counters are absent', () => {
+    // The array is the detail and the counters are the aggregate; against an
+    // older control plane only one of them may be populated.
+    expect(runRevocationReported(summary({ revoked: [entry('pre_compromise')] }))).toBe(true);
+  });
+
+  it('entries outrank the defensive zero — a listed verdict is never denied', () => {
+    // `audited: 0` with entries is an impossible payload, but the panel renders
+    // those entries regardless of this predicate, so ordering the guard ahead
+    // of them made the UI contradict itself. Ordering matters; assert it.
+    expect(runRevocationReported(summary({ audited: 0, revoked: [entry('revoked_at_or_after')] }))).toBe(true);
+  });
+
+  it('missing counters are not read as zeros that prove anything', () => {
+    expect(runRevocationReported(summary())).toBe(false);
+  });
+});
+
+describe('dashboardRevocationReported', () => {
+  it('a pre-Phase-14 backend that omits the field is not-reported', () => {
+    expect(dashboardRevocationReported(undefined)).toBe(false);
+  });
+
+  it('all-zero is not-reported; any non-zero reports', () => {
+    expect(
+      dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 }),
+    ).toBe(false);
+    expect(
+      dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 1 }),
+    ).toBe(true);
+  });
+});
+
+describe('isKeyRevocationFacet', () => {
+  it('both RFC-ACDP-0014 §10 spellings select the union', () => {
+    expect(KEY_REVOCATION_TYPE_ALIASES).toEqual(['key-revocation', 'acdp:key-revocation']);
+    for (const t of KEY_REVOCATION_TYPE_ALIASES) expect(isKeyRevocationFacet(t)).toBe(true);
+  });
+
+  it('no other value does — the fan-out and its cursor loss are opt-in', () => {
+    for (const t of ['analysis', 'data_snapshot', 'key_revocation', '', undefined]) {
+      expect(isKeyRevocationFacet(t)).toBe(false);
+    }
   });
 });

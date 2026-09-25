@@ -107,3 +107,131 @@ export function hasTrustViolation(trust: RunTrustSummary): boolean {
 export function violationCount(trust: RunTrustSummary): number {
   return trust.flagged.length + failClosedEntries(trust.revoked).length;
 }
+
+// ── was revocation checked AT ALL? ─────────────────────────────────────
+//
+// Distinct from everything above, and the harder question. The payload cannot
+// say "checked, clean" versus "never checked": the control plane builds
+// `keyRevocation` UNCONDITIONALLY with `?? 0` on every member, always emits
+// `revoked` (as `[]` when disabled), makes `key_revocation_status` NOT NULL
+// DEFAULT 'none', and exposes `KEY_REVOCATION_CHECK_ENABLED` — which defaults
+// to **false** — on no HTTP surface at all. So with the check off, every
+// revocation figure is a legitimate, meaningless zero.
+//
+// Rendering those zeros is a confident "we checked and found nothing" from a
+// deployment that never looked. Under-claiming is the correct direction for an
+// ambiguous trust signal, per this console's standing invariant that it never
+// renders an unverified thing as verified.
+//
+// PROVISIONAL. The heuristic below is designed to be deleted: we have asked
+// upstream for an explicit signal in acdp-control-plane#176 (a null field, a
+// capabilities object, or a per-payload discriminator — any of them closes
+// this). Replace `revocationReported*` with that signal when it lands; do not
+// build more inference on top of these.
+
+/**
+ * Did this RUN's payload actually carry a revocation classification?
+ *
+ * Two arms, and be precise about what each one is worth — an earlier draft of
+ * this comment (and of the plan behind it) over-claimed the first:
+ *
+ *  - **Defensive, not load-bearing: `audited === 0`.** Upstream *does* enforce
+ *    that `KEY_REVOCATION_CHECK_ENABLED=true` requires `RECEIPT_AUDIT_ENABLED=true`
+ *    (`app-config.service.ts` throws at boot otherwise), so a summary with zero
+ *    audited events cannot have classified anything. But that summary never
+ *    arrives: `receipt-audit.repository.ts`'s `summarizeByRun` returns **null**
+ *    when it finds no rows and sets `audited: rows.length`, and
+ *    `components/runs/run-workbench.tsx` renders this panel only on
+ *    `run.trust &&`. So the real "receipt audit is off" case shows up as an
+ *    ABSENT panel, not as `audited: 0`. This arm is a cheap guard against a
+ *    payload shape upstream does not currently produce — keep it, but do not
+ *    describe it as covering the common case, and do not let a reviewer believe
+ *    the distinct copy it drives is reachable UI today.
+ *  - **Load-bearing: the heuristic.** A non-zero count proves the check ran,
+ *    which makes every figure in that payload trustworthy *including the zeros
+ *    among them*. An all-zero payload is genuinely ambiguous.
+ *
+ * So the ambiguity this function actually carries, on essentially every real
+ * payload, is receipt-audit ON with revocation OFF — the default combination —
+ * which yields `audited > 0` and all-zero counts. Known cost, stated plainly: a
+ * deployment with the check ENABLED and a genuinely clean estate also reads
+ * "not reported", and since it never classifies anything it stays that way.
+ * That is the healthy steady state and the one an operator most wants
+ * confirmed, and it is exactly what acdp-control-plane#176 fixes.
+ */
+export function runRevocationReported(trust: RunTrustSummary): boolean {
+  // Entries FIRST, before the defensive guard below. `revoked[]` rows are
+  // rendered as a table by the panel no matter what this predicate says, so a
+  // guard that fired ahead of them produced a panel simultaneously listing
+  // three revocation verdicts and stating that no revocation classification
+  // could have run. A defensive guard that makes the UI contradict itself is
+  // worse than no guard. Evidence that something WAS classified wins.
+  if ((trust.revoked?.length ?? 0) > 0) return true;
+  // Defensive guard — see the docblock. Upstream cannot currently emit a
+  // non-null summary with `audited: 0`. Kept ahead of the counters (which, on
+  // their own, render nothing when suppressed, so there is nothing for them to
+  // contradict) because counters claiming classifications over zero audited
+  // events describe a payload that cannot exist, and the safe reading of an
+  // incoherent trust payload is "unknown".
+  if (trust.audited === 0) return false;
+  const counted =
+    (trust.keyRevocationPreCompromise ?? 0) +
+    (trust.keyRevocationRevokedAtOrAfter ?? 0) +
+    (trust.keyRevocationRevokedTimeUnverifiable ?? 0);
+  return counted > 0;
+}
+
+/**
+ * Same question for the window-scoped dashboard tile. No proof arm is
+ * available here — the overview payload carries no `audited` total to lean on
+ * — so this is heuristic only.
+ */
+export function dashboardRevocationReported(
+  keyRevocation: { preCompromise: number; revokedAtOrAfter: number; revokedTimeUnverifiable: number } | undefined,
+): boolean {
+  if (!keyRevocation) return false; // pre-Phase-14 backend: genuinely absent
+  return (
+    keyRevocation.preCompromise > 0 ||
+    keyRevocation.revokedAtOrAfter > 0 ||
+    keyRevocation.revokedTimeUnverifiable > 0
+  );
+}
+
+// ── the two spellings of the revocation context type ───────────────────
+//
+// `acdp-primitives` defines BOTH `KEY_REVOCATION = "key-revocation"` and
+// `KEY_REVOCATION_INTERIM = "acdp:key-revocation"`, and RFC-ACDP-0014 §10
+// requires a 0.3.0 consumer to treat them as equivalent. A ≥0.5.0 registry
+// rejects *new* interim publishes but keeps serving bodies already published
+// under it — so the interim form is historical data that still exists and is
+// still served.
+//
+// Registry search matches `type` as an exact string, so a query for one
+// spelling returns none of the other. Asking for only the canonical form is
+// therefore a silent "there are none here" about contexts that do exist: the
+// same claiming-absence-without-looking defect as the revocation counters
+// above, which is why both live in this module.
+
+/** Canonical (0.5.0+) revocation context type. */
+export const KEY_REVOCATION_TYPE = 'key-revocation';
+
+/** Interim (0.3.0-era) spelling, still served for already-published bodies. */
+export const KEY_REVOCATION_INTERIM_TYPE = 'acdp:key-revocation';
+
+/** Both spellings, in the order they are queried. */
+export const KEY_REVOCATION_TYPE_ALIASES: readonly string[] = [
+  KEY_REVOCATION_TYPE,
+  KEY_REVOCATION_INTERIM_TYPE,
+];
+
+/**
+ * Is this facet selection the one that must fan out over both spellings?
+ *
+ * Deliberately true for the interim value as well: an operator who somehow
+ * selects `acdp:key-revocation` should get the same union, not the mirror-image
+ * blind spot. Every other `type` value is untouched — the fan-out, and the
+ * cursor suppression it forces, applies to this facet only.
+ */
+export function isKeyRevocationFacet(type: string | undefined): boolean {
+  return !!type && KEY_REVOCATION_TYPE_ALIASES.includes(type);
+}

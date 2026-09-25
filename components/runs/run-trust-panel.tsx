@@ -7,6 +7,7 @@ import {
   hasTrustViolation,
   preCompromiseEntries,
   revocationChipClass,
+  runRevocationReported,
 } from '@/lib/utils/revocation';
 import { C } from '@/lib/colors';
 import type { RunTrustSummary } from '@/lib/types';
@@ -45,6 +46,7 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
   // shared predicate, so this panel, `/trust`'s filter and `useTrust`'s sort
   // cannot drift apart again.
   const hasViolation = hasTrustViolation(trust);
+  const revocationReported = runRevocationReported(trust);
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       <div className="feed-header">
@@ -62,18 +64,38 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: hasFlags || hasRevoked ? 14 : 0 }}>
           <Stat label="Verified" value={trust.verified} tone={C.success} />
           <Stat label="Historical" value={trust.verifiedHistorical} tone={C.warning} />
-          {/* Sits beside "Historical" because it is conceptually the same thing
-              — valid, but signed under a key that is no longer current. It was
-              previously folded into the red "Revoked" count, which labelled an
-              authorized event as a violation and contradicted both the
-              dashboard tile and the green chip in this panel's own table. */}
-          <Stat label="Pre-compromise" value={preCompromise.length} tone={C.muted} />
+          {/* The two revocation stats render ONLY when this run's payload
+              actually carried a revocation classification. A "Revoked 0" from a
+              deployment whose revocation check never ran is a confident
+              "nothing is revoked" that nobody established — see
+              `runRevocationReported`. Pre-compromise sits beside "Historical"
+              because it is conceptually the same thing: valid, but signed under
+              a key that is no longer current. */}
+          {revocationReported && (
+            <Stat label="Pre-compromise" value={preCompromise.length} tone={C.muted} />
+          )}
           <Stat label="Structural" value={trust.structural} tone={C.info} />
           <Stat label="No receipt" value={trust.noReceipt} tone={C.muted} />
           <Stat label="Flagged" value={trust.flagged.length} tone={hasFlags ? C.danger : C.muted} />
-          <Stat label="Revoked" value={failClosed.length} tone={failClosed.length > 0 ? C.danger : C.muted} />
+          {revocationReported && (
+            <Stat label="Revoked" value={failClosed.length} tone={failClosed.length > 0 ? C.danger : C.muted} />
+          )}
           <Stat label="Errors" value={trust.errors} tone={C.muted} />
         </div>
+
+        {/* The `audited === 0` variant is a DEFENSIVE branch, not a second
+            live path: `summarizeByRun` returns null rather than a zero-audit
+            summary, and `run-workbench.tsx` renders this panel only when
+            `run.trust` exists — so "receipt audit is off" reaches an operator
+            as no panel at all. See `runRevocationReported`'s docblock. */}
+        {!revocationReported && (
+          <div style={{ fontSize: 10.5, color: C.muted, marginBottom: hasFlags || hasRevoked ? 10 : 0 }}>
+            Key revocation not reported for this run
+            {trust.audited === 0
+              ? ' — no receipt-audit events, so no revocation classification could have run.'
+              : ' — no revocation verdicts were classified, and the control plane emits these counters whether or not the check ran.'}
+          </div>
+        )}
 
         {hasFlags && (
           <table className="data-table" style={{ marginBottom: hasRevoked ? 14 : 0 }}>

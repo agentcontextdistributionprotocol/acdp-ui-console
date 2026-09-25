@@ -58,6 +58,7 @@ function overview(runs: Array<{ runId: string; trust: RunTrustSummary }>, totals
     totals: {
       audited: 0, verified: 0, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0,
       flaggedRuns: 0, flaggedEvents: 0, revokedRuns: 0, revokedEvents: 0, preCompromiseEvents: 0,
+      revocationReportedRuns: 1,
       ...totals,
     },
     receiptCoverage: [],
@@ -149,5 +150,47 @@ describe('/trust — the revocation KPI', () => {
     expect(
       screen.getByText('RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable'),
     ).toBeInTheDocument();
+  });
+
+  // ── Phase 3 ──────────────────────────────────────────────────────────
+  it('renders an em-dash, not 0, when no run in this view reported a classification', () => {
+    renderWith(overview([{ runId: 'r1', trust: trust() }], { revokedEvents: 0, revocationReportedRuns: 0 }));
+    const kpi = screen.getByText('Revoked events').closest('.kpi-card') as HTMLElement;
+    expect(kpi).toBeTruthy();
+    // The VALUE node specifically — the not-reported hint beside it also
+    // contains an em-dash, so asserting on the card's whole text would pass
+    // even if the number were still rendered.
+    expect(kpi.querySelector('.kpi-value')?.textContent).toBe('—');
+    expect(kpi.textContent).toContain('Not reported by this deployment');
+  });
+
+  it('DISCRIMINATES: one reporting run brings the numeric 0 back', () => {
+    // The paired mirror of the test above. A genuine "we checked, nothing was
+    // revoked" is exactly what SHOULD read 0 — the fix must not swallow it —
+    // so the two together prove the KPI discriminates rather than always
+    // hiding the number.
+    renderWith(overview([{ runId: 'r1', trust: trust() }], { revokedEvents: 0, revocationReportedRuns: 1 }));
+    const kpi = screen.getByText('Revoked events').closest('.kpi-card') as HTMLElement;
+    expect(kpi.querySelector('.kpi-value')?.textContent).toBe('0');
+    expect(kpi.textContent).not.toContain('Not reported');
+  });
+
+  it('the violations card header does not restate the suppressed zero in prose', async () => {
+    // Suppressing the KPI number while the card below reads "0 revoked across
+    // 0 runs" would make exactly the unestablished claim the em-dash exists to
+    // avoid, two inches lower and in words.
+    renderWith(overview([{ runId: 'r1', trust: trust() }], { revocationReportedRuns: 0 }));
+    const header = screen.getByText('Trust violations').closest('.feed-header, .card') as HTMLElement;
+    expect(header.textContent).toContain('revocation not reported');
+    expect(header.textContent).not.toContain('0 revoked across');
+  });
+
+  it('DISCRIMINATES: a reporting deployment gets the counts in prose', async () => {
+    renderWith(
+      overview([{ runId: 'r1', trust: trust() }], { revokedEvents: 2, revokedRuns: 1, revocationReportedRuns: 1 }),
+    );
+    const header = screen.getByText('Trust violations').closest('.feed-header, .card') as HTMLElement;
+    expect(header.textContent).toContain('2 revoked across 1 run');
+    expect(header.textContent).not.toContain('revocation not reported');
   });
 });

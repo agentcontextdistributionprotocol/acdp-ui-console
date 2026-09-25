@@ -142,3 +142,94 @@ describe('RunTrustPanel — the revocation table', () => {
     expect(screen.getByText('revoked_time_unverifiable').className).toBe('chip warn');
   });
 });
+
+// ── Phase 3: absent revocation data must not render as a confident zero ──
+//
+// `trust.revoked` is ALWAYS present (`[]` when the check is disabled) and the
+// three counters are ALWAYS numbers (`?? 0`), so "checked, clean" and "never
+// checked" arrive as byte-identical payloads. Rendering "Revoked 0" for the
+// second is a claim nobody established.
+describe('RunTrustPanel — was revocation checked at all?', () => {
+  it('an all-zero payload renders NEITHER revocation stat, and says so in words', () => {
+    render(
+      <RunTrustPanel
+        trust={summary({
+          revoked: [],
+          keyRevocationPreCompromise: 0,
+          keyRevocationRevokedAtOrAfter: 0,
+          keyRevocationRevokedTimeUnverifiable: 0,
+        })}
+      />,
+    );
+    expect(screen.queryByText('Revoked')).toBeNull();
+    expect(screen.queryByText('Pre-compromise')).toBeNull();
+    expect(screen.getByText(/Key revocation not reported for this run/)).toBeInTheDocument();
+  });
+
+  it('DISCRIMINATES: one non-zero counter brings both stats back, zeros included', () => {
+    // The mirror image of the test above on the same component. If the render
+    // condition were inverted — or dropped, so the stats always rendered — one
+    // of this pair fails. Neither can pass on an empty render.
+    render(
+      <RunTrustPanel
+        trust={summary({
+          revoked: [],
+          keyRevocationPreCompromise: 2,
+          keyRevocationRevokedAtOrAfter: 0,
+          keyRevocationRevokedTimeUnverifiable: 0,
+        })}
+      />,
+    );
+    expect(statValue('Revoked')).toBe('0');
+    expect(statValue('Pre-compromise')).toBe('0');
+    expect(screen.queryByText(/Key revocation not reported/)).toBeNull();
+  });
+
+  it('PROOF ARM: audited === 0 renders absent even with non-zero counters', () => {
+    // A distinct code path from the heuristic, and a stronger claim: upstream
+    // enforces that the revocation check REQUIRES receipt audit, so zero
+    // audited events is proof no classification ran. Counters that disagree
+    // with that are not evidence the check ran — they are a payload to
+    // distrust. The copy differs too, so the two arms are distinguishable in
+    // the UI and not just in the source.
+    render(
+      <RunTrustPanel
+        trust={summary({
+          audited: 0,
+          verified: 0,
+          revoked: [],
+          keyRevocationPreCompromise: 7,
+          keyRevocationRevokedAtOrAfter: 3,
+          keyRevocationRevokedTimeUnverifiable: 1,
+        })}
+      />,
+    );
+    expect(screen.queryByText('Revoked')).toBeNull();
+    expect(screen.queryByText('Pre-compromise')).toBeNull();
+    expect(screen.getByText(/no receipt-audit events/)).toBeInTheDocument();
+  });
+
+  it('a contradictory payload never denies verdicts it is simultaneously listing', () => {
+    // `audited: 0` with a non-empty `revoked[]` cannot come from upstream, but
+    // the panel renders the revoked table off `revoked.length` regardless of
+    // this predicate — so a guard that fired ahead of the entries produced a
+    // panel listing a revocation verdict and, two lines above it, stating that
+    // no revocation classification could have run. Evidence wins over the
+    // incoherent zero.
+    render(
+      <RunTrustPanel trust={summary({ audited: 0, verified: 0, revoked: [revocation('revoked_at_or_after')] })} />,
+    );
+    expect(screen.getByText('revoked_at_or_after')).toBeInTheDocument();
+    expect(screen.queryByText(/not reported for this run/)).toBeNull();
+    expect(statValue('Revoked')).toBe('1');
+  });
+
+  it('a run carrying actual revocation entries always reports, whatever the counters say', () => {
+    // The counters are a control-plane aggregate and the array is the detail;
+    // if either says something was classified, something was.
+    render(<RunTrustPanel trust={summary({ revoked: [revocation('pre_compromise')] })} />);
+    expect(statValue('Revoked')).toBe('0');
+    expect(statValue('Pre-compromise')).toBe('1');
+    expect(screen.queryByText(/not reported/)).toBeNull();
+  });
+});

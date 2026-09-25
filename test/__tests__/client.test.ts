@@ -210,3 +210,157 @@ describe('searchContexts all', () => {
     expect(url).toContain('cursor=20');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// The `key-revocation` facet fans out over both RFC-ACDP-0014 §10 spellings.
+//
+// Registry search matches `type` as an exact string
+// (`acdp-registry-sqlite/src/store.rs`), and `acdp-primitives` defines both
+// `key-revocation` and the interim `acdp:key-revocation`, with a ≥0.5.0
+// registry still SERVING bodies published under the interim name. So the
+// single-value query returned none of them and the UI reported "no contexts
+// found" — claiming absence without having looked, the defect this phase
+// exists to remove.
+// ══════════════════════════════════════════════════════════════════════
+describe('searchContexts — the revocation facet union', () => {
+  const typeOf = (url: string) => new URLSearchParams(url.split('?')[1]).get('type');
+
+  it('queries BOTH spellings and merges the results', async () => {
+    const fetchMock = mockFetch((url) =>
+      typeOf(url) === 'key-revocation'
+        ? jsonResponse({ matches: [{ ctx_id: 'canonical-1' }], next_cursor: 'c1' })
+        : jsonResponse({ matches: [{ ctx_id: 'interim-1' }], next_cursor: 'c2' }),
+    );
+    const res = await searchContexts('a', { type: 'key-revocation' }, false);
+
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    expect(fetchMock.mock.calls.map((c) => typeOf(String(c[0])))).toEqual([
+      'key-revocation',
+      'acdp:key-revocation',
+    ]);
+    expect(res.matches.map((m) => m.ctx_id)).toEqual(['canonical-1', 'interim-1']);
+    expect(res.total_estimate).toBe(2);
+    // Neither upstream cursor survives: a keyset cursor from one of two merged
+    // queries silently skips or repeats rows. Same rule, same reason, as the
+    // pre-existing `authority === 'all'` merge.
+    expect(res.next_cursor).toBeUndefined();
+  });
+
+  it('selecting the INTERIM value gets the same union, not the mirror blind spot', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ matches: [] }));
+    await searchContexts('a', { type: 'acdp:key-revocation' }, false);
+    expect(fetchMock.mock.calls.map((c) => typeOf(String(c[0])))).toEqual([
+      'key-revocation',
+      'acdp:key-revocation',
+    ]);
+  });
+
+  it('dedupes a context a registry serves under both spellings', async () => {
+    mockFetch(() => jsonResponse({ matches: [{ ctx_id: 'same-1' }, { ctx_id: 'other-1' }] }));
+    const res = await searchContexts('a', { type: 'key-revocation' }, false);
+    expect(res.matches.map((m) => m.ctx_id)).toEqual(['same-1', 'other-1']);
+  });
+
+  it('does NOT dedupe the same ctx_id across two registries', async () => {
+    // A federation observation the combined view has always shown. The type
+    // axis is deduped; the authority axis deliberately is not.
+    mockFetch(() => jsonResponse({ matches: [{ ctx_id: 'shared-1' }] }));
+    const res = await searchContexts('all', { type: 'key-revocation' }, false);
+    expect(res.matches.map((m) => m.ctx_id)).toEqual(['shared-1', 'shared-1']);
+  });
+
+  it('still survives a down registry on the four-way fan-out', async () => {
+    mockFetch((url) =>
+      url.includes('registry-b') ? jsonResponse('boom', false, 500) : jsonResponse({ matches: [{ ctx_id: 'a1' }] }),
+    );
+    const res = await searchContexts('all', { type: 'key-revocation' }, false);
+    expect(res.partial).toBe(true);
+    expect(res.matches.map((m) => m.ctx_id)).toEqual(['a1']);
+  });
+
+  it('reports the SUM of the upstream estimates, not the merged page size', async () => {
+    // `total_estimate: matches.length` told the operator "2 contexts" for a
+    // query that read only the first page of each of two upstream queries —
+    // and, because the hedge in `app/contexts/page.tsx` only fires when the
+    // estimate EXCEEDS what is on screen, it also suppressed the one signal
+    // that would have said otherwise.
+    mockFetch(() => jsonResponse({ matches: [{ ctx_id: 'x' }], total_estimate: 31 }));
+    const res = await searchContexts('a', { type: 'key-revocation' }, false);
+    expect(res.total_estimate).toBe(62);
+    expect(res.merged).toBe(true);
+  });
+
+  it('never reports an estimate below what it actually returned', async () => {
+    mockFetch((url) =>
+      typeOf(url) === 'key-revocation'
+        ? jsonResponse({ matches: [{ ctx_id: 'a' }, { ctx_id: 'b' }] }) // no estimate at all
+        : jsonResponse({ matches: [{ ctx_id: 'c' }] }),
+    );
+    const res = await searchContexts('a', { type: 'key-revocation' }, false);
+    expect(res.total_estimate).toBe(3);
+  });
+
+  it('marks `authority: all` merged as well — it has always suppressed its cursor', async () => {
+    mockFetch(() => jsonResponse({ matches: [], total_estimate: 5, next_cursor: 'nope' }));
+    const res = await searchContexts('all', {}, false);
+    expect(res.merged).toBe(true);
+    expect(res.next_cursor).toBeUndefined();
+    expect(res.total_estimate).toBe(10);
+  });
+
+  it('DISCRIMINATES: any other facet keeps one request and its upstream cursor', async () => {
+    // The suppression is per-query, never sticky state. Without this pair the
+    // fan-out could have been implemented by dropping `next_cursor` globally
+    // and every other assertion here would still pass.
+    const fetchMock = mockFetch(() => jsonResponse({ matches: [{ ctx_id: 'x' }], next_cursor: 'keep-me' }));
+    const res = await searchContexts('a', { type: 'analysis' }, false);
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    expect(res.next_cursor).toBe('keep-me');
+    // Not a merge, so the page must not caption it as one.
+    expect(res.merged).toBeUndefined();
+  });
+
+  it('DISCRIMINATES: no facet at all is also one request with its cursor intact', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ matches: [], next_cursor: 'keep-me' }));
+    const res = await searchContexts('a', {}, false);
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('type=');
+    expect(res.next_cursor).toBe('keep-me');
+  });
+
+  it('a switch back to a normal facet restores paging on the very next call', async () => {
+    const fetchMock = mockFetch((url) =>
+      typeOf(url) === 'analysis'
+        ? jsonResponse({ matches: [], next_cursor: 'back' })
+        : jsonResponse({ matches: [], next_cursor: 'n' }),
+    );
+    expect((await searchContexts('a', { type: 'key-revocation' }, false)).next_cursor).toBeUndefined();
+    expect((await searchContexts('a', { type: 'analysis' }, false)).next_cursor).toBe('back');
+    expect(fetchMock.mock.calls).toHaveLength(3); // 2 + 1
+  });
+});
+
+describe('searchContexts — paging a fully-filtered result set terminates', () => {
+  it('walks short pages with live cursors and stops at next_cursor null', async () => {
+    // The registry's documented short-page contract: a page consumed by the
+    // handler's visibility/tenant post-filters returns FEWER rows than `limit`
+    // while still emitting a cursor. Making "Load more" reachable in that state
+    // (fold-in A) is only safe if the walk provably ends, so the exact rule the
+    // page uses — `getNextPageParam: (last) => last.next_cursor` — is driven
+    // here against a registry that returns three empty pages before the last.
+    const cursors: Array<string | null> = ['p1', 'p2', 'p3', null];
+    let call = 0;
+    mockFetch(() => jsonResponse({ matches: [], next_cursor: cursors[call++] ?? null }));
+
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const page = await searchContexts('a', { type: 'analysis', cursor }, false);
+      cursor = page.next_cursor ?? undefined;
+      pages++;
+    } while (cursor && pages < 20);
+
+    expect(pages).toBe(4);
+    expect(cursor).toBeUndefined();
+  });
+});

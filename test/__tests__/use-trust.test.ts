@@ -218,3 +218,60 @@ describe('the real demo dataset, end to end', () => {
     expect(hasTrustViolation(fixture.trust)).toBe(true);
   });
 });
+
+// ── Phase 3: `revocationReportedRuns` ──────────────────────────────────
+//
+// The accumulator that decides whether `/trust` shows a number or an em-dash.
+// Left untested it survived a mutation that made EVERY run count as reported —
+// restoring the misleading "Revoked events: 0" in production with all 447 other
+// tests still green, because `trust-page.test.tsx` injects `totals` directly
+// and `lib/hooks/**` is outside the coverage globs. Neither gate could see it.
+describe('revocationReportedRuns', () => {
+  it('does not count a run whose revocation payload is entirely zero', async () => {
+    const o = await overviewFor([
+      run(
+        'r-quiet',
+        trust({
+          revoked: [],
+          keyRevocationPreCompromise: 0,
+          keyRevocationRevokedAtOrAfter: 0,
+          keyRevocationRevokedTimeUnverifiable: 0,
+        }),
+      ),
+    ]);
+    expect(o.totals.revocationReportedRuns).toBe(0);
+  });
+
+  it('counts a run with one non-zero counter', async () => {
+    const o = await overviewFor([
+      run('r-loud', trust({ revoked: [], keyRevocationPreCompromise: 1 })),
+    ]);
+    expect(o.totals.revocationReportedRuns).toBe(1);
+  });
+
+  it('counts only the reporting runs in a mixed set', async () => {
+    // The discriminating case: an accumulator that always increments, or never
+    // does, gives 3 or 0 here rather than 2.
+    const o = await overviewFor([
+      run('r-1', trust({ revoked: [revocation('revoked_at_or_after')] })),
+      run('r-2', trust({ revoked: [], keyRevocationRevokedTimeUnverifiable: 4 })),
+      run('r-3', trust({ revoked: [], keyRevocationPreCompromise: 0 })),
+    ]);
+    expect(o.totals.revocationReportedRuns).toBe(2);
+    expect(o.runs).toHaveLength(3);
+  });
+
+  it('the real demo dataset reports on run-revoked-1 and not on run-historical-1', async () => {
+    const { MOCK_RUNS } = await import('@/lib/data/mock-data');
+    const revoked = MOCK_RUNS.find((r) => r.runId === 'run-revoked-1');
+    const historical = MOCK_RUNS.find((r) => r.runId === 'run-historical-1');
+    if (!revoked?.trust || !historical?.trust) throw new Error('demo trust fixtures missing');
+
+    const o = await overviewFor([
+      run('run-revoked-1', revoked.trust),
+      run('run-historical-1', historical.trust),
+    ]);
+    // Both arms reachable in the default mode: one run reports, one does not.
+    expect(o.totals.revocationReportedRuns).toBe(1);
+  });
+});
