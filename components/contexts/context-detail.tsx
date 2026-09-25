@@ -33,17 +33,25 @@ import type { Verdict } from '@/lib/verify/verify';
  * chip means the browser recomputed the hash / checked the signature itself.
  * `unavailable` ("material only") is honest about a missing signer key/DID doc
  * and is NEVER shown as a pass.
+ *
+ * `unavailableLabel` overrides that default status word for a verdict that is
+ * `unavailable` for some OTHER reason — "material only" would then be actively
+ * misleading. Optional and additive: every caller that omits it renders exactly
+ * as before. Note it is NOT the same thing as `label`, which is the field-name
+ * prefix rendered before every status word ("ctx_id binding · material only").
  */
 function VerdictChip({
   verdict,
   ready,
   error,
   label,
+  unavailableLabel,
 }: {
   verdict?: Verdict;
   ready: boolean;
   error?: string;
   label?: string;
+  unavailableLabel?: string;
 }) {
   if (error && !verdict) {
     return (
@@ -74,16 +82,39 @@ function VerdictChip({
     );
   return (
     <span className="chip warn" title={verdict.detail}>
-      {prefix}material only
+      {prefix}
+      {/* The explicit prop wins, but a verdict that carries its own label is
+          honoured wherever it is rendered — otherwise a future producer setting
+          `unavailableLabel` on a verdict whose chip doesn't forward the prop
+          would have it silently dropped, with no type error and no failing
+          test, and the chip would claim a missing key it actually has. */}
+      {unavailableLabel ?? verdict.unavailableLabel ?? 'material only'}
     </span>
   );
 }
 
-/** Small caption echoing the verdict's human-readable detail. */
+/**
+ * Small caption echoing the verdict's human-readable detail.
+ *
+ * The colour tracks the chip beside it: red for `failed`, amber for
+ * `unavailable`. Amber is not decoration — this caption is the ONLY place an
+ * `unavailable` verdict's distinguishing sentence is readable without hovering,
+ * and rendering it in the same dim grey as a green verdict's caption would
+ * defeat the reason it is shown at all.
+ */
 function VerdictCaption({ verdict, ready, error }: { verdict?: Verdict; ready: boolean; error?: string }) {
   const pending = !ready || !verdict;
   const text = error && pending ? error : pending ? 'Verifying client-side…' : verdict.detail;
-  const color = error && pending ? C.warning : pending ? C.faint : verdict.status === 'failed' ? C.danger : C.faint;
+  const color =
+    error && pending
+      ? C.warning
+      : pending
+        ? C.faint
+        : verdict.status === 'failed'
+          ? C.danger
+          : verdict.status === 'unavailable'
+            ? C.warning
+            : C.faint;
   return <div style={{ fontSize: 10, color, marginTop: 2 }}>{text}</div>;
 }
 
@@ -300,7 +331,13 @@ export function ContextDetail({
       <Group icon={ShieldCheck} title="Integrity">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
           <VerdictChip verdict={verdicts.contentHash} ready={verdicts.ready} error={verdicts.error} label="content_hash" />
-          <VerdictChip verdict={verdicts.ctxIdBinding} ready={verdicts.ready} error={verdicts.error} label="ctx_id binding" />
+          <VerdictChip
+            verdict={verdicts.ctxIdBinding}
+            ready={verdicts.ready}
+            error={verdicts.error}
+            label="ctx_id binding"
+            unavailableLabel={verdicts.ctxIdBinding?.unavailableLabel}
+          />
           {b.signature ? (
             <VerdictChip
               verdict={verdicts.producerSignature}
@@ -313,15 +350,22 @@ export function ContextDetail({
           )}
           {b.acdp_version && <span className="chip">acdp v{b.acdp_version}</span>}
         </div>
-        {/* ctx_id binding can fail for two different reasons that render an
-            identical chip label (see verify.ts's verifyCtxIdBinding comment /
-            ASSUMPTIONS.md "UI-2 Phase 2: ctxIdBinding's two strict-parse
-            failure surfaces") — a genuine content-substitution finding vs. a
-            malformed-input throw. Surface the distinguishing detail text
-            inline (not just on hover) only when there's something to
-            disambiguate, rather than adding a caption under every Integrity
-            chip regardless of status. */}
-        {verdicts.ready && verdicts.ctxIdBinding?.status === 'failed' && (
+        {/* ctx_id binding reaches a non-green verdict for several different
+            reasons (see verify.ts's verifyCtxIdBinding comment): a genuine
+            content-substitution finding, a body the acdp-rs Body schema
+            rejects, or a malformed requested id. Surface the distinguishing
+            detail text inline (not just on the hover tooltip, which is
+            invisible on touch and to the keyboard) whenever there IS something
+            to disambiguate, rather than adding a caption under every Integrity
+            chip regardless of status.
+
+            The gate covers `unavailable` as well as `failed` — before, an
+            `unavailable` verdict would have silently dropped this disclosure.
+            The `?.status &&` guard is load-bearing, not defensive: when
+            `verdicts.ready && verdicts.error` the verdict is `undefined`, and a
+            bare `!== 'verified'` would render the wasm-init error a second time
+            here, duplicating the banner already shown above. */}
+        {verdicts.ctxIdBinding?.status && verdicts.ctxIdBinding.status !== 'verified' && (
           <VerdictCaption verdict={verdicts.ctxIdBinding} ready={verdicts.ready} error={verdicts.error} />
         )}
         <Field label="content hash">
