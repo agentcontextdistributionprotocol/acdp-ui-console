@@ -13,6 +13,7 @@ import type { FullContext } from '@/lib/types';
 import type { DidDocMap } from './resolve';
 import {
   verifyContentHash,
+  verifyCtxIdBinding,
   verifyLineageHeadReceipt,
   verifyProducerSignature,
   verifyRegistryReceipt,
@@ -26,6 +27,7 @@ export interface ContextVerdicts {
   ready: boolean;
   error?: string;
   contentHash?: Verdict;
+  ctxIdBinding?: Verdict;
   producerSignature?: Verdict;
   registryReceipt?: Verdict;
   lineageHeadReceipt?: Verdict;
@@ -33,11 +35,17 @@ export interface ContextVerdicts {
   witnessQuorum?: QuorumVerdict;
 }
 
-export function useContextVerdicts(ctx: FullContext, docs: DidDocMap): ContextVerdicts {
+/**
+ * @param requestedCtxId the ctx_id the CALLER independently asked for (a search
+ * hit, a URL param, a graph node) — used only for the `ctxIdBinding` check.
+ * Passing `ctx.body.ctx_id` back would make that check tautologically green.
+ */
+export function useContextVerdicts(ctx: FullContext, docs: DidDocMap, requestedCtxId: string): ContextVerdicts {
   const [state, setState] = useState<ContextVerdicts>({ ready: false });
 
-  // Re-run whenever the verified material or the available DID docs change.
-  const key = `${ctx.body.ctx_id}:${ctx.body.content_hash}`;
+  // Re-run whenever the verified material, the requested id, or the available
+  // DID docs change.
+  const key = `${ctx.body.ctx_id}:${ctx.body.content_hash}:${requestedCtxId}`;
 
   const [prevKey, setPrevKey] = useState(key);
   if (prevKey !== key) {
@@ -53,9 +61,10 @@ export function useContextVerdicts(ctx: FullContext, docs: DidDocMap): ContextVe
         const body = ctx.body;
         const status = ctx.registry_state.status;
 
-        const [contentHash, producerSignature] = await Promise.all([
+        const [contentHash, producerSignature, ctxIdBinding] = await Promise.all([
           verifyContentHash(body),
           verifyProducerSignature(body, docs),
+          verifyCtxIdBinding(body, requestedCtxId),
         ]);
 
         const registryReceipt = ctx.registry_receipt
@@ -76,6 +85,7 @@ export function useContextVerdicts(ctx: FullContext, docs: DidDocMap): ContextVe
         setState({
           ready: true,
           contentHash,
+          ctxIdBinding,
           producerSignature,
           registryReceipt,
           lineageHeadReceipt,

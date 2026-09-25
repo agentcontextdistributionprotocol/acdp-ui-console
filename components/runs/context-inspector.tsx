@@ -24,7 +24,9 @@ export function ContextInspector({ ctxId }: { ctxId: string | null }) {
       {ctxId && error && <div style={{ fontSize: 11, color: C.danger }}>Could not load context.</div>}
       {ctxId && data && (
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-          <ContextDetail ctx={data} compact />
+          {/* requestedCtxId is the ctxId this inspector was asked to load (a graph
+              node/event's id), independent of whatever the fetched body claims. */}
+          <ContextDetail ctx={data} compact requestedCtxId={ctxId} />
         </div>
       )}
     </div>

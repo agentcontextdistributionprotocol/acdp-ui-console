@@ -188,7 +188,11 @@ export default function ContextsPage() {
       <Modal open={!!openCtx} onClose={() => setOpenCtx(null)} title={detail.data?.body.title ?? 'Context'}>
         {detail.isLoading && <div style={{ fontSize: 12, color: 'var(--muted)' }}>Loading…</div>}
         {detail.error && <ErrorPanel message="Could not load context." />}
-        {detail.data && <ContextDetail ctx={detail.data} />}
+        {/* requestedCtxId is `openCtx` (the search hit the operator clicked), never
+            `detail.data.body.ctx_id` — a genuine independent request/response pair,
+            so the ctxIdBinding chip actually catches a registry serving the wrong
+            context, not just the same value compared to itself. */}
+        {openCtx && detail.data && <ContextDetail ctx={detail.data} requestedCtxId={openCtx} />}
       </Modal>
     </div>
   );

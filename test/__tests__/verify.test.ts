@@ -4,6 +4,7 @@ import { MOCK_CONTEXTS } from '@/lib/data/mock-data';
 
 const evaluateWitnessQuorum = vi.fn();
 const verifyContentHashWasm = vi.fn();
+const verifyCtxIdBindingWasm = vi.fn();
 const resolveDidKey = vi.fn();
 const verifySignatureEd25519 = vi.fn();
 const verifySignatureP256 = vi.fn();
@@ -20,6 +21,7 @@ vi.mock('@/lib/verify/wasm', () => ({
     Promise.resolve({
       evaluateWitnessQuorum,
       verifyContentHash: verifyContentHashWasm,
+      verifyCtxIdBinding: verifyCtxIdBindingWasm,
       resolveDidKey,
       verifySignatureEd25519,
       verifySignatureP256,
@@ -35,6 +37,7 @@ vi.mock('@/lib/verify/wasm', () => ({
 
 import {
   verifyContentHash,
+  verifyCtxIdBinding,
   verifyLineageHeadReceipt,
   verifyProducerSignature,
   verifyRegistryReceipt,
@@ -223,6 +226,36 @@ describe('verifyProducerSignature', () => {
     verifySignatureEd25519.mockReturnValue(JSON.stringify({ valid: false, error: 'mismatch' }));
     const result = await verifyProducerSignature(bodyWithSignature(), undefined);
     expect(result.status).toBe('failed');
+  });
+});
+
+describe('verifyCtxIdBinding', () => {
+  it('calls the wasm binding with (body_json, expected_ctx_id) — not the body read back on itself', async () => {
+    verifyCtxIdBindingWasm.mockReturnValue(JSON.stringify({ valid: true }));
+    const body = bodyWithSignature();
+    const result = await verifyCtxIdBinding(body, 'acdp://requester.example/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(result.status).toBe('verified');
+    expect(verifyCtxIdBindingWasm).toHaveBeenCalledWith(
+      JSON.stringify(body),
+      'acdp://requester.example/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    );
+  });
+
+  it('a wasm-reported mismatch → failed', async () => {
+    verifyCtxIdBindingWasm.mockReturnValue(JSON.stringify({ valid: false, error: 'ctx_id mismatch' }));
+    const body = bodyWithSignature();
+    const result = await verifyCtxIdBinding(body, 'acdp://requester.example/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    expect(result.status).toBe('failed');
+    expect(result.detail).toContain('ctx_id mismatch');
+  });
+
+  it('a throw (malformed expected_ctx_id, e.g. CtxId::parse) is caught as failed, not an unhandled throw', async () => {
+    verifyCtxIdBindingWasm.mockImplementation(() => {
+      throw new Error('invalid ctx_id: malformed authority/uuid');
+    });
+    const result = await verifyCtxIdBinding(bodyWithSignature(), 'not-a-real-ctx-id');
+    expect(result.status).toBe('failed');
+    expect(result.detail).toBe('malformed material: invalid ctx_id: malformed authority/uuid');
   });
 });
 

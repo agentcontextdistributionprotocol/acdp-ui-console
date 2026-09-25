@@ -163,7 +163,16 @@ function Group({
  * log, witness cosignatures) carry REAL client-side cryptographic verdicts,
  * computed in-browser by the acdp-wasm verifier via `useContextVerdicts`.
  */
-export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; compact?: boolean }) {
+export function ContextDetail({
+  ctx,
+  compact = false,
+  requestedCtxId,
+}: {
+  ctx: FullContext;
+  compact?: boolean;
+  /** The ctx_id the caller independently asked for — see `useContextVerdicts`. */
+  requestedCtxId: string;
+}) {
   const [rawOpen, setRawOpen] = useState(false);
   const b = ctx.body;
   const fontSize = compact ? 10.5 : 11.5;
@@ -174,7 +183,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
   // those surfaces honestly read "material only" (did:key still verifies).
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const didDocs = demoMode ? MOCK_DID_DOCS : undefined;
-  const verdicts = useContextVerdicts(ctx, didDocs);
+  const verdicts = useContextVerdicts(ctx, didDocs, requestedCtxId);
   const now = useNow();
 
   const expired = b.expires_at ? new Date(b.expires_at).getTime() < now : false;
@@ -291,6 +300,7 @@ export function ContextDetail({ ctx, compact = false }: { ctx: FullContext; comp
       <Group icon={ShieldCheck} title="Integrity">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
           <VerdictChip verdict={verdicts.contentHash} ready={verdicts.ready} error={verdicts.error} label="content_hash" />
+          <VerdictChip verdict={verdicts.ctxIdBinding} ready={verdicts.ready} error={verdicts.error} label="ctx_id binding" />
           {b.signature ? (
             <VerdictChip
               verdict={verdicts.producerSignature}
