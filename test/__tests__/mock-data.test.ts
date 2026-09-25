@@ -130,6 +130,18 @@ describe('rich context bodies', () => {
       expect(c.body.signature?.key_id).toContain('#');
     }
   });
+
+  it('includes a key-revocation context (RFC-ACDP-0014), reachable via the search-hit facet', () => {
+    const revocation = MOCK_CONTEXTS.find((c) => c.body.type === 'key-revocation');
+    expect(revocation).toBeDefined();
+    expect(revocation!.body.metadata?.revoked_key_fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(revocation!.body.metadata?.compromised_since).toBeTruthy();
+    // MOCK_SEARCH_HITS is MOCK_CONTEXTS-derived — the type filter demo mode
+    // applies (search.type === h.type) only works if this hit's `type` field
+    // actually carries 'key-revocation' through, not just the full body.
+    const hit = MockData.MOCK_SEARCH_HITS.find((h) => h.ctx_id === revocation!.body.ctx_id);
+    expect(hit?.type).toBe('key-revocation');
+  });
 });
 
 describe('lineage chains', () => {

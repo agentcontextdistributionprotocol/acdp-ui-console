@@ -166,6 +166,7 @@ const CTX_ARCTIC_DERIV = `acdp://${AUTH_B}/29b45ae4-1607-4e71-9efc-5016babeb19c`
 const CTX_CASH_V1 = `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`;
 const CTX_CASH_V2 = `acdp://${AUTH_A}/b1ae7711-2a4d-4cb3-9762-3f6980b3a6e1`;
 const CTX_ATTESTED = `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`;
+const CTX_KEY_REVOCATION = `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`;
 // RFC-ACDP-0001 §5: lineage_id is a 'lin:sha256:<hex>' identifier. The other
 // demo lineages use a loose label form that only the strict LHR parser rejects;
 // the attested context (the one with a lineage-head receipt) uses the real form.
@@ -333,6 +334,45 @@ const attested = makeBody({
   created_at: '2026-07-06T11:57:00.000Z',
   producer: prodKey,
   hashed: attestedHashed,
+});
+
+// RFC-ACDP-0014 `key-revocation`: a producer-signed declaration that a prior
+// signing key is compromised as of a stated boundary time. `metadata` is an
+// `Option<serde_json::Value>` in acdp-rs's Body (crates/acdp-types/src/body.rs:91)
+// — opaque to the strict deserializer — so its RFC-0014 §4 shape isn't enforced
+// here; only `type: 'key-revocation'` itself needs to satisfy the closed
+// ContextType enum, which it does (it's one of the 5 standard values, not a
+// namespaced custom type like `demo:attestation` above).
+const keyRevocationHashed = {
+  version: 1,
+  agent_id: WEB_A,
+  title: 'Producer key revocation — rotated signing key',
+  type: 'key-revocation',
+  visibility: 'public',
+  derived_from: [],
+  summary: 'Registry-a producer declares a prior signing key compromised as of a stated boundary time (RFC-ACDP-0014).',
+  description:
+    'Producer-signed revocation: signatures from the identified key are untrustworthy from the compromise boundary onward. Contexts signed strictly before the boundary remain historically authorized under a valid registry receipt (RFC-ACDP-0014 §7).',
+  tags: ['security', 'key-revocation'],
+  domain: 'security',
+  acdp_version: '0.5.0',
+  supersedes: null,
+  contributors: [WEB_A],
+  data_refs: [],
+  metadata: {
+    revoked_key_fingerprint: 'sha256:' + sha256Hex('acdp-demo-revoked-key-arctic-2026'),
+    compromised_since: '2026-08-01T00:00:00.000Z',
+    revoked_key_id: `${WEB_A}#key-legacy-1`,
+  },
+};
+const keyRevocation = makeBody({
+  ctx_id: CTX_KEY_REVOCATION,
+  lineage_id: 'lin-key-revocation-001',
+  origin_registry: AUTH_A,
+  created_at: '2026-08-02T09:15:00.000Z',
+  producer: { ...prodA, did: WEB_A },
+  keyFragment: 'key-1',
+  hashed: keyRevocationHashed,
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -551,6 +591,11 @@ const out = {
   arcticDeriv: { hashed: arcticDeriv.hashed, content_hash: arcticDeriv.content_hash, signature: arcticDeriv.signature },
   cashV1: { hashed: cashV1.hashed, content_hash: cashV1.content_hash, signature: cashV1.signature },
   cashV2: { hashed: cashV2.hashed, content_hash: cashV2.content_hash, signature: cashV2.signature },
+  keyRevocation: {
+    hashed: keyRevocation.hashed,
+    content_hash: keyRevocation.content_hash,
+    signature: keyRevocation.signature,
+  },
   attested: {
     hashed: attested.hashed,
     content_hash: attested.content_hash,
@@ -590,6 +635,7 @@ export const MOCK_CRYPTO = ${JSON.stringify(
     arcticDeriv: out.arcticDeriv,
     cashV1: out.cashV1,
     cashV2: out.cashV2,
+    keyRevocation: out.keyRevocation,
     attested: out.attested,
   },
   null,

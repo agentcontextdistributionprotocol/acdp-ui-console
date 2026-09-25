@@ -56,12 +56,12 @@ const sha256Hex = (input: string) => createHash('sha256').update(input, 'utf8').
 
 // ── full ContextBody per MOCK_CRYPTO entry ──────────────────────────────
 // Sourced from the SAME assembled bodies the app actually serves
-// (mock-data.ts), rather than a third hand-copied identity table: four of
-// the five are `MOCK_CONTEXTS` entries directly, and `cashV2` (which never
+// (mock-data.ts), rather than a third hand-copied identity table: five of
+// the six are `MOCK_CONTEXTS` entries directly, and `cashV2` (which never
 // surfaces in `MOCK_CONTEXTS` — see the drift-canary comment below) is the
 // second entry of its lineage chain. Typing this as
 // `Record<keyof typeof MOCK_CRYPTO, ContextBody>` preserves the
-// exhaustiveness guard: a 6th `MOCK_CRYPTO` entry without a matching body
+// exhaustiveness guard: a 7th `MOCK_CRYPTO` entry without a matching body
 // here fails `npm run typecheck`.
 const FULL_BODY: Record<keyof typeof MOCK_CRYPTO, ContextBody> = {
   arcticSource: MOCK_CONTEXTS[0].body,
@@ -69,6 +69,7 @@ const FULL_BODY: Record<keyof typeof MOCK_CRYPTO, ContextBody> = {
   cashV1: MOCK_CONTEXTS[2].body,
   cashV2: MOCK_LINEAGE_CHAINS['lin-cashflow-001'][1].body,
   attested: MOCK_CONTEXTS[3].body,
+  keyRevocation: MOCK_CONTEXTS[4].body,
 };
 
 function fullBodyOf(key: keyof typeof MOCK_CRYPTO): ContextBody {
@@ -89,30 +90,38 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
 
   // ── 0. fixture-count guard ──────────────────────────────────────────────
   // These counts are load-bearing for coverage: MOCK_CRYPTO_KEYS drives the
-  // content-hash/signature loops below (5 entries: 4 Ed25519 + 1 P-256) and
-  // MOCK_CONTEXTS drives the drift-canary loop (4 entries). Emptying either
-  // array already fails loudly (vitest errors on an empty `it.each` table).
-  // `toHaveLength` also fires symmetrically on *growth* (5→6, 4→5), not just
-  // shrinkage — that's fine: a deliberate fixture addition is expected to
-  // touch this line, and doing so consciously is correct behavior. What this
-  // guards against is either direction happening *silently*, quietly
-  // changing how much of the wasm surface this gate exercises on an
-  // otherwise green run — nothing else in the repo asserts these counts.
+  // content-hash/signature loops below (6 entries: 5 Ed25519 + 1 P-256) and
+  // MOCK_CONTEXTS drives the drift-canary loop (5 entries, since UI-2 Phase 5
+  // added `keyRevocation`). Emptying either array already fails loudly
+  // (vitest errors on an empty `it.each` table). `toHaveLength` also fires
+  // symmetrically on *growth* (6→7, 5→6), not just shrinkage — that's fine: a
+  // deliberate fixture addition is expected to touch this line, and doing so
+  // consciously is correct behavior. What this guards against is either
+  // direction happening *silently*, quietly changing how much of the wasm
+  // surface this gate exercises on an otherwise green run — nothing else in
+  // the repo asserts these counts.
   it('fixture counts have not silently shrunk', () => {
-    expect(MOCK_CRYPTO_KEYS).toHaveLength(5);
-    expect(MOCK_CONTEXTS).toHaveLength(4);
+    expect(MOCK_CRYPTO_KEYS).toHaveLength(6);
+    expect(MOCK_CONTEXTS).toHaveLength(5);
   });
 
-  // ── 1. all 5 MOCK_CRYPTO content hashes verify ─────────────────────────
+  // ── 1. all 6 MOCK_CRYPTO content hashes verify ─────────────────────────
   it.each(MOCK_CRYPTO_KEYS)('content_hash verifies for MOCK_CRYPTO.%s', (key) => {
     const body = fullBodyOf(key);
     const verdict = JSON.parse(acdp.verifyContentHash(JSON.stringify(body), body.content_hash)) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });
 
-  // ── 2. all 5 producer signatures verify (4 Ed25519 + 1 P-256) ──────────
+  // ── 2. all 6 producer signatures verify (5 Ed25519 + 1 P-256) ──────────
   it('arcticSource producer signature verifies (Ed25519, did:web)', async () => {
     const { content_hash, signature } = MOCK_CRYPTO.arcticSource;
+    const rawKey = await ed25519RawB64FromDoc('did:web:registry-a.local:agents:cross-a');
+    const verdict = JSON.parse(acdp.verifySignatureEd25519(rawKey, signature.value, content_hash)) as { valid: boolean };
+    expect(verdict.valid).toBe(true);
+  });
+
+  it('keyRevocation producer signature verifies (Ed25519, did:web)', async () => {
+    const { content_hash, signature } = MOCK_CRYPTO.keyRevocation;
     const rawKey = await ed25519RawB64FromDoc('did:web:registry-a.local:agents:cross-a');
     const verdict = JSON.parse(acdp.verifySignatureEd25519(rawKey, signature.value, content_hash)) as { valid: boolean };
     expect(verdict.valid).toBe(true);
@@ -292,7 +301,7 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
   // generator-exit-0 gate is structurally blind to that regression. This
   // assertion is not.
   //
-  // Driven off MOCK_CONTEXTS (4 entries — cashV2 never surfaces as a context
+  // Driven off MOCK_CONTEXTS (5 entries — cashV2 never surfaces as a context
   // body, so it is not here; it is covered above via MOCK_CRYPTO directly).
   it.each(MOCK_CONTEXTS.map((c, i) => [i, c] as const))(
     'content_hash still verifies with a runtime-drifted created_at (MOCK_CONTEXTS[%i])',

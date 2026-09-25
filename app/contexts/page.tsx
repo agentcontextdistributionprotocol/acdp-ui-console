@@ -22,7 +22,7 @@ const REGISTRIES: { id: RegistryAuthority | 'all'; label: string }[] = [
   { id: 'all', label: 'Both' },
 ];
 
-const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert'];
+const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert', 'key-revocation'];
 
 // Registry-derived status facet (RFC-ACDP-0004 §4 + RFC-ACDP-0013 'retracted').
 const STATUSES: { value: string; label: string }[] = [
