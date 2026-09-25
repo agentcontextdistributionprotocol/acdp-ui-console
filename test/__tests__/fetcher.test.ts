@@ -92,6 +92,20 @@ describe('ApiError', () => {
     it('stays undefined for valid JSON that carries neither field', () => {
       expect(new ApiError(500, JSON.stringify({ message: 'boom' }), 'registry-a', '/x').errorCode).toBeUndefined();
     });
+
+    it('the REGISTRY wire envelope populates it too — this field is not control-plane-only', () => {
+      // `error.code` was added as a fallback for the control plane's own nested
+      // copy, but it matches the registry's RFC-ACDP-0007 §5 envelope exactly
+      // (`acdp-registry-types/src/error.rs:83-92`), so a direct registry call
+      // fills `errorCode` with a lowercase snake_case code from an entirely
+      // different vocabulary. Anything keyed by this value has to know that —
+      // which is why `lib/utils/api-error-messages.ts` looks the code up
+      // exactly, without case-folding, and why the field's own docblock says so.
+      const body = JSON.stringify({ error: { code: 'schema_violation', message: 'body failed schema validation' } });
+      expect(new ApiError(400, body, 'registry-a', '/contexts').errorCode).toBe('schema_violation');
+      const limited = JSON.stringify({ error: { code: 'rate_limited', message: 'rate limited; retry after 30s' } });
+      expect(new ApiError(429, limited, 'registry-b', '/contexts/search').errorCode).toBe('rate_limited');
+    });
   });
 });
 

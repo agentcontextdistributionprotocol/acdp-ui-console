@@ -24,6 +24,17 @@ vi.mock('@/lib/api/client', async (orig) => ({
   getContext: (...a: unknown[]) => getContext(...a),
 }));
 
+// Every modal this file opens is an error branch, so `ContextDetail` never
+// mounts today — but the moment a case here resolves `getContext`, it would,
+// and its `useContextVerdicts` would try to initialise acdp-wasm under jsdom,
+// fail, and paint an error banner ASYNCHRONOUSLY into assertions already
+// running. That race cost a CI-reddening flake once already (see
+// `context-error-parity.test.tsx`); the mock is here so it cannot cost one
+// again the next time this file grows a success case.
+vi.mock('@/lib/verify/use-verdicts', () => ({
+  useContextVerdicts: () => ({ verdicts: {}, didDocs: {}, error: null, ready: true }),
+}));
+
 import ContextsPage from '@/app/contexts/page';
 
 function renderPage() {

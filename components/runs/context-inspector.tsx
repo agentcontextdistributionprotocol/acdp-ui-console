@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ContextDetail } from '@/components/contexts/context-detail';
 import { getContext } from '@/lib/api/client';
-import { ApiError } from '@/lib/api/fetcher';
+import { contextErrorMessage } from '@/lib/utils/api-error-messages';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { C } from '@/lib/colors';
 
@@ -15,13 +15,6 @@ export function ContextInspector({ ctxId }: { ctxId: string | null }) {
     enabled: !!ctxId,
   });
 
-  // See app/contexts/page.tsx's identical check: a fail-closed
-  // verifyCtxIdBinding rejection is a worse signal than a generic fetch
-  // failure and gets its own trust-hostile message.
-  const bindingMismatch =
-    error instanceof ApiError &&
-    (error.errorCode === 'CONTEXT_ID_MISMATCH' || error.errorCode === 'CONTEXT_BINDING_UNVERIFIABLE');
-
   return (
     <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border)' }}>
       <div style={{ fontSize: 11, color: C.muted, marginBottom: 8, fontWeight: 600, letterSpacing: '0.06em' }}>
@@ -29,12 +22,14 @@ export function ContextInspector({ ctxId }: { ctxId: string | null }) {
       </div>
       {!ctxId && <div style={{ fontSize: 11, color: C.faint }}>Click a node or event to inspect its context.</div>}
       {ctxId && isLoading && <div style={{ fontSize: 11, color: C.faint }}>Loading…</div>}
+      {/* The message comes from the shared map, which is also what
+          `app/contexts/page.tsx` renders — the two surfaces used to hold their
+          own copies of the same two string literals, so a change to one was a
+          silent divergence from the other. In particular this no longer tells
+          the operator a registry served a substituted context when the control
+          plane's own code says only that it could not check. */}
       {ctxId && error && (
-        <div style={{ fontSize: 11, color: C.danger }}>
-          {bindingMismatch
-            ? "Registry served a context that doesn't match its own claimed id — this response cannot be trusted."
-            : 'Could not load context.'}
-        </div>
+        <div style={{ fontSize: 11, color: C.danger }}>{contextErrorMessage(error)}</div>
       )}
       {ctxId && data && (
         <div style={{ maxHeight: 320, overflowY: 'auto' }}>
