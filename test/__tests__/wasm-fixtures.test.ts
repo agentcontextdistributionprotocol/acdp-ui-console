@@ -511,4 +511,31 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     // true of THAT EXACT BODY: it verifies cleanly under its own ctx_id.
     expect((await verifyCtxIdBinding(BASE, BASE.ctx_id)).status).toBe('verified');
   });
+
+  // Upstream parses the BODY before the ID, so when both inputs are bad the
+  // body arm wins. That ordering is what makes the id arm's sentence — "the
+  // served body was not the problem" — truthful instead of a false exoneration
+  // of a registry that served an unparseable body.
+  //
+  // Nothing else in this suite pins it: every other case has exactly one bad
+  // input. If upstream ever swaps those two lines (and "validate the caller's
+  // own input first" is a perfectly natural refactor), this console would start
+  // telling operators the body was fine when it was not — and every other
+  // assertion here would stay green. This is the test that reddens instead.
+  it('with BOTH inputs bad, the body arm wins — the id arm must never exonerate an unparseable body', async () => {
+    const verdict = await verifyCtxIdBinding(without(BASE, 'signature'), 'not-a-ctx-id');
+    expect(verdict.status).toBe('unavailable');
+    expect(verdict.unavailableLabel).toBe('body not parseable');
+    expect(verdict.detail).not.toContain('the served body was not the problem');
+  });
+
+  // A malformed ctx_id in the SERVED BODY is a different thing from a malformed
+  // requested id, and it must stay RED: that is the registry's own data being
+  // wrong, not a check that could not run. Asserted because the could-not-check
+  // mapping sits right next to it and a careless widening would swallow it.
+  it('a malformed ctx_id in the served body stays `failed`, not `unavailable`', async () => {
+    const verdict = await verifyCtxIdBinding({ ...BASE, ctx_id: 'not-an-acdp-id' }, BASE.ctx_id);
+    expect(verdict.status).toBe('failed');
+    expect(verdict.unavailableLabel).toBeUndefined();
+  });
 });

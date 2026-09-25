@@ -124,6 +124,30 @@ export async function verifyProducerSignature(body: ContextBody, docs: DidDocMap
  * with no `code` and no own enumerable keys (confirmed against the installed
  * binary), so the message prefix is the only signal available.
  *
+ * WHY THIS COUPLING IS CHEAPER THAN IT LOOKS. Upstream
+ * (`acdp-rs/bindings/acdp-wasm/src/core.rs`, `verify_ctx_id_binding_json`) has
+ * exactly two `Err` arms, one per input parameter, each a fixed binding-layer
+ * wrapper — `map_err(|e| format!("invalid body JSON: {e}"))` around the whole
+ * `serde_json::from_str::<Body>` call, and the same shape for `CtxId::parse`.
+ * Two consequences matter here:
+ *   - This is not a free-form human sentence. It is a 1:1-with-parameters
+ *     wrapper, and the same convention is used across the wasm/node/py
+ *     bindings, so it is a house style rather than an incidental string.
+ *   - Because the wrapper is OUTSIDE the parse, a NEW schema gate added inside
+ *     `Body` inherits the same prefix automatically. Verified against 0.14.1:
+ *     unknown `type`, bad `visibility`, missing `signature`, missing
+ *     `data_refs` and outright non-JSON all produce `invalid body JSON:`. Since
+ *     one prior acdp-wasm bump added three new schema gates at once, that is
+ *     the property that actually keeps this table from needing maintenance.
+ *
+ * THE PARSE ORDER IS LOAD-BEARING. The body is parsed BEFORE the id, so when
+ * both inputs are bad the `invalid body JSON:` arm wins. That is what makes the
+ * id arm's "the served body was not the problem" truthful rather than a false
+ * exoneration of a registry that served an unparseable body. If upstream ever
+ * reorders those two lines ("validate host input first" is a natural refactor),
+ * that sentence becomes a lie while every other assertion here stays green —
+ * so `wasm-fixtures.test.ts` pins the ordering with a both-inputs-bad case.
+ *
  * The two prefixes implicate OPPOSITE parties and therefore must not share one
  * sentence. `invalid body JSON:` means the registry's body did not conform to
  * the acdp-rs `Body` schema. `invalid expected_ctx_id:` means the id THIS
