@@ -21,7 +21,12 @@ export default defineConfig({
         'lib/hooks/use-runs.ts',
         'lib/hooks/use-scenarios.ts',
         'lib/hooks/use-security.ts',
-        'lib/hooks/use-trust.ts',
+        // `use-trust.ts` is deliberately NOT excluded: the blanket rationale
+        // above ("React Query wrappers — covered by integration, not unit") is
+        // no longer true of it. It holds the totals reduce, the fail-closed
+        // revocation aggregation and the violation sort — real logic, unit
+        // tested, and exactly the code whose unmeasured state let a
+        // revoked-only run sort to the bottom of the trust page.
       ],
     },
   },

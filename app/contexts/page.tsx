@@ -14,6 +14,7 @@ import { ContextDetail } from '@/components/contexts/context-detail';
 import { searchContexts, getContext } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { KEY_REVOCATION_TYPE } from '@/lib/utils/revocation';
 import { C } from '@/lib/colors';
 import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
 
@@ -23,7 +24,10 @@ const REGISTRIES: { id: RegistryAuthority | 'all'; label: string }[] = [
   { id: 'all', label: 'Both' },
 ];
 
-const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert', 'key-revocation'];
+// The interim spelling is deliberately NOT a separate option: `searchContexts`
+// queries both for this one value, so offering two entries would present a
+// storage detail as a choice and let an operator pick the narrower half.
+const TYPES = ['data_snapshot', 'analysis', 'prediction', 'alert', KEY_REVOCATION_TYPE];
 
 // Registry-derived status facet (RFC-ACDP-0004 §4 + RFC-ACDP-0013 'retracted').
 const STATUSES: { value: string; label: string }[] = [
@@ -71,9 +75,21 @@ export default function ContextsPage() {
     detail.error instanceof ApiError &&
     (detail.error.errorCode === 'CONTEXT_ID_MISMATCH' || detail.error.errorCode === 'CONTEXT_BINDING_UNVERIFIABLE');
 
+  // A hit the search index knows about but for which no body can be fetched.
+  // Distinct from the generic failure because it is not a failure: the index
+  // and the store legitimately disagree (a retracted-then-purged body, or — in
+  // demo mode — the synthetic interim-form revocation hit, which has no signed
+  // body by design). Saying "could not load" invites a retry that cannot help.
+  const bodyUnavailable = detail.error instanceof ApiError && detail.error.isNotFound;
+
   const matches = search.data?.pages.flatMap((p) => p.matches) ?? [];
   const partial = search.data?.pages.some((p) => p.partial) ?? false;
   const total = search.data?.pages[0]?.total_estimate;
+  // Whether the response was a client-side merge of several upstream queries —
+  // read off the response rather than re-derived from the form, so the page and
+  // `searchContexts` cannot disagree about which queries fan out. It covers BOTH
+  // merges: the two revocation type spellings, and `authority === 'all'`.
+  const merged = search.data?.pages[0]?.merged ?? false;
 
   const runSearch = () => setApplied(form);
 
@@ -85,6 +101,7 @@ export default function ContextsPage() {
         <input
           className="form-input"
           placeholder="Search contexts…"
+          aria-label="Search contexts"
           style={{ flex: 1 }}
           value={form.q}
           onChange={(e) => set('q', e.target.value)}
@@ -93,6 +110,7 @@ export default function ContextsPage() {
         <select
           className="form-input"
           style={{ width: 130 }}
+          aria-label="Search registry"
           value={form.authority}
           onChange={(e) => set('authority', e.target.value as RegistryAuthority | 'all')}
         >
@@ -109,7 +127,13 @@ export default function ContextsPage() {
 
       {/* Facets */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-        <select className="form-input" style={{ width: 150 }} value={form.type} onChange={(e) => set('type', e.target.value)}>
+        <select
+          className="form-input"
+          style={{ width: 150 }}
+          value={form.type}
+          aria-label="Filter by type"
+          onChange={(e) => set('type', e.target.value)}
+        >
           <option value="">Any type</option>
           {TYPES.map((t) => (
             <option key={t} value={t}>
@@ -134,6 +158,7 @@ export default function ContextsPage() {
           className="form-input"
           style={{ width: 140 }}
           value={form.visibility}
+          aria-label="Filter by visibility"
           onChange={(e) => set('visibility', e.target.value)}
         >
           <option value="all">All visibility</option>
@@ -145,6 +170,7 @@ export default function ContextsPage() {
           className="form-input"
           style={{ width: 150 }}
           placeholder="domain"
+          aria-label="Filter by domain"
           value={form.domain}
           onChange={(e) => set('domain', e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && runSearch()}
@@ -153,6 +179,7 @@ export default function ContextsPage() {
           className="form-input"
           style={{ flex: 1, minWidth: 180 }}
           placeholder="tags (comma-separated)"
+          aria-label="Filter by tags"
           value={form.tags}
           onChange={(e) => set('tags', e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && runSearch()}
@@ -161,37 +188,81 @@ export default function ContextsPage() {
 
       {partial && (
         <div style={{ fontSize: 11, color: C.warning, marginBottom: 10 }}>
-          ⚠ One registry did not respond — results may be incomplete.
+          {/* Not "one registry did not respond" any more: `partial` is now set
+              by a failure on EITHER fan-out axis, and the type-spelling axis
+              queries the same registry twice. Blaming a registry that is up
+              would be this phase's own defect class in a warning banner. */}
+          ⚠ One of the upstream queries did not respond — results may be incomplete.
         </div>
       )}
 
       {search.isLoading && <LoadingSkeleton rows={4} height={84} />}
       {search.error && <ErrorPanel message={String(search.error)} />}
-      {search.data && matches.length === 0 && <EmptyState title="No contexts found" />}
+      {/* Three distinct zero-match states, because they mean three different
+          things and only one of them is "there are none".
+
+          1. A live cursor. acdp-registry-core documents the short-page contract
+             verbatim: a page consumed by the handler's visibility/tenant
+             post-filters "can return FEWER than the requested `limit` rows
+             while still emitting a non-`None` `next_cursor`. A short page is
+             therefore NOT an end-of-results signal — clients MUST keep paging
+             until `next_cursor` is `None`." This page used to answer that with
+             "No contexts found" and no way forward.
+          2. A MERGED response — the two revocation type spellings, or both
+             registries, or both. A merge carries no cursor (see
+             `searchContexts`), so `hasNextPage` is always false and case 1 can
+             never catch it; falling through to the flat empty state would
+             reinstate the very MUST violation above on exactly the queries
+             where several upstream result sets were each truncated.
+          3. Genuinely nothing, with the result set exhausted. Only here may the
+             page say so. */}
+      {search.data &&
+        matches.length === 0 &&
+        (search.hasNextPage ? (
+          <EmptyState
+            title="No matches on this page"
+            description="The registry returned a short page — filtered rows still count against the page size — and more pages remain. Keep loading before concluding there are none."
+          />
+        ) : merged ? (
+          <EmptyState
+            title="No matches in this view"
+            description="This is a merged view — several queries, each showing only its first page, with no way to page a merged result set coherently. It is not a statement that no such contexts exist."
+          />
+        ) : (
+          <EmptyState title="No contexts found" />
+        ))}
       {matches.length > 0 && (
         <>
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
             {matches.length}
             {typeof total === 'number' && total > matches.length ? ` of ~${total}` : ''} context
             {matches.length === 1 ? '' : 's'}
+            {/* A merged response has no cursor, so a full page here is a CAP,
+                not a total. Without this the count read "20 contexts" for a
+                query that only ever saw the first page of each of its parts —
+                the same claim-without-looking the empty states above avoid,
+                surviving in the one case where results were actually found. */}
+            {merged && ' · merged view: first page of each query, not the whole result set'}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {matches.map((hit) => (
               <ContextCard key={hit.ctx_id} hit={hit} onOpen={setOpenCtx} />
             ))}
           </div>
-          {search.hasNextPage && (
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
-              <Button
-                variant="secondary"
-                onClick={() => search.fetchNextPage()}
-                disabled={search.isFetchingNextPage}
-              >
-                {search.isFetchingNextPage ? 'Loading…' : 'Load more'}
-              </Button>
-            </div>
-          )}
         </>
+      )}
+      {/* Outside the `matches.length > 0` block on purpose — that gate is what
+          made a fully-filtered short page a dead end. */}
+      {search.hasNextPage && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+          <Button
+            variant="secondary"
+            onClick={() => search.fetchNextPage()}
+            disabled={search.isFetchingNextPage}
+          >
+            {search.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
       )}
 
       <Modal open={!!openCtx} onClose={() => setOpenCtx(null)} title={detail.data?.body.title ?? 'Context'}>
@@ -199,7 +270,13 @@ export default function ContextsPage() {
         {detail.error && bindingMismatch && (
           <ErrorPanel message="Registry served a context that doesn't match its own claimed id — this response cannot be trusted." />
         )}
-        {detail.error && !bindingMismatch && <ErrorPanel message="Could not load context." />}
+        {detail.error && !bindingMismatch && bodyUnavailable && (
+          <EmptyState
+            title="No context body available"
+            description="The registry index lists this context, but no body was returned for its id. Nothing here has failed verification — there is simply nothing to verify."
+          />
+        )}
+        {detail.error && !bindingMismatch && !bodyUnavailable && <ErrorPanel message="Could not load context." />}
         {/* requestedCtxId is `openCtx` (the search hit the operator clicked), never
             `detail.data.body.ctx_id` — a genuine independent request/response pair,
             so the ctxIdBinding chip actually catches a registry serving the wrong

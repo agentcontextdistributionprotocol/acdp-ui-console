@@ -3,6 +3,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { getCpDashboard, getCpRun, listCpRuns } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import {
+  failClosedCount,
+  preCompromiseEntries,
+  runRevocationReported,
+  violationCount,
+} from '@/lib/utils/revocation';
 import type { CpDashboardOverview, CpRun, RunTrustSummary } from '@/lib/types';
 
 const MAX_RUNS = 25;
@@ -21,8 +27,31 @@ export interface TrustTotals {
   errors: number;
   flaggedRuns: number;
   flaggedEvents: number;
+  /**
+   * Runs / events carrying a FAIL-CLOSED revocation verdict
+   * (`revoked_at_or_after`, `revoked_time_unverifiable`, or an unrecognised
+   * status). These deliberately EXCLUDE `pre_compromise`, which the control
+   * plane defines as historically authorized — see `lib/utils/revocation.ts`.
+   * They previously counted every `revoked[]` row, so an authorized event was
+   * summed into a KPI labelled "signed at/after a compromise boundary".
+   */
   revokedRuns: number;
   revokedEvents: number;
+  /** Historically-authorized events, surfaced separately — never a violation. */
+  preCompromiseEvents: number;
+  /**
+   * How many of the aggregated runs actually REPORTED a revocation
+   * classification. Zero means every run in this view is ambiguous (or
+   * definitively unchecked), so the revocation KPI must not render a number —
+   * a "0" there would claim a clean estate nobody established. See
+   * `runRevocationReported`.
+   *
+   * "In this view", not "in the window": `window` below is passed ONLY to
+   * `getCpDashboard`, for receipt coverage and DID methods. The runs behind
+   * every figure on `/trust` come from `listCpRuns({ limit })`, which takes no
+   * window at all. `app/trust/page.tsx` words its copy accordingly.
+   */
+  revocationReportedRuns: number;
 }
 
 export interface TrustOverview {
@@ -53,8 +82,11 @@ export function useTrust(window = '24h') {
       const runs: RunTrust[] = detailed
         .filter((r): r is CpRun & { trust: RunTrustSummary } => !!r && !!r.trust)
         .map((r) => ({ run: r, trust: r.trust }))
-        // Surface runs with flagged discrepancies first.
-        .sort((a, b) => b.trust.flagged.length - a.trust.flagged.length);
+        // Surface runs with VIOLATIONS first — a flagged discrepancy and a
+        // fail-closed revocation verdict are both violations, via different
+        // mechanisms. Sorting on `flagged.length` alone sank a revoked-only
+        // run to the bottom of the page whose whole job is surfacing it.
+        .sort((a, b) => violationCount(b.trust) - violationCount(a.trust));
 
       const totals = runs.reduce<TrustTotals>(
         (acc, { trust }) => ({
@@ -66,8 +98,10 @@ export function useTrust(window = '24h') {
           errors: acc.errors + trust.errors,
           flaggedRuns: acc.flaggedRuns + (trust.flagged.length > 0 ? 1 : 0),
           flaggedEvents: acc.flaggedEvents + trust.flagged.length,
-          revokedRuns: acc.revokedRuns + ((trust.revoked?.length ?? 0) > 0 ? 1 : 0),
-          revokedEvents: acc.revokedEvents + (trust.revoked?.length ?? 0),
+          revokedRuns: acc.revokedRuns + (failClosedCount(trust) > 0 ? 1 : 0),
+          revokedEvents: acc.revokedEvents + failClosedCount(trust),
+          preCompromiseEvents: acc.preCompromiseEvents + preCompromiseEntries(trust.revoked).length,
+          revocationReportedRuns: acc.revocationReportedRuns + (runRevocationReported(trust) ? 1 : 0),
         }),
         {
           audited: 0,
@@ -80,6 +114,8 @@ export function useTrust(window = '24h') {
           flaggedEvents: 0,
           revokedRuns: 0,
           revokedEvents: 0,
+          preCompromiseEvents: 0,
+          revocationReportedRuns: 0,
         },
       );
 

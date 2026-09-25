@@ -9,6 +9,7 @@ import {
   getCpMetrics,
   getPlaygroundRun,
   getContext,
+  getCpDashboard,
   getCpRun,
   getLineage,
   getLineageCurrent,
@@ -23,8 +24,10 @@ import {
   COMPLETED_RUN_ID,
   FAILED_RUN_ID,
 } from '@/lib/api/client';
+import { ApiError } from '@/lib/api/fetcher';
 import {
   MOCK_CONTEXTS,
+  MOCK_DASHBOARD,
   MOCK_REVOCATIONS,
   MOCK_CONTEXT_EVENTS,
   MOCK_LINEAGE,
@@ -106,6 +109,85 @@ describe('searchContexts (demo)', () => {
       cursor = last.next_cursor;
     } while (cursor && guard++ < 50);
     expect(last.next_cursor).toBeUndefined();
+  });
+
+  // ── the revocation facet union, in demo ──────────────────────────────
+  //
+  // Demo has to agree with real mode here or the fold-in ships verifiable only
+  // by a test: the one revocation hit derived from MOCK_CONTEXTS carries the
+  // canonical spelling, so without a fixture the union path is unreachable by a
+  // human in the default mode.
+  it('the key-revocation facet returns BOTH spellings', async () => {
+    const res = await searchContexts('a', { type: 'key-revocation', limit: 50 }, DEMO);
+    const types = res.matches.map((m) => m.type);
+    expect(types).toContain('key-revocation');
+    expect(types).toContain('acdp:key-revocation');
+  });
+
+  it('DISCRIMINATES: a normal facet still matches its own type exactly', async () => {
+    const res = await searchContexts('a', { type: 'analysis', limit: 50 }, DEMO);
+    expect(res.matches.every((m) => m.type === 'analysis')).toBe(true);
+  });
+
+  it('suppresses the cursor on the union facet, matching real mode', async () => {
+    // `limit: 1` would otherwise hand back an offset cursor, which is exactly
+    // the "Load more" this facet must not offer.
+    const res = await searchContexts('a', { type: 'key-revocation', limit: 1 }, DEMO);
+    expect(res.next_cursor).toBeUndefined();
+    expect(res.merged).toBe(true);
+    const normal = await searchContexts('a', { limit: 1 }, DEMO);
+    expect(normal.next_cursor).toBe('1');
+    expect(normal.merged).toBeUndefined();
+  });
+
+  it('marks a FEDERATED demo search merged too — both axes, as real mode does', async () => {
+    // Demo checked only the type axis at first, so "Both" offered a "Load
+    // more" production never offers and answered a zero-match federated search
+    // with the flat "No contexts found" this phase exists to remove. A demo
+    // that teaches the opposite of the shipped behavior is worse than no demo.
+    const res = await searchContexts('all', { limit: 1 }, DEMO);
+    expect(res.merged).toBe(true);
+    expect(res.next_cursor).toBeUndefined();
+  });
+
+  it('the interim-form hit has no body, and asking for it is a defined 404', async () => {
+    // Route B's cost, handled rather than discovered. It must NOT be answered
+    // with a fabricated body: the detail pane runs real signature and
+    // content-hash verification, so an invented body would render failed trust
+    // chips for a fixture.
+    const res = await searchContexts('a', { type: 'key-revocation', limit: 50 }, DEMO);
+    const interim = res.matches.find((m) => m.type === 'acdp:key-revocation')!;
+    expect(interim).toBeTruthy();
+    expect(MOCK_CONTEXTS.some((c) => c.body.ctx_id === interim.ctx_id)).toBe(false);
+    await expect(getContext(interim.ctx_id, DEMO)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+// ── getCpDashboard: the demo window actually varies ────────────────────
+describe('getCpDashboard (demo)', () => {
+  it('reaches the all-zero revocation payload on a selectable window', async () => {
+    // Without this the dashboard's "revocation not reported" degrade path is
+    // unreachable by a human in the default mode — correct only in tests.
+    const d = await getCpDashboard('1h', DEMO);
+    expect(d.window).toBe('1h');
+    expect(d.keyRevocation).toEqual({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 });
+  });
+
+  it('reaches the other arm too: one non-zero count beside two genuine zeros', async () => {
+    const d = await getCpDashboard('6h', DEMO);
+    expect(d.keyRevocation!.preCompromise).toBeGreaterThan(0);
+    expect(d.keyRevocation!.revokedAtOrAfter).toBe(0);
+  });
+
+  it('24h is byte-identical to the fixture, so nothing that read it has moved', async () => {
+    const d = await getCpDashboard('24h', DEMO);
+    expect(d).toEqual({ ...MOCK_DASHBOARD, window: '24h' });
+  });
+
+  it('scales the window-scoped aggregates instead of repeating one figure', async () => {
+    const [h1, d30] = await Promise.all([getCpDashboard('1h', DEMO), getCpDashboard('30d', DEMO)]);
+    expect(h1.totalRuns).toBeLessThan(d30.totalRuns);
+    expect(h1.recentRuns.length).toBeLessThanOrEqual(h1.totalRuns);
   });
 });
 
@@ -240,8 +322,17 @@ describe('getPlaygroundRun (demo)', () => {
 
 // ── getContext / getCpRun throw on unknown ids ─────────────────────────
 describe('demo lookups that should throw on miss', () => {
-  it('getContext throws for an unknown ctx_id', async () => {
-    await expect(getContext('acdp://nope/000', DEMO)).rejects.toThrow(/Unknown context/);
+  it('getContext raises a structured 404 — not a bare Error — for an unknown ctx_id', async () => {
+    // A search hit with no backing body is now a reachable demo state (the
+    // synthetic interim-form revocation hit), so the miss has to be something
+    // the UI can branch on. `ApiError(404)` is what a registry would return for
+    // the same id, which keeps the demo and real paths on one code path instead
+    // of forcing the detail pane to string-match an error message.
+    await expect(getContext('acdp://nope/000', DEMO)).rejects.toThrow(ApiError);
+    await expect(getContext('acdp://nope/000', DEMO)).rejects.toMatchObject({
+      status: 404,
+      errorCode: 'CONTEXT_NOT_FOUND',
+    });
   });
 
   it('getCpRun throws for an unknown run', async () => {
@@ -258,13 +349,19 @@ describe('demo lookups that should throw on miss', () => {
 describe('run trust: revoked-key events (demo pass-through)', () => {
   it('getCpRun surfaces trust.revoked with the RFC-ACDP-0014 counters, not silently dropped', async () => {
     const run = await getCpRun('run-revoked-1', DEMO);
-    expect(run.trust?.revoked?.length).toBe(2);
+    expect(run.trust?.revoked?.length).toBe(3);
     expect(run.trust?.keyRevocationPreCompromise).toBe(1);
     expect(run.trust?.keyRevocationRevokedAtOrAfter).toBe(1);
-    expect(run.trust?.keyRevocationRevokedTimeUnverifiable).toBe(0);
+    expect(run.trust?.keyRevocationRevokedTimeUnverifiable).toBe(1);
+    // All three verdict classes must be present in the demo dataset. Without
+    // the third, the amber chip branch and the fail-closed-but-not-at-or-after
+    // path are unreachable without a backend — and MOCK_DASHBOARD's own
+    // revocation tile advertises a `revokedTimeUnverifiable` that no run
+    // fixture produced, so clicking through from that KPI found nothing.
     const statuses = new Set(run.trust?.revoked?.map((r) => r.status));
     expect(statuses.has('pre_compromise')).toBe(true);
     expect(statuses.has('revoked_at_or_after')).toBe(true);
+    expect(statuses.has('revoked_time_unverifiable')).toBe(true);
   });
 
   it('a run with no revoked events has an empty/absent array, not a crash', async () => {

@@ -2,6 +2,14 @@
 
 import { BadgeCheck, ShieldAlert } from 'lucide-react';
 import { formatCtxId } from '@/lib/utils/acdp';
+import {
+  failClosedCount,
+  hasTrustViolation,
+  preCompromiseEntries,
+  revocationChipClass,
+  runRevocationReported,
+  undetailedFailClosedCount,
+} from '@/lib/utils/revocation';
 import { C } from '@/lib/colors';
 import type { RunTrustSummary } from '@/lib/types';
 
@@ -15,26 +23,40 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
 }
 
 /**
- * Receipt-audit verdict summary for a run (RFC-ACDP-0010). Renders only when the
- * control plane has produced a verdict (`run.trust` non-null). `error` counts are
- * environmental (unreachable/timeout) and shown muted, not as trust violations —
- * only `flagged` discrepancies are real violations.
+ * Receipt-audit verdict summary for a run (RFC-ACDP-0010 + RFC-ACDP-0014).
+ * Renders only when the control plane has produced a verdict (`run.trust`
+ * non-null). `error` counts are environmental (unreachable/timeout) and shown
+ * muted, not as trust violations.
+ *
+ * **A violation is a `flagged` discrepancy OR a fail-closed revocation
+ * verdict.** The earlier version of this comment said only `flagged`
+ * discrepancies were real violations, and the code matched it — which is why a
+ * run carrying a live `revoked_at_or_after` verdict rendered a green
+ * check-mark. `flagged` is a content/signature discrepancy; a fail-closed
+ * revocation is a signing key whose authority was revoked (RFC-ACDP-0014 §7).
+ * Different mechanisms, equally disqualifying. See `lib/utils/revocation.ts`
+ * for why `pre_compromise` is deliberately NOT one of them.
  */
-const REVOKED_STATUS_CHIP: Record<NonNullable<RunTrustSummary['revoked']>[number]['status'], string> = {
-  pre_compromise: 'chip ok',
-  revoked_at_or_after: 'chip bad',
-  revoked_time_unverifiable: 'chip warn',
-};
-
 export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
   const hasFlags = trust.flagged.length > 0;
   const revoked = trust.revoked ?? [];
   const hasRevoked = revoked.length > 0;
+  const preCompromise = preCompromiseEntries(revoked);
+  // The header verdict must reflect BOTH violation mechanisms — via the one
+  // shared predicate, so this panel, `/trust`'s filter and `useTrust`'s sort
+  // cannot drift apart again.
+  const hasViolation = hasTrustViolation(trust);
+  const revocationReported = runRevocationReported(trust);
+  // Counted across BOTH the per-event array and the aggregate counters, so a
+  // payload reporting fail-closed verdicts without per-event detail still
+  // reddens this panel rather than rendering a reassuring zero.
+  const failedClosedTotal = failClosedCount(trust);
+  const undetailed = undetailedFailClosedCount(trust);
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       <div className="feed-header">
         <h2>
-          {hasFlags ? (
+          {hasViolation ? (
             <ShieldAlert size={14} style={{ verticalAlign: -2, marginRight: 6, color: C.danger }} />
           ) : (
             <BadgeCheck size={14} style={{ verticalAlign: -2, marginRight: 6, color: C.success }} />
@@ -47,12 +69,49 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: hasFlags || hasRevoked ? 14 : 0 }}>
           <Stat label="Verified" value={trust.verified} tone={C.success} />
           <Stat label="Historical" value={trust.verifiedHistorical} tone={C.warning} />
+          {/* The two revocation stats render ONLY when this run's payload
+              actually carried a revocation classification. A "Revoked 0" from a
+              deployment whose revocation check never ran is a confident
+              "nothing is revoked" that nobody established — see
+              `runRevocationReported`. Pre-compromise sits beside "Historical"
+              because it is conceptually the same thing: valid, but signed under
+              a key that is no longer current. */}
+          {revocationReported && (
+            <Stat label="Pre-compromise" value={preCompromise.length} tone={C.muted} />
+          )}
           <Stat label="Structural" value={trust.structural} tone={C.info} />
           <Stat label="No receipt" value={trust.noReceipt} tone={C.muted} />
           <Stat label="Flagged" value={trust.flagged.length} tone={hasFlags ? C.danger : C.muted} />
-          <Stat label="Revoked" value={revoked.length} tone={hasRevoked ? C.danger : C.muted} />
+          {revocationReported && (
+            <Stat label="Revoked" value={failedClosedTotal} tone={failedClosedTotal > 0 ? C.danger : C.muted} />
+          )}
           <Stat label="Errors" value={trust.errors} tone={C.muted} />
         </div>
+
+        {/* The `audited === 0` variant is a DEFENSIVE branch, not a second
+            live path: `summarizeByRun` returns null rather than a zero-audit
+            summary, and `run-workbench.tsx` renders this panel only when
+            `run.trust` exists — so "receipt audit is off" reaches an operator
+            as no panel at all. See `runRevocationReported`'s docblock. */}
+        {!revocationReported && (
+          <div style={{ fontSize: 10.5, color: C.muted, marginBottom: hasFlags || hasRevoked ? 10 : 0 }}>
+            Key revocation not reported for this run
+            {trust.audited === 0
+              ? ' — no receipt-audit events, so no revocation classification could have run.'
+              : ' — no revocation verdicts were classified, and the control plane emits these counters whether or not the check ran.'}
+          </div>
+        )}
+
+        {/* A reddened panel must never render an empty findings table — that
+            was the Phase 2 defect, and counting the aggregate counters would
+            reintroduce it for the one payload where they outrun the array.
+            Say what is known instead of showing nothing. */}
+        {undetailed > 0 && (
+          <div style={{ fontSize: 10.5, color: C.danger, marginBottom: 10 }}>
+            {undetailed} fail-closed revocation verdict{undetailed === 1 ? '' : 's'} counted for this run
+            with no per-event detail in the payload — the count is reported, the events are not listed below.
+          </div>
+        )}
 
         {hasFlags && (
           <table className="data-table" style={{ marginBottom: hasRevoked ? 14 : 0 }}>
@@ -101,7 +160,7 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
                 <tr key={r.eventId}>
                   <td className="did">{r.ctxId ? formatCtxId(r.ctxId) : '—'}</td>
                   <td>
-                    <span className={REVOKED_STATUS_CHIP[r.status]}>{r.status}</span>
+                    <span className={revocationChipClass(r.status)}>{r.status}</span>
                   </td>
                   <td className="did" style={{ fontSize: 10.5 }}>
                     {/* control-plane's `boundary` is a Postgres textual timestamp
