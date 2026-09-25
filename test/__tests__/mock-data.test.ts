@@ -62,17 +62,32 @@ describe('SDK matrix', () => {
 });
 
 describe('mock scenarios > catalog parity', () => {
-  it('the catalog has 33 scenarios matching the playground catalog', () => {
-    expect(SCENARIO_COUNT).toBe(33);
+  it('the catalog has 34 scenarios matching the playground catalog', () => {
+    expect(SCENARIO_COUNT).toBe(34);
   });
 
-  it('includes s21_capabilities_p256 and s33_anchors', () => {
+  it('includes s21_capabilities_p256, s33_anchors, and s34_embedded_content', () => {
     const ids = new Set(MOCK_SCENARIOS.map((s) => s.id));
     expect(ids.has('s21_capabilities_p256')).toBe(true);
     expect(ids.has('s33_anchors')).toBe(true);
+    expect(ids.has('s34_embedded_content')).toBe(true);
   });
 
-  it('scenario ids are unique and contiguous s1..s33', () => {
+  it('s33_anchors matches playground catalog metadata (default_inputs, not a paraphrase)', () => {
+    const s33 = MOCK_SCENARIOS.find((s) => s.id === 's33_anchors');
+    expect(s33?.default_inputs).toEqual({ topic: 'anchored settlement snapshot' });
+  });
+
+  it('s34_embedded_content matches playground catalog metadata', () => {
+    const s34 = MOCK_SCENARIOS.find((s) => s.id === 's34_embedded_content');
+    expect(s34?.name).toBe('Embedded Content Integrity');
+    expect(s34?.registry_mode).toBe('single');
+    expect(s34?.agent_count).toBe(1);
+    expect(s34?.framework).toBe('langchain');
+    expect(s34?.default_inputs).toEqual({ topic: 'inline sensor snapshot' });
+  });
+
+  it('scenario ids are unique and contiguous s1..s34', () => {
     const ids = MOCK_SCENARIOS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
     const numbers = ids
@@ -81,7 +96,7 @@ describe('mock scenarios > catalog parity', () => {
         return m ? Number(m[1]) : NaN;
       })
       .sort((a, b) => a - b);
-    expect(numbers).toEqual(Array.from({ length: 33 }, (_, i) => i + 1));
+    expect(numbers).toEqual(Array.from({ length: 34 }, (_, i) => i + 1));
   });
 });
 
@@ -141,6 +156,29 @@ describe('rich context bodies', () => {
     // actually carries 'key-revocation' through, not just the full body.
     const hit = MockData.MOCK_SEARCH_HITS.find((h) => h.ctx_id === revocation!.body.ctx_id);
     expect(hit?.type).toBe('key-revocation');
+  });
+
+  // Cross-phase coherence (UI-2 Phases 4 + 5): every mock run's revoked-key
+  // events reference sources[].ctxId as a narrative link to the context that
+  // declared the revocation. Each phase's own tests were green in isolation,
+  // but nothing checked that the referenced id isn't a dangling one, or that
+  // the two independently-authored timestamps (a run's Postgres-style
+  // `boundary` vs. the context's ISO `metadata.compromised_since`) actually
+  // agree on the same instant.
+  it('run-revoked-1\'s revoked-event sources resolve to a real context, boundary matching its compromised_since', () => {
+    const ctxIds = new Set(MOCK_CONTEXTS.map((c) => c.body.ctx_id));
+    const run = MOCK_RUNS.find((r) => r.runId === 'run-revoked-1');
+    expect(run?.trust?.revoked?.length).toBeGreaterThan(0);
+    for (const event of run!.trust!.revoked!) {
+      for (const source of event.sources) {
+        expect(ctxIds.has(source.ctxId)).toBe(true);
+      }
+    }
+    const revocationCtx = MOCK_CONTEXTS.find((c) => c.body.type === 'key-revocation')!;
+    const compromisedSince = revocationCtx.body.metadata?.compromised_since as string;
+    for (const event of run!.trust!.revoked!) {
+      expect(new Date(event.boundary).getTime()).toBe(new Date(compromisedSince).getTime());
+    }
   });
 });
 

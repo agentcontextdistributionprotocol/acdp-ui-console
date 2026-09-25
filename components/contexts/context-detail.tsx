@@ -313,6 +313,17 @@ export function ContextDetail({
           )}
           {b.acdp_version && <span className="chip">acdp v{b.acdp_version}</span>}
         </div>
+        {/* ctx_id binding can fail for two different reasons that render an
+            identical chip label (see verify.ts's verifyCtxIdBinding comment /
+            ASSUMPTIONS.md "UI-2 Phase 2: ctxIdBinding's two strict-parse
+            failure surfaces") — a genuine content-substitution finding vs. a
+            malformed-input throw. Surface the distinguishing detail text
+            inline (not just on hover) only when there's something to
+            disambiguate, rather than adding a caption under every Integrity
+            chip regardless of status. */}
+        {verdicts.ready && verdicts.ctxIdBinding?.status === 'failed' && (
+          <VerdictCaption verdict={verdicts.ctxIdBinding} ready={verdicts.ready} error={verdicts.error} />
+        )}
         <Field label="content hash">
           <span className="did" style={{ fontSize: 10.5 }}>
             {b.content_hash}
