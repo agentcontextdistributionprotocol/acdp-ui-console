@@ -825,6 +825,22 @@ export const MOCK_CONTEXTS: FullContext[] = [
     lineage_head_receipt: MOCK_CRYPTO.attested.lineage_head_receipt as LineageHeadReceipt,
     log_inclusion: MOCK_CRYPTO.attested.log_inclusion as unknown as LogInclusion,
   },
+  {
+    // RFC-ACDP-0014 `key-revocation`: producer-signed declaration that a prior
+    // signing key is compromised as of a stated boundary time. No registry
+    // receipt (mirrors arcticDeriv/cashV1/cashV2 above), so created_at is free
+    // to be a display-only recent timestamp rather than derived from a receipt.
+    body: {
+      ctx_id: `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`,
+      lineage_id: 'lin-key-revocation-001',
+      origin_registry: AUTH_A,
+      created_at: iso(1800),
+      ...MOCK_CRYPTO.keyRevocation.hashed,
+      content_hash: MOCK_CRYPTO.keyRevocation.content_hash,
+      signature: MOCK_CRYPTO.keyRevocation.signature,
+    },
+    registry_state: { status: 'active' },
+  },
 ];
 
 // ── Lineage chains (by lineage_id) ────────────────────────────────────

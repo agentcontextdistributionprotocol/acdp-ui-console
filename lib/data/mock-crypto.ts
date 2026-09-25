@@ -41,8 +41,8 @@ export const MOCK_DID_DOCS: Record<string, unknown> = {
         "publicKeyJwk": {
           "kty": "EC",
           "crv": "P-256",
-          "x": "GtnGuvmDDkITG-kcYOTh-7yowG-IBdxG2LisHYPnopc",
-          "y": "A3QK5g1wzDvZ0p0abBtwAYX4lHLte1VPcVyX38-NUxU"
+          "x": "R1PjkxFSuXhGTvTuwbwk2qUkB5s9LdEtA-bGW1QetgQ",
+          "y": "XqXdkB32MxleBKpGSfCchc6hrVuwAw3-PtVVZJZ2H9c"
         }
       }
     ],
@@ -190,7 +190,7 @@ export const MOCK_CRYPTO = {
     "signature": {
       "algorithm": "ecdsa-p256",
       "key_id": "did:web:registry-b.local:agents:cross-b#key-2",
-      "value": "8O3hLLqYWF3Zg7+fsoIhg4fU2+Yd6H06cq7QktbN3bz53bTkEfmUmLUZh9Zg2CLadXRg41iQWZPypIcCFzySSA=="
+      "value": "nIFKVM5bb3YLebuu0AovJom/RtQ3szO/gKhJr0O17+6EDkV5kABkE+9Ttd4U9L4a9LnYV8NBQtD0NFfo09jGgg=="
     }
   },
   "cashV1": {
@@ -267,6 +267,40 @@ export const MOCK_CRYPTO = {
       "algorithm": "ed25519",
       "key_id": "did:web:registry-a.local:agents:solo#key-1",
       "value": "vop4Y7Ch6x8jeEgoJ+56OX/un4APZo6l97IbUMrCzLRg89tZC81egMlMQKZYjQKHKP3vKMRdzAeID24aLGscCg=="
+    }
+  },
+  "keyRevocation": {
+    "hashed": {
+      "version": 1,
+      "agent_id": "did:web:registry-a.local:agents:cross-a",
+      "title": "Producer key revocation — rotated signing key",
+      "type": "key-revocation",
+      "visibility": "public",
+      "derived_from": [],
+      "summary": "Registry-a producer declares a prior signing key compromised as of a stated boundary time (RFC-ACDP-0014).",
+      "description": "Producer-signed revocation: signatures from the identified key are untrustworthy from the compromise boundary onward. Contexts signed strictly before the boundary remain historically authorized under a valid registry receipt (RFC-ACDP-0014 §7).",
+      "tags": [
+        "security",
+        "key-revocation"
+      ],
+      "domain": "security",
+      "acdp_version": "0.5.0",
+      "supersedes": null,
+      "contributors": [
+        "did:web:registry-a.local:agents:cross-a"
+      ],
+      "data_refs": [],
+      "metadata": {
+        "revoked_key_fingerprint": "sha256:1c19c6e1777aa20d9f4f1d74a7567497c781be8a7ae2dde4b9da8d7fec37ff84",
+        "compromised_since": "2026-08-01T00:00:00.000Z",
+        "revoked_key_id": "did:web:registry-a.local:agents:cross-a#key-legacy-1"
+      }
+    },
+    "content_hash": "sha256:b2db5674494b3d989a6935327d3b31a58e2640a58a8a1e736bebabd3645efe3b",
+    "signature": {
+      "algorithm": "ed25519",
+      "key_id": "did:web:registry-a.local:agents:cross-a#key-1",
+      "value": "vAHGnjQ36H+zGRLFNSK0CXr5D9vrKV3lUGgaMBLK0NdF46G6zshAD9Dpcs4Hsv8lZ8z4VhhvVkHNH+vKcFi6CA=="
     }
   },
   "attested": {
