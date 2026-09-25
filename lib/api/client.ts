@@ -68,13 +68,22 @@ const AUTHORITY_TO_SERVICE: Record<RegistryAuthority, ProxyService> = {
 const authToService = (a: RegistryAuthority): ProxyService => AUTHORITY_TO_SERVICE[a];
 
 // ── Health ────────────────────────────────────────────────────────────
+// Every service's /healthz body shapes its own envelope differently
+// (registry-rs: {status, storage, version}; control-plane/playground: {ok,
+// service, version}) but all three key the version string the same way, so
+// reading just that one field tolerates the rest of the shape varying.
+function extractHealthVersion(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const version = (body as { version?: unknown }).version;
+  return typeof version === 'string' ? version : undefined;
+}
+
 export async function pingHealth(service: ProxyService, demoMode: boolean): Promise<HealthResult> {
   if (demoMode) return delay({ ok: true, latencyMs: 4 + Math.floor(Math.random() * 12) }, 80);
-  const path = service === 'control-plane' ? '/healthz' : '/healthz';
   const start = performance.now();
   try {
-    await fetchJson<unknown>(service, path);
-    return { ok: true, latencyMs: Math.round(performance.now() - start) };
+    const body = await fetchJson<unknown>(service, '/healthz');
+    return { ok: true, latencyMs: Math.round(performance.now() - start), version: extractHealthVersion(body) };
   } catch {
     return { ok: false, latencyMs: Math.round(performance.now() - start) };
   }
