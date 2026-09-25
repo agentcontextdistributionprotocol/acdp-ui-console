@@ -21,6 +21,8 @@ export interface TrustTotals {
   errors: number;
   flaggedRuns: number;
   flaggedEvents: number;
+  revokedRuns: number;
+  revokedEvents: number;
 }
 
 export interface TrustOverview {
@@ -64,8 +66,21 @@ export function useTrust(window = '24h') {
           errors: acc.errors + trust.errors,
           flaggedRuns: acc.flaggedRuns + (trust.flagged.length > 0 ? 1 : 0),
           flaggedEvents: acc.flaggedEvents + trust.flagged.length,
+          revokedRuns: acc.revokedRuns + ((trust.revoked?.length ?? 0) > 0 ? 1 : 0),
+          revokedEvents: acc.revokedEvents + (trust.revoked?.length ?? 0),
         }),
-        { audited: 0, verified: 0, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0, flaggedRuns: 0, flaggedEvents: 0 },
+        {
+          audited: 0,
+          verified: 0,
+          verifiedHistorical: 0,
+          structural: 0,
+          noReceipt: 0,
+          errors: 0,
+          flaggedRuns: 0,
+          flaggedEvents: 0,
+          revokedRuns: 0,
+          revokedEvents: 0,
+        },
       );
 
       return {

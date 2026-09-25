@@ -20,8 +20,16 @@ function Stat({ label, value, tone }: { label: string; value: number; tone: stri
  * environmental (unreachable/timeout) and shown muted, not as trust violations —
  * only `flagged` discrepancies are real violations.
  */
+const REVOKED_STATUS_CHIP: Record<NonNullable<RunTrustSummary['revoked']>[number]['status'], string> = {
+  pre_compromise: 'chip ok',
+  revoked_at_or_after: 'chip bad',
+  revoked_time_unverifiable: 'chip warn',
+};
+
 export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
   const hasFlags = trust.flagged.length > 0;
+  const revoked = trust.revoked ?? [];
+  const hasRevoked = revoked.length > 0;
   return (
     <div className="card" style={{ marginBottom: 14 }}>
       <div className="feed-header">
@@ -36,17 +44,18 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
         <span className="card-sub">RFC-ACDP-0010 · {trust.audited} event{trust.audited === 1 ? '' : 's'} audited</span>
       </div>
       <div className="card-body">
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: hasFlags ? 14 : 0 }}>
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: hasFlags || hasRevoked ? 14 : 0 }}>
           <Stat label="Verified" value={trust.verified} tone={C.success} />
           <Stat label="Historical" value={trust.verifiedHistorical} tone={C.warning} />
           <Stat label="Structural" value={trust.structural} tone={C.info} />
           <Stat label="No receipt" value={trust.noReceipt} tone={C.muted} />
           <Stat label="Flagged" value={trust.flagged.length} tone={hasFlags ? C.danger : C.muted} />
+          <Stat label="Revoked" value={revoked.length} tone={hasRevoked ? C.danger : C.muted} />
           <Stat label="Errors" value={trust.errors} tone={C.muted} />
         </div>
 
         {hasFlags && (
-          <table className="data-table">
+          <table className="data-table" style={{ marginBottom: hasRevoked ? 14 : 0 }}>
             <thead>
               <tr>
                 <th>Ctx ID</th>
@@ -66,6 +75,50 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
                       {f.discrepancies.map((d, i) => (
                         <span key={i} className="did" style={{ fontSize: 10.5, color: C.danger }}>
                           {d}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {hasRevoked && (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Ctx ID</th>
+                <th>Status</th>
+                <th>Boundary</th>
+                <th>Trust class</th>
+                <th>Sources</th>
+              </tr>
+            </thead>
+            <tbody>
+              {revoked.map((r) => (
+                <tr key={r.eventId}>
+                  <td className="did">{r.ctxId ? formatCtxId(r.ctxId) : '—'}</td>
+                  <td>
+                    <span className={REVOKED_STATUS_CHIP[r.status]}>{r.status}</span>
+                  </td>
+                  <td className="did" style={{ fontSize: 10.5 }}>
+                    {/* control-plane's `boundary` is a Postgres textual timestamp
+                        ("2026-08-01 00:00:00+00" — space-separated, short "+00"
+                        offset, no ms). `new Date(...)` parses this directly; do
+                        NOT `.replace(' ', 'T')` first — the resulting ISO-8601-
+                        shaped string is stricter about the timezone offset and
+                        rejects the short "+00" form (Invalid Date), silently
+                        breaking this exact case. */}
+                    {new Date(r.boundary).toLocaleString()}
+                  </td>
+                  <td>{r.trustClass}</td>
+                  <td>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {r.sources.map((s, i) => (
+                        <span key={i} className="did" style={{ fontSize: 10.5, color: C.muted }}>
+                          {formatCtxId(s.ctxId)} · {s.publisher}
                         </span>
                       ))}
                     </div>
