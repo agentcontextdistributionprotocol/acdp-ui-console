@@ -41,8 +41,8 @@ export const MOCK_DID_DOCS: Record<string, unknown> = {
         "publicKeyJwk": {
           "kty": "EC",
           "crv": "P-256",
-          "x": "-81tj-vhoqushTyHFu_Ma9UaE4FIckvO79QHVG8wEg4",
-          "y": "RoOgpeJzkLi2Q5shH-ZxSK5JL9PX1boPOlbOeNwL99k"
+          "x": "GtnGuvmDDkITG-kcYOTh-7yowG-IBdxG2LisHYPnopc",
+          "y": "A3QK5g1wzDvZ0p0abBtwAYX4lHLte1VPcVyX38-NUxU"
         }
       }
     ],
@@ -118,7 +118,7 @@ export const MOCK_CRYPTO = {
       ],
       "data_refs": [
         {
-          "type": "data_snapshot",
+          "type": "primary_result",
           "location": "s3://acdp-demo/arctic/ais-2024.parquet",
           "encoding": "application/parquet"
         }
@@ -130,24 +130,24 @@ export const MOCK_CRYPTO = {
       "expires_at": "2026-08-01T00:00:00.000Z",
       "schema_uri": "https://schemas.acdp.dev/data_snapshot/v1.json"
     },
-    "content_hash": "sha256:6ba93efc90838d34baea133a7c6287dbb9870d48f64b9cac0d057f61739a274b",
+    "content_hash": "sha256:a8363bda3152efa5214d1ed9700789062a338664f566e369383deaaaa61c5d40",
     "signature": {
       "algorithm": "ed25519",
       "key_id": "did:web:registry-a.local:agents:cross-a#key-1",
-      "value": "JabEEyX1z4z8Ogbqi5qtYlvm0U5c5irr0e5Ev5a53xrHjElSrpGmgEbqlaH6FjBTlHBawCvQez9uvTtpfqzVDA=="
+      "value": "Ln65F8XoN5xkWBh5uZp9UMa22x0ThSXZot6M/rOR48oijKwOmyf7y8+8X3YvuQmCi/ul2NTy8O9JREbJzvSbDA=="
     },
     "registry_receipt": {
       "registry_did": "did:web:registry-a.playground.local",
-      "ctx_id": "acdp://registry-a.playground.local/f4a2c9e1-1d2b-4a3c-9e8f-001",
+      "ctx_id": "acdp://registry-a.playground.local/d1feb434-ef44-4166-b3ac-a157f795661d",
       "lineage_id": "lin-arctic-001",
       "origin_registry": "registry-a.playground.local",
-      "created_at": "2026-07-06T12:00:00.000Z",
-      "content_hash": "sha256:6ba93efc90838d34baea133a7c6287dbb9870d48f64b9cac0d057f61739a274b",
+      "created_at": "2026-07-06T11:59:00.000Z",
+      "content_hash": "sha256:a8363bda3152efa5214d1ed9700789062a338664f566e369383deaaaa61c5d40",
       "key_fingerprint": "sha256:1325b850c2871916eae203f0efc3c8987f64e5e3cdb27679e6d1fa97808357e6",
       "signature": {
         "algorithm": "ed25519",
         "key_id": "did:web:registry-a.playground.local#receipt-key-1",
-        "value": "YiZRKIwzg2jXeo1EMvU3EAvqnwn7tlxaR6mp900OUVk0JVNFHFIky63Srl/KyPLHczIFSYD+woV1lcIJsOHiDQ=="
+        "value": "JSwz1t6Vk5kqOEED58YmMJAqhgpgr2TNHrRlerNopn3T1eGekIIJXD9WYsV021EtShgArpVzPngmQh7Tj24FDg=="
       }
     }
   },
@@ -159,7 +159,7 @@ export const MOCK_CRYPTO = {
       "type": "analysis",
       "visibility": "public",
       "derived_from": [
-        "acdp://registry-a.playground.local/f4a2c9e1-1d2b-4a3c-9e8f-001"
+        "acdp://registry-a.playground.local/d1feb434-ef44-4166-b3ac-a157f795661d"
       ],
       "summary": "Investment implications derived from the Arctic shipping snapshot.",
       "description": "Risk-weighted investment thesis across shipping, insurance, and port-infrastructure equities.",
@@ -179,18 +179,18 @@ export const MOCK_CRYPTO = {
       ],
       "data_refs": [
         {
-          "type": "report",
+          "type": "primary_result",
           "location": "https://reports.acdp-demo/arctic-investment.pdf",
           "encoding": "application/pdf"
         }
       ],
       "schema_uri": "https://schemas.acdp.dev/analysis/v1.json"
     },
-    "content_hash": "sha256:39e26dcd3f1a43989c9b51d59bedd20acee77dcd68d7d57bcdc40928649b3df6",
+    "content_hash": "sha256:9b0dcb87802b8f753d24515f39e7a8f3e1376b6177db0034b1cc8712cf45177d",
     "signature": {
       "algorithm": "ecdsa-p256",
       "key_id": "did:web:registry-b.local:agents:cross-b#key-2",
-      "value": "B6l9gyMyKPwzlp0JN3ehyksuoNkBZJEzUreBSmKJbQPcyn2BwkXDyqg+hxwMQKHzHHvxuV/elvD/Mg1vw3jqDw=="
+      "value": "8O3hLLqYWF3Zg7+fsoIhg4fU2+Yd6H06cq7QktbN3bz53bTkEfmUmLUZh9Zg2CLadXRg41iQWZPypIcCFzySSA=="
     }
   },
   "cashV1": {
@@ -214,7 +214,7 @@ export const MOCK_CRYPTO = {
       ],
       "data_refs": [
         {
-          "type": "data_snapshot",
+          "type": "primary_result",
           "location": "s3://acdp-demo/finance/cashflow-q.json",
           "encoding": "application/json"
         }
@@ -224,11 +224,11 @@ export const MOCK_CRYPTO = {
         "end": "2026-07-01T00:00:00.000Z"
       }
     },
-    "content_hash": "sha256:7e3496e2bcecfc3958ebbde558cc853149b8e16481c815f61c642a72d73c0f60",
+    "content_hash": "sha256:3cd0e74a913011ae4056d41084292f66953de0a8bbeeb800ab6ec67028df3c3a",
     "signature": {
       "algorithm": "ed25519",
       "key_id": "did:web:registry-a.local:agents:solo#key-1",
-      "value": "1XIcEPJQHG7OLvnepEJpLV6YuKimEaNO6DxK3Xv1jk/wMy3QavnVnlKdiwETkpN41RVqNh79Pl4NVJufLLY3AA=="
+      "value": "G8y6jndztDiLFA2Xc4riUTD1jMR3gyptFLGE/kXD4aPn1K22YDmAU4y8PGY6XjIoZm73q0Xn0Xw/Ow/TokeYAA=="
     }
   },
   "cashV2": {
@@ -246,13 +246,13 @@ export const MOCK_CRYPTO = {
       ],
       "domain": "finance",
       "acdp_version": "0.1.0",
-      "supersedes": "acdp://registry-a.playground.local/2e78f01a-solo",
+      "supersedes": "acdp://registry-a.playground.local/94a58a84-b576-47d7-a73e-d04edf9c95de",
       "contributors": [
         "did:web:registry-a.local:agents:solo"
       ],
       "data_refs": [
         {
-          "type": "data_snapshot",
+          "type": "primary_result",
           "location": "s3://acdp-demo/finance/cashflow-q.json",
           "encoding": "application/json"
         }
@@ -262,11 +262,11 @@ export const MOCK_CRYPTO = {
         "end": "2026-07-01T00:00:00.000Z"
       }
     },
-    "content_hash": "sha256:82324661d6f313d37ff6c3b5d5e06f1300f3a0eea82f4eefba979a7dd8e08c22",
+    "content_hash": "sha256:95a01ae5de0f321b4428687ae305bee0fd4e655dab5c84407d1ab54ad806f455",
     "signature": {
       "algorithm": "ed25519",
       "key_id": "did:web:registry-a.local:agents:solo#key-1",
-      "value": "7C2l/Vu5Atk+hOVqB1I9rjmn4OaAJS2HU8uOEPK56xnwDIlM37qEVnvRUsTJJe2O9fH9jy2b+fDMJYJvFS76AQ=="
+      "value": "vop4Y7Ch6x8jeEgoJ+56OX/un4APZo6l97IbUMrCzLRg89tZC81egMlMQKZYjQKHKP3vKMRdzAeID24aLGscCg=="
     }
   },
   "attested": {
@@ -274,7 +274,7 @@ export const MOCK_CRYPTO = {
       "version": 1,
       "agent_id": "did:key:z6MktwtqAzuD5F77tAMBMwNs1KybZeff61EehV9xB1ZpXQG7",
       "title": "Attested disclosure — did:key ephemeral agent",
-      "type": "attestation",
+      "type": "demo:attestation",
       "visibility": "public",
       "derived_from": [],
       "summary": "Offline-verifiable disclosure published by an ephemeral did:key agent to the receipts registry.",
@@ -288,40 +288,41 @@ export const MOCK_CRYPTO = {
       "supersedes": null,
       "contributors": [
         "did:key:z6MktwtqAzuD5F77tAMBMwNs1KybZeff61EehV9xB1ZpXQG7"
-      ]
+      ],
+      "data_refs": []
     },
-    "content_hash": "sha256:e58ed2540ab5a4db348e3d9e97fc7b501c5aa50ae1fa7fde5613e92bbb120a27",
+    "content_hash": "sha256:93b42b5d4a88bf55f059ccc2e7bfc2d259af86cbea0b56cf8938233ab5e8427e",
     "signature": {
       "algorithm": "ed25519",
       "key_id": "did:key:z6MktwtqAzuD5F77tAMBMwNs1KybZeff61EehV9xB1ZpXQG7#z6MktwtqAzuD5F77tAMBMwNs1KybZeff61EehV9xB1ZpXQG7",
-      "value": "r3vpinQs5HY8m9GUp7hNc3GAlTZRYDc/OBr0kaJlqrlb00Nyk+VMWojjvSJVTieSAQaNeKjM7qJrUHjMef4jAA=="
+      "value": "2PWcX0m2OcFw+zGkxx4n0viQbFj58rF/kHP6pSjfoCINrX7+SPd/SSF6i8yqyRYhXpkTw8sdf7e8hPAzDeDjAw=="
     },
     "registry_receipt": {
       "registry_did": "did:web:registry-a.playground.local",
-      "ctx_id": "acdp://registry-a.playground.local/attested-001",
+      "ctx_id": "acdp://registry-a.playground.local/5dcdb05d-bfbc-4088-936b-da19eec25319",
       "lineage_id": "lin:sha256:444ce9e4045a12619d57eabb8524a0e54f6e9cf322f6dd1092612c8b54313039",
       "origin_registry": "registry-a.playground.local",
-      "created_at": "2026-07-06T12:00:00.000Z",
-      "content_hash": "sha256:e58ed2540ab5a4db348e3d9e97fc7b501c5aa50ae1fa7fde5613e92bbb120a27",
+      "created_at": "2026-07-06T11:57:00.000Z",
+      "content_hash": "sha256:93b42b5d4a88bf55f059ccc2e7bfc2d259af86cbea0b56cf8938233ab5e8427e",
       "key_fingerprint": "sha256:b14705888f4a68391a09aa5968dd25d16c3bba7bb3b6d15bf354d8dcaae85a47",
       "signature": {
         "algorithm": "ed25519",
         "key_id": "did:web:registry-a.playground.local#receipt-key-1",
-        "value": "hfdmsqgC0KoSZNkCylcABqp9MLXWUf2wrboAYh5DIwbmc7KMbx2u2uXd3aclBimt2jV5h4n+Y2JdcZlQpxdGDw=="
+        "value": "KvJdL/tISfSbRAlzvDuzG/B2+UJB/nNfmHRkc4EKS8MwNdhslogVejLWIjEzjXeNhJd3wEi9YMdWEUfszWjMAg=="
       }
     },
     "lineage_head_receipt": {
       "receipt_version": "acdp-lhr/1",
       "registry_did": "did:web:registry-a.playground.local",
       "lineage_id": "lin:sha256:444ce9e4045a12619d57eabb8524a0e54f6e9cf322f6dd1092612c8b54313039",
-      "head_ctx_id": "acdp://registry-a.playground.local/attested-001",
+      "head_ctx_id": "acdp://registry-a.playground.local/5dcdb05d-bfbc-4088-936b-da19eec25319",
       "head_version": 1,
       "head_status": "active",
       "as_of": "2026-07-06T12:34:00.000Z",
       "signature": {
         "algorithm": "ed25519",
         "key_id": "did:web:registry-a.playground.local#receipt-key-1",
-        "value": "yqF22MBppeRWlQgxW+SY5bDe9/10rCm9FcPLnJGsJpM+rhRIxCZrElBuAd9AwXK03ICid7tZBe4TP63Z0kB2AQ=="
+        "value": "UCaUQBY+MC/rmfH81P72vnre7h8VHUwWCs0a6UcD94YbN3COBtBDMmETdVeYU+6itSIxBU/bAlIzgFH9Cr3jBA=="
       }
     },
     "log_inclusion": {
@@ -337,12 +338,12 @@ export const MOCK_CRYPTO = {
         "checkpoint_version": "acdp-log/1",
         "log_id": "did:web:registry-a.playground.local/log/receipts",
         "tree_size": 6,
-        "root_hash": "sha256:37da8cda72e732255f10468b6acb5459a58d1f0139cbb0eb07da5ea35f6b9221",
+        "root_hash": "sha256:d93fc06ae8e2dc9b3ea7c24060d3d9cfea9720eebc1aef1f06a9ae74de9c592c",
         "timestamp": "2026-07-06T12:34:00.000Z",
         "signature": {
           "algorithm": "ed25519",
           "key_id": "did:web:registry-a.playground.local#receipt-key-1",
-          "value": "lV3FYPjPje1ANqtDLXUyozjExfw60PV625TFt8zmSm53nTiKP497kyAYWRpKropL15YJ7yqBGHN+p3RCPmMCDg=="
+          "value": "Zz0FoEQiruWwq8iHH7HKVvNATFDTohteU1UeXcuuQVJEyfSMhb68s1powio2Fyn3G2onqHjmULMM1OBqWMdhCA=="
         }
       },
       "witness_signatures": [
@@ -352,14 +353,14 @@ export const MOCK_CRYPTO = {
           "witnessed_checkpoint": {
             "log_id": "did:web:registry-a.playground.local/log/receipts",
             "tree_size": 6,
-            "root_hash": "sha256:37da8cda72e732255f10468b6acb5459a58d1f0139cbb0eb07da5ea35f6b9221",
+            "root_hash": "sha256:d93fc06ae8e2dc9b3ea7c24060d3d9cfea9720eebc1aef1f06a9ae74de9c592c",
             "timestamp": "2026-07-06T12:34:00.000Z"
           },
           "witnessed_at": "2026-07-06T12:35:00.000Z",
           "signature": {
             "algorithm": "ed25519",
             "key_id": "did:web:witness-alpha.trust.example#witness-key-1",
-            "value": "WEXngKjXB4aU5BYq8NxDRhE+qCGGT1sMoiVEZL58bd2zVQ5k5VJmMbojAmIcm3oCZTgzhyV42DtR22KDmnxeBA=="
+            "value": "HNafqmtZIbXfL9SttdNhLD3CievyJpC2ESGQuUP9tgHdirUuCT+035qrpZQ1ntn3wqGSIFcZ4dO4QuVBD03kDw=="
           }
         },
         {
@@ -368,14 +369,14 @@ export const MOCK_CRYPTO = {
           "witnessed_checkpoint": {
             "log_id": "did:web:registry-a.playground.local/log/receipts",
             "tree_size": 6,
-            "root_hash": "sha256:37da8cda72e732255f10468b6acb5459a58d1f0139cbb0eb07da5ea35f6b9221",
+            "root_hash": "sha256:d93fc06ae8e2dc9b3ea7c24060d3d9cfea9720eebc1aef1f06a9ae74de9c592c",
             "timestamp": "2026-07-06T12:34:00.000Z"
           },
           "witnessed_at": "2026-07-06T12:33:00.000Z",
           "signature": {
             "algorithm": "ed25519",
             "key_id": "did:key:z6Mki11Bt3TszrQcX7c1GuaNUc3gFh4XLWjCQWXrRis9QQeH#witness-key-1",
-            "value": "orNlkdNsDgmRWIprqj6v8iuyaNVkRJq1NqsUu2T8zdVXGZztW+QZ6KwXBP+ITtP5bFB4O1ZVtBf0fAyfHtU9BA=="
+            "value": "AUu46Es/5ROnOPrIxQk2K2zl6C8b7kTfUEWOHNL7qn2SRQOOvSrho+UKP3og98O9aAqRespv/iTv73eCQKavAg=="
           }
         }
       ]

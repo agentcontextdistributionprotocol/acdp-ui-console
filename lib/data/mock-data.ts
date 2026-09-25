@@ -355,7 +355,7 @@ export const SCENARIO_COUNT = MOCK_SCENARIOS.length;
 const LIVE_LINEAGE: LineageGraph = {
   nodes: [
     {
-      ctx_id: `acdp://${AUTH_A}/f4a2c9e1-1d2b-4a3c-9e8f-001`,
+      ctx_id: `acdp://${AUTH_A}/d1feb434-ef44-4166-b3ac-a157f795661d`,
       agent_id: DID_A,
       title: 'Cross-registry source — Arctic shipping routes',
       context_type: 'data_snapshot',
@@ -363,7 +363,7 @@ const LIVE_LINEAGE: LineageGraph = {
       step: 1,
     },
     {
-      ctx_id: `acdp://${AUTH_B}/9c11a7f2-7b6c-4d5e-8a9b-002`,
+      ctx_id: `acdp://${AUTH_B}/29b45ae4-1607-4e71-9efc-5016babeb19c`,
       agent_id: DID_B,
       title: 'Cross-registry derivative — Arctic investment analysis',
       context_type: 'analysis',
@@ -373,24 +373,24 @@ const LIVE_LINEAGE: LineageGraph = {
   ],
   edges: [
     {
-      src: `acdp://${AUTH_A}/f4a2c9e1-1d2b-4a3c-9e8f-001`,
-      dst: `acdp://${AUTH_B}/9c11a7f2-7b6c-4d5e-8a9b-002`,
+      src: `acdp://${AUTH_A}/d1feb434-ef44-4166-b3ac-a157f795661d`,
+      dst: `acdp://${AUTH_B}/29b45ae4-1607-4e71-9efc-5016babeb19c`,
     },
   ],
 };
 
 const FANOUT_LINEAGE: LineageGraph = {
   nodes: [
-    { ctx_id: `acdp://${AUTH_A}/src-100`, agent_id: DID_SOLO, title: 'Market sentiment source', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1 },
-    { ctx_id: `acdp://${AUTH_A}/d-101`, agent_id: 'did:web:registry-a.local:agents:c1', title: 'Equities take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
+    { ctx_id: `acdp://${AUTH_A}/c63ebc23-ff31-49d0-9983-62f656f6e1a8`, agent_id: DID_SOLO, title: 'Market sentiment source', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1 },
+    { ctx_id: `acdp://${AUTH_A}/2e4d1a86-5807-4132-963e-6834fbecdd47`, agent_id: 'did:web:registry-a.local:agents:c1', title: 'Equities take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
     // Retracted after publication (RFC-ACDP-0013) — renders dashed/danger in the DAG.
-    { ctx_id: `acdp://${AUTH_A}/d-102`, agent_id: 'did:web:registry-a.local:agents:c2', title: 'FX take', context_type: 'analysis', registry_authority: AUTH_A, step: 2, status: 'retracted' },
-    { ctx_id: `acdp://${AUTH_A}/d-103`, agent_id: 'did:web:registry-a.local:agents:c3', title: 'Commodities take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
+    { ctx_id: `acdp://${AUTH_A}/bb20faad-dcc5-46a3-9056-b1d55f610333`, agent_id: 'did:web:registry-a.local:agents:c2', title: 'FX take', context_type: 'analysis', registry_authority: AUTH_A, step: 2, status: 'retracted' },
+    { ctx_id: `acdp://${AUTH_A}/5587233c-7150-42ca-b8c8-691b6cc13f6a`, agent_id: 'did:web:registry-a.local:agents:c3', title: 'Commodities take', context_type: 'analysis', registry_authority: AUTH_A, step: 2 },
   ],
   edges: [
-    { src: `acdp://${AUTH_A}/src-100`, dst: `acdp://${AUTH_A}/d-101` },
-    { src: `acdp://${AUTH_A}/src-100`, dst: `acdp://${AUTH_A}/d-102` },
-    { src: `acdp://${AUTH_A}/src-100`, dst: `acdp://${AUTH_A}/d-103` },
+    { src: `acdp://${AUTH_A}/c63ebc23-ff31-49d0-9983-62f656f6e1a8`, dst: `acdp://${AUTH_A}/2e4d1a86-5807-4132-963e-6834fbecdd47` },
+    { src: `acdp://${AUTH_A}/c63ebc23-ff31-49d0-9983-62f656f6e1a8`, dst: `acdp://${AUTH_A}/bb20faad-dcc5-46a3-9056-b1d55f610333` },
+    { src: `acdp://${AUTH_A}/c63ebc23-ff31-49d0-9983-62f656f6e1a8`, dst: `acdp://${AUTH_A}/5587233c-7150-42ca-b8c8-691b6cc13f6a` },
   ],
 };
 
@@ -398,7 +398,7 @@ export const MOCK_LINEAGE: Record<string, LineageGraph> = {
   [LIVE_RUN_ID]: LIVE_LINEAGE,
   [COMPLETED_RUN_ID]: {
     nodes: [
-      { ctx_id: `acdp://${AUTH_A}/2e78f01a-solo`, agent_id: DID_SOLO, title: 'Quarterly cash flow snapshot', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1 },
+      { ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agent_id: DID_SOLO, title: 'Quarterly cash flow snapshot', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1 },
     ],
     edges: [],
   },
@@ -457,13 +457,13 @@ export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
     { type: 'run.started', run_id: COMPLETED_RUN_ID, ts: iso(280), scenario_id: 's1_single_publish' },
     { type: 'agent.started', run_id: COMPLETED_RUN_ID, ts: iso(279), agent_id: DID_SOLO },
     { type: 'llm.thinking', run_id: COMPLETED_RUN_ID, ts: iso(277), agent_id: DID_SOLO, preview: 'Summarizing quarterly cash flow…' },
-    { type: 'acdp.publish', run_id: COMPLETED_RUN_ID, ts: iso(272), agent_id: DID_SOLO, ctx_id: `acdp://${AUTH_A}/2e78f01a-solo`, title: 'Quarterly cash flow snapshot', registry_authority: AUTH_A, contexts_produced: 1 },
+    { type: 'acdp.publish', run_id: COMPLETED_RUN_ID, ts: iso(272), agent_id: DID_SOLO, ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, title: 'Quarterly cash flow snapshot', registry_authority: AUTH_A, contexts_produced: 1 },
     { type: 'run.complete', run_id: COMPLETED_RUN_ID, ts: iso(271), scenario_id: 's1_single_publish', contexts_produced: 1 },
   ],
   [FAILED_RUN_ID]: [
     { type: 'run.started', run_id: FAILED_RUN_ID, ts: iso(1320), scenario_id: 's15_supersession_lineage' },
     { type: 'agent.started', run_id: FAILED_RUN_ID, ts: iso(1319), agent_id: DID_SOLO },
-    { type: 'acdp.publish', run_id: FAILED_RUN_ID, ts: iso(1315), agent_id: DID_SOLO, ctx_id: `acdp://${AUTH_A}/v1-super`, title: 'Forecast model v1', registry_authority: AUTH_A, contexts_produced: 1 },
+    { type: 'acdp.publish', run_id: FAILED_RUN_ID, ts: iso(1315), agent_id: DID_SOLO, ctx_id: `acdp://${AUTH_A}/96976a64-745d-4dab-a874-b481b06120db`, title: 'Forecast model v1', registry_authority: AUTH_A, contexts_produced: 1 },
     { type: 'acdp.verify', run_id: FAILED_RUN_ID, ts: iso(1312), agent_id: DID_SOLO, title: 'expected_lineage_id guard' },
     { type: 'run.error', run_id: FAILED_RUN_ID, ts: iso(1310), scenario_id: 's15_supersession_lineage', error: 'Supersession rejected: expected_lineage_id mismatch (409 Conflict)' },
   ],
@@ -561,9 +561,12 @@ export const MOCK_RUNS: CpRun[] = [
       flagged: [
         {
           eventId: 'ev-cross-org-2',
-          ctxId: `acdp://${AUTH_B}/joint-venture-002`,
+          ctxId: `acdp://${AUTH_B}/f24ba292-b358-4343-a077-2d08c3c018b0`,
           status: 'discrepancy',
           discrepancies: [
+            // Fabricated/illustrative truncated hashes for the demo narrative — not derived
+            // from MOCK_CRYPTO or any real fixture, so they don't reference any ctx_id/UUID
+            // rewrite elsewhere in this file and should not be "fixed" to match one.
             'content_hash_mismatch: receipt sha256:bb22c8a3… ≠ served body sha256:9c11a7f2…',
           ],
         },
@@ -592,18 +595,18 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
   { id: 'ev-2', eventType: 'context_retrieved', eventTs: iso(11), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_B, registryAuthority: AUTH_B, scenarioId: 's5_cross_registry' },
   { id: 'ev-3', eventType: 'context_published', eventTs: iso(3), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[1].ctx_id, agentId: DID_B, contextType: 'analysis', visibility: 'public', version: 1, derivedFrom: [LIVE_LINEAGE.nodes[0].ctx_id], registryAuthority: AUTH_B, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:a07c5d1b9e22', receiptPresent: false },
-  { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
+  { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
-  { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/tenant-a-001`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
-  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/attested-001`, agentId: DID_KEY, contextType: 'attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
+  { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/fee57f10-e884-42f8-b01f-c12eb4fa54e0`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
+  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
   // ── RFC-ACDP-0013 lifecycle events (ACDP 0.3) ─────────────────────────
   // Registry-initiated hold + restore on the attested context (a pair).
-  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_A}/attested-001`, agentId: `did:web:${AUTH_A}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_A },
-  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_A}/attested-001`, agentId: `did:web:${AUTH_A}`, contextType: 'attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
   // Producer-initiated retraction of the non-head cashflow v1.
-  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/2e78f01a-solo`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
   // Retraction of the fan-out FX derivative (renders retracted in the run DAG).
-  { id: 'ev-11', eventType: 'context_retracted', eventTs: iso(3500), runId: 'run-fan-3', ctxId: `acdp://${AUTH_A}/d-102`, agentId: 'did:web:registry-a.local:agents:c2', contextType: 'analysis', version: 1, registryAuthority: AUTH_A, scenarioId: 's3_fanout' },
+  { id: 'ev-11', eventType: 'context_retracted', eventTs: iso(3500), runId: 'run-fan-3', ctxId: `acdp://${AUTH_A}/bb20faad-dcc5-46a3-9056-b1d55f610333`, agentId: 'did:web:registry-a.local:agents:c2', contextType: 'analysis', version: 1, registryAuthority: AUTH_A, scenarioId: 's3_fanout' },
 ];
 
 // ── Dashboard overview ────────────────────────────────────────────────
@@ -716,7 +719,11 @@ export const MOCK_CONTEXTS: FullContext[] = [
       ctx_id: LIVE_LINEAGE.nodes[0].ctx_id,
       lineage_id: 'lin-arctic-001',
       origin_registry: AUTH_A,
-      created_at: iso(16),
+      // Derived from the receipt, not an independent iso(N) call: acdp-wasm
+      // 0.14.1's verifyReceipt cross-checks the receipt against the served
+      // body's created_at (RFC-ACDP-0010 §8 step 3), so these must be
+      // structurally identical, not just coincidentally equal at write time.
+      created_at: MOCK_CRYPTO.arcticSource.registry_receipt.created_at,
       ...MOCK_CRYPTO.arcticSource.hashed,
       content_hash: MOCK_CRYPTO.arcticSource.content_hash,
       signature: MOCK_CRYPTO.arcticSource.signature,
@@ -739,7 +746,7 @@ export const MOCK_CONTEXTS: FullContext[] = [
   },
   {
     body: {
-      ctx_id: `acdp://${AUTH_A}/2e78f01a-solo`,
+      ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`,
       lineage_id: 'lin-cashflow-001',
       origin_registry: AUTH_A,
       created_at: iso(272),
@@ -754,7 +761,7 @@ export const MOCK_CONTEXTS: FullContext[] = [
       lifecycle_events: [
         {
           event_id: 'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
-          ctx_id: `acdp://${AUTH_A}/2e78f01a-solo`,
+          ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`,
           event_type: 'retracted',
           occurred_at: iso(3600),
           actor: DID_SOLO,
@@ -770,10 +777,11 @@ export const MOCK_CONTEXTS: FullContext[] = [
   },
   {
     body: {
-      ctx_id: `acdp://${AUTH_A}/attested-001`,
+      ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
       lineage_id: LIN_ATTESTED,
       origin_registry: AUTH_A,
-      created_at: iso(140),
+      // Derived from the receipt for the same reason as arcticSource above.
+      created_at: MOCK_CRYPTO.attested.registry_receipt.created_at,
       ...MOCK_CRYPTO.attested.hashed,
       content_hash: MOCK_CRYPTO.attested.content_hash,
       signature: MOCK_CRYPTO.attested.signature,
@@ -785,7 +793,7 @@ export const MOCK_CONTEXTS: FullContext[] = [
       lifecycle_events: [
         {
           event_id: 'b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
-          ctx_id: `acdp://${AUTH_A}/attested-001`,
+          ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
           event_type: 'retracted',
           occurred_at: iso(110),
           actor: `did:web:${AUTH_A}`,
@@ -798,7 +806,7 @@ export const MOCK_CONTEXTS: FullContext[] = [
         },
         {
           event_id: 'c3d4e5f6-7a8b-4c9d-a0e1-2b3c4d5e6f7a',
-          ctx_id: `acdp://${AUTH_A}/attested-001`,
+          ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
           event_type: 'republished',
           occurred_at: iso(80),
           actor: `did:web:${AUTH_A}`,
@@ -825,7 +833,7 @@ export const MOCK_CONTEXTS: FullContext[] = [
 const CASHFLOW_V1 = MOCK_CONTEXTS[2];
 const CASHFLOW_V2: FullContext = {
   body: {
-    ctx_id: `acdp://${AUTH_A}/2e78f01a-solo-v2`,
+    ctx_id: `acdp://${AUTH_A}/b1ae7711-2a4d-4cb3-9762-3f6980b3a6e1`,
     lineage_id: CASHFLOW_V1.body.lineage_id,
     origin_registry: AUTH_A,
     created_at: iso(86400),
@@ -938,9 +946,9 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 // ── SDK matrix (config page) ──────────────────────────────────────────
 export const MOCK_SDK_MATRIX = [
   { component: 'ACDP spec', version: '0.4.0 Final', status: 'ok' },
-  { component: 'acdp-rs library', version: '0.8.5', status: 'ok' },
-  { component: 'acdp-py binding', version: '0.8.0', status: 'ok' },
-  { component: 'acdp-node binding', version: '0.8.0', status: 'ok' },
+  { component: 'acdp-rs library', version: '0.14.1', status: 'ok' },
+  { component: 'acdp-py binding', version: '0.14.1', status: 'ok' },
+  { component: 'acdp-node binding', version: '0.14.1', status: 'ok' },
   { component: 'Registry (Rust/axum)', version: '0.4.0 (witness aggregation)', status: 'ok' },
   { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)', status: 'ok' },
   { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S33)', status: 'ok' },

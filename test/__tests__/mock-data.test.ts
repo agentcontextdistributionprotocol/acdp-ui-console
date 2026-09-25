@@ -15,6 +15,7 @@ import {
   MOCK_SDK_MATRIX,
   SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
+import * as MockData from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
 
@@ -210,10 +211,49 @@ describe('trust mocks (ACDP 0.2)', () => {
       expect(r.ctx_id).toBe(c.body.ctx_id);
       expect(r.lineage_id).toBe(c.body.lineage_id);
       expect(r.origin_registry).toBe(c.body.origin_registry);
+      // acdp-wasm 0.14.1's verifyReceipt cross-checks the receipt against the
+      // served body's lineage_id/origin_registry/created_at (RFC-ACDP-0010 §8
+      // step 3) — created_at is deliberately DERIVED from the receipt in
+      // mock-data.ts (not an independent literal) so this can never silently
+      // drift apart again; this assertion is what makes that regression loud.
+      expect(r.created_at).toBe(c.body.created_at);
       expect(r.content_hash).toBe(c.body.content_hash);
       expect(r.key_fingerprint).toMatch(/^sha256:/);
       expect(r.signature.algorithm).toBeTruthy();
     }
+  });
+
+  it('every acdp:// id anywhere in the mock dataset conforms to the acdp-wasm 0.14.1 grammar (lowercase authority + lowercase v4 UUID)', () => {
+    // acdp-wasm 0.14.1's verifyReceipt/verifyCtxIdBinding parse `expected_ctx_id`
+    // via CtxId::parse rather than accepting an opaque string (acdp-rs
+    // bindings/acdp-wasm/src/core.rs); a non-conforming ctx_id now throws
+    // instead of producing a fail verdict. This walks the ENTIRE mock-data
+    // module recursively (not just MOCK_CONTEXTS) so a non-conforming id
+    // anywhere — a lineage node, a run event, a trust-flagged discrepancy —
+    // fails loudly instead of only being caught if it happens to also be a
+    // wasm-verified MOCK_CONTEXTS entry. A prior round of this fix left 11
+    // such ids (short mnemonic suffixes like "d-101", "v1-super") unconverted
+    // because the test only walked MOCK_CONTEXTS; this walk is what prevents
+    // that class of gap from recurring.
+    const CTX_ID_RE = /^acdp:\/\/[a-z0-9.-]+\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const seen = new Set<unknown>();
+    const offenders: string[] = [];
+    function walk(value: unknown, path: string): void {
+      if (typeof value === 'string') {
+        if (value.startsWith('acdp://') && !CTX_ID_RE.test(value)) offenders.push(`${path} = ${value}`);
+        return;
+      }
+      if (value === null || typeof value !== 'object') return;
+      if (seen.has(value)) return; // guard against shared-reference cycles (e.g. LIVE_LINEAGE.nodes[0] reused across exports)
+      seen.add(value);
+      if (Array.isArray(value)) {
+        value.forEach((v, i) => walk(v, `${path}[${i}]`));
+        return;
+      }
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) walk(v, `${path}.${k}`);
+    }
+    for (const [name, value] of Object.entries(MockData)) walk(value, name);
+    expect(offenders).toEqual([]);
   });
 
   it('a running run has no verdict yet and exactly one run is flagged', () => {
