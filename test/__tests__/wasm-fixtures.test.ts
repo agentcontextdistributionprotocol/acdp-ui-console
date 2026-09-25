@@ -313,4 +313,29 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     ) as { valid: boolean; error?: string };
     expect(verdict.valid).toBe(false);
   });
+
+  // ── 10. verifyCtxIdBinding (UI-2 Phase 2, acdp-wasm 0.14.1) ────────────────
+  // Every OTHER test of this check (verify.test.ts, use-verdicts.test.ts) mocks
+  // the wasm symbol entirely, and demo mode's `getContext` is an exact-match
+  // lookup by ctx_id (lib/api/client.ts) so the UI path can never exercise a
+  // real mismatch either — this is the ONLY place the real binary's actual
+  // verdict (not a stub) proves the check is wired correctly, not tautological.
+  it.each(MOCK_CONTEXTS.map((c, i) => [i, c] as const))(
+    'ctx_id binding verifies for the body\'s own ctx_id (MOCK_CONTEXTS[%i])',
+    (_i, ctx) => {
+      const verdict = JSON.parse(
+        acdp.verifyCtxIdBinding(JSON.stringify(ctx.body), ctx.body.ctx_id),
+      ) as { valid: boolean };
+      expect(verdict.valid).toBe(true);
+    },
+  );
+
+  it('ctx_id binding fails against a DIFFERENT context\'s ctx_id (the real red-chip case)', () => {
+    const served = MOCK_CONTEXTS[0].body;
+    const requestedInstead = MOCK_CONTEXTS[1].body.ctx_id;
+    const verdict = JSON.parse(
+      acdp.verifyCtxIdBinding(JSON.stringify(served), requestedInstead),
+    ) as { valid: boolean; error?: string };
+    expect(verdict.valid).toBe(false);
+  });
 });

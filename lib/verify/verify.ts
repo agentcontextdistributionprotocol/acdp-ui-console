@@ -89,6 +89,38 @@ export async function verifyProducerSignature(body: ContextBody, docs: DidDocMap
   );
 }
 
+// ── ctx_id binding (acdp-wasm 0.14.1) — catches a registry silently serving a
+// DIFFERENT context than the one requested. `content_hash` alone can't catch
+// this: a body can be perfectly self-consistent and still be the wrong body.
+// `expectedCtxId` MUST come from the caller's own independently-known request
+// (a search hit's id, a URL param, a graph node's id) — NEVER read back off
+// `body.ctx_id` itself, which would make this tautologically green.
+//
+// TWO independent strict-parse gates can throw here (confirmed against the
+// real binary), unlike `verifyContentHash`'s single permissive check above:
+// (1) `body_json` must fully conform to acdp-rs's current Body schema — same
+//     class of gate `verifyReceipt` hit (see ASSUMPTIONS.md's body_json entry),
+//     now widened from "receipt-present contexts only" to every context this
+//     chip renders on; (2) `expected_ctx_id` is ALSO strict-parsed, and in real
+//     mode it's upstream data (a registry search result, a control-plane run
+//     event) this console doesn't control. `fromWasm`'s catch branch already
+//     labels a throw distinctly from a clean mismatch (`malformed material:
+//     <wasm message>` vs. the fail-prefix below), so a malformed caller-side id
+//     is NOT rendered with the same detail text as a genuine substitution —
+//     but that distinction only reaches an operator via the chip's hover
+//     tooltip (no VerdictCaption in the Integrity group), and the chip LABEL
+//     itself ("✗ ctx_id binding · verification failed") is identical either
+//     way. See ASSUMPTIONS.md ("UI-2 Phase 2: ctxIdBinding's two strict-parse
+//     failure surfaces") for the full reasoning and blast radius.
+export async function verifyCtxIdBinding(body: ContextBody, expectedCtxId: string): Promise<Verdict> {
+  const wasm = await getAcdpWasm();
+  return fromWasm(
+    () => wasm.verifyCtxIdBinding(JSON.stringify(body), expectedCtxId),
+    'served body is bound to the requested ctx_id',
+    'served body does not match the requested ctx_id',
+  );
+}
+
 // ── SHA-256 helper for the receipt's independently-recomputed body hash ─
 async function sha256Hex(input: string): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
