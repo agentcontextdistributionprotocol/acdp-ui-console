@@ -302,4 +302,18 @@ describe('trust mocks (ACDP 0.2)', () => {
     expect(methods.has('did:web')).toBe(true);
     expect(methods.has('did:key')).toBe(true);
   });
+
+  it('the dashboard exposes RFC-ACDP-0014 key-revocation counters (getCpDashboard demo passthrough)', async () => {
+    expect(MOCK_DASHBOARD.keyRevocation).toBeDefined();
+    const { preCompromise, revokedAtOrAfter, revokedTimeUnverifiable } = MOCK_DASHBOARD.keyRevocation!;
+    for (const n of [preCompromise, revokedAtOrAfter, revokedTimeUnverifiable]) {
+      expect(n).toBeGreaterThanOrEqual(0);
+    }
+    // getCpDashboard's demo branch (lib/api/client.ts) spreads MOCK_DASHBOARD
+    // verbatim, so this fixture-level check is also the pass-through check —
+    // no separate field-mapping logic exists that could drop the new field.
+    const { getCpDashboard } = await import('@/lib/api/client');
+    const dash = await getCpDashboard('24h', true);
+    expect(dash.keyRevocation).toEqual(MOCK_DASHBOARD.keyRevocation);
+  });
 });

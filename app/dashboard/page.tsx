@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { LayoutGrid, Boxes, Users, Database, Layers } from 'lucide-react';
+import { LayoutGrid, Boxes, Users, Database, Layers, ShieldAlert } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Card, CardHeader, CardBody } from '@/components/ui/card';
 import { KpiCard } from '@/components/dashboard/kpi-card';
@@ -114,6 +114,38 @@ export default function DashboardPage() {
             </CardBody>
           </Card>
         </div>
+      )}
+
+      {d.keyRevocation && (
+        <Card style={{ marginTop: 12 }}>
+          <CardHeader
+            title="Key Revocation"
+            sub="RFC-ACDP-0014 · window-scoped compromise-boundary checks"
+            right={<ShieldAlert size={18} style={{ color: 'var(--danger)' }} />}
+          />
+          <CardBody>
+            <div className="kpi-grid">
+              <KpiCard
+                label="Pre-compromise (authorized)"
+                value={formatNumber(d.keyRevocation.preCompromise)}
+                accent="var(--success)"
+                hint="Signed strictly before the compromise boundary — historically authorized"
+              />
+              <KpiCard
+                label="Revoked at/after boundary"
+                value={formatNumber(d.keyRevocation.revokedAtOrAfter)}
+                accent="var(--danger)"
+                hint="Fails closed under the strict profile — not attributable to the producer"
+              />
+              <KpiCard
+                label="Revoked time unverifiable"
+                value={formatNumber(d.keyRevocation.revokedTimeUnverifiable)}
+                accent="var(--warning)"
+                hint="No receipt-attested publish time to compare against the compromise boundary"
+              />
+            </div>
+          </CardBody>
+        </Card>
       )}
     </div>
   );
