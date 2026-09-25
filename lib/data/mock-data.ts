@@ -341,11 +341,21 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
     id: 's33_anchors',
     name: 'External Anchors',
     description:
-      'A producer ties a context to an artifact in an external system via a signed anchor (RFC-ACDP-0016); a scheme-unaware verifier still verifies fully without ever dereferencing the anchor URI.',
+      'A well-formed anchors entry is accepted and signed like any other field (anc-001); a scheme-unaware verifier still produces a valid verdict while structurally never dereferencing anchors[].uri (anc-005, RFC-ACDP-0016 §6). A tampered anchor fails closed. The live half supersedes twice to exercise the anchors carry-forward / clear_anchors fix in Producer::new_version_from.',
     registry_mode: 'single',
     agent_count: 1,
     framework: 'langchain',
-    default_inputs: { topic: 'anchored disclosure' },
+    default_inputs: { topic: 'anchored settlement snapshot' },
+  },
+  {
+    id: 's34_embedded_content',
+    name: 'Embedded Content Integrity',
+    description:
+      "A data_refs[].embedded payload's own content_hash (RFC-ACDP-0002 §6.3/§6.6 Check 8) is verified over the decoded bytes — JCS form for json, raw UTF-8 for utf8, decoded bytes for base64. It is independent of the DataRef-root content_hash (§6.1): one foreign digest is accepted in the root slot and rejected in the embedded slot. Absent is legal, explicit null is a deserialization failure, and tampered content fails closed at both the body and data-ref layers.",
+    registry_mode: 'single',
+    agent_count: 1,
+    framework: 'langchain',
+    default_inputs: { topic: 'inline sensor snapshot' },
   },
 ];
 
@@ -1017,5 +1027,5 @@ export const MOCK_SDK_MATRIX = [
   { component: 'acdp-node binding', version: '0.14.1', status: 'ok' },
   { component: 'Registry (Rust/axum)', version: '0.4.0 (witness aggregation)', status: 'ok' },
   { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)', status: 'ok' },
-  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S33)', status: 'ok' },
+  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S34)', status: 'ok' },
 ];

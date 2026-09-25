@@ -62,17 +62,32 @@ describe('SDK matrix', () => {
 });
 
 describe('mock scenarios > catalog parity', () => {
-  it('the catalog has 33 scenarios matching the playground catalog', () => {
-    expect(SCENARIO_COUNT).toBe(33);
+  it('the catalog has 34 scenarios matching the playground catalog', () => {
+    expect(SCENARIO_COUNT).toBe(34);
   });
 
-  it('includes s21_capabilities_p256 and s33_anchors', () => {
+  it('includes s21_capabilities_p256, s33_anchors, and s34_embedded_content', () => {
     const ids = new Set(MOCK_SCENARIOS.map((s) => s.id));
     expect(ids.has('s21_capabilities_p256')).toBe(true);
     expect(ids.has('s33_anchors')).toBe(true);
+    expect(ids.has('s34_embedded_content')).toBe(true);
   });
 
-  it('scenario ids are unique and contiguous s1..s33', () => {
+  it('s33_anchors matches playground catalog metadata (default_inputs, not a paraphrase)', () => {
+    const s33 = MOCK_SCENARIOS.find((s) => s.id === 's33_anchors');
+    expect(s33?.default_inputs).toEqual({ topic: 'anchored settlement snapshot' });
+  });
+
+  it('s34_embedded_content matches playground catalog metadata', () => {
+    const s34 = MOCK_SCENARIOS.find((s) => s.id === 's34_embedded_content');
+    expect(s34?.name).toBe('Embedded Content Integrity');
+    expect(s34?.registry_mode).toBe('single');
+    expect(s34?.agent_count).toBe(1);
+    expect(s34?.framework).toBe('langchain');
+    expect(s34?.default_inputs).toEqual({ topic: 'inline sensor snapshot' });
+  });
+
+  it('scenario ids are unique and contiguous s1..s34', () => {
     const ids = MOCK_SCENARIOS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
     const numbers = ids
@@ -81,7 +96,7 @@ describe('mock scenarios > catalog parity', () => {
         return m ? Number(m[1]) : NaN;
       })
       .sort((a, b) => a - b);
-    expect(numbers).toEqual(Array.from({ length: 33 }, (_, i) => i + 1));
+    expect(numbers).toEqual(Array.from({ length: 34 }, (_, i) => i + 1));
   });
 });
 
