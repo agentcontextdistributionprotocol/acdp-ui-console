@@ -150,7 +150,6 @@ const T = {
   arcticEnd: '2026-07-01T00:00:00.000Z',
   cashStart: '2026-04-01T00:00:00.000Z',
   cashEnd: '2026-07-01T00:00:00.000Z',
-  receiptCreated: '2026-07-06T12:00:00.000Z',
   asOf: '2026-07-06T12:34:00.000Z',
   checkpoint: '2026-07-06T12:34:00.000Z',
   witnessedAlpha: '2026-07-06T12:35:00.000Z',
@@ -158,11 +157,15 @@ const T = {
 };
 
 // ── ctx identity strings (excluded from content_hash; reused from mock) ─
-const CTX_ARCTIC_SRC = `acdp://${AUTH_A}/f4a2c9e1-1d2b-4a3c-9e8f-001`;
-const CTX_ARCTIC_DERIV = `acdp://${AUTH_B}/9c11a7f2-7b6c-4d5e-8a9b-002`;
-const CTX_CASH_V1 = `acdp://${AUTH_A}/2e78f01a-solo`;
-const CTX_CASH_V2 = `acdp://${AUTH_A}/2e78f01a-solo-v2`;
-const CTX_ATTESTED = `acdp://${AUTH_A}/attested-001`;
+// acdp-wasm 0.14.1 parses the ctx_id passed to verifyReceipt/verifyCtxIdBinding
+// as a real ACDP ctx_id (lowercase authority + lowercase v4 UUID) rather than
+// an opaque string, so these must be valid UUIDs, not the short mnemonic
+// suffixes ("...-001", "...-solo") this file used pre-0.14.1.
+const CTX_ARCTIC_SRC = `acdp://${AUTH_A}/d1feb434-ef44-4166-b3ac-a157f795661d`;
+const CTX_ARCTIC_DERIV = `acdp://${AUTH_B}/29b45ae4-1607-4e71-9efc-5016babeb19c`;
+const CTX_CASH_V1 = `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`;
+const CTX_CASH_V2 = `acdp://${AUTH_A}/b1ae7711-2a4d-4cb3-9762-3f6980b3a6e1`;
+const CTX_ATTESTED = `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`;
 // RFC-ACDP-0001 §5: lineage_id is a 'lin:sha256:<hex>' identifier. The other
 // demo lineages use a loose label form that only the strict LHR parser rejects;
 // the attested context (the one with a lineage-head receipt) uses the real form.
@@ -196,7 +199,7 @@ function makeBody({ ctx_id, lineage_id, origin_registry, created_at, producer, k
       ? acdp.verifySignatureEd25519(producer.rawPubB64, signature.value, content_hash)
       : acdp.verifySignatureP256(producer.sec1B64, signature.value, content_hash);
   assertOk(`producer signature ${ctx_id}`, sigVerdict);
-  return { hashed, content_hash, signature };
+  return { hashed, content_hash, signature, full };
 }
 
 const arcticSrc = makeBody({
@@ -222,7 +225,7 @@ const arcticSrc = makeBody({
     supersedes: null,
     contributors: [WEB_A],
     data_refs: [
-      { type: 'data_snapshot', location: 's3://acdp-demo/arctic/ais-2024.parquet', encoding: 'application/parquet' },
+      { type: 'primary_result', location: 's3://acdp-demo/arctic/ais-2024.parquet', encoding: 'application/parquet' },
     ],
     data_period: { start: T.arcticStart, end: T.arcticEnd },
     expires_at: T.arcticExpires,
@@ -253,7 +256,7 @@ const arcticDeriv = makeBody({
     contributors: [WEB_B, WEB_A],
     audience: [WEB_A],
     data_refs: [
-      { type: 'report', location: 'https://reports.acdp-demo/arctic-investment.pdf', encoding: 'application/pdf' },
+      { type: 'primary_result', location: 'https://reports.acdp-demo/arctic-investment.pdf', encoding: 'application/pdf' },
     ],
     schema_uri: 'https://schemas.acdp.dev/analysis/v1.json',
   },
@@ -274,7 +277,7 @@ const cashHashed = {
   supersedes: null,
   contributors: [WEB_SOLO],
   data_refs: [
-    { type: 'data_snapshot', location: 's3://acdp-demo/finance/cashflow-q.json', encoding: 'application/json' },
+    { type: 'primary_result', location: 's3://acdp-demo/finance/cashflow-q.json', encoding: 'application/json' },
   ],
   data_period: { start: T.cashStart, end: T.cashEnd },
 };
@@ -307,7 +310,10 @@ const attestedHashed = {
   version: 1,
   agent_id: prodKey.didKey,
   title: 'Attested disclosure — did:key ephemeral agent',
-  type: 'attestation',
+  // 'attestation' isn't one of the 5 standard ContextType values (data_snapshot,
+  // analysis, prediction, alert, key-revocation), so it must be a namespaced
+  // custom type (`^[a-z][a-z0-9_]*:[a-z][a-z0-9_-]*$`) to deserialize at all.
+  type: 'demo:attestation',
   visibility: 'public',
   derived_from: [],
   summary: 'Offline-verifiable disclosure published by an ephemeral did:key agent to the receipts registry.',
@@ -318,6 +324,7 @@ const attestedHashed = {
   acdp_version: '0.2.0',
   supersedes: null,
   contributors: [prodKey.didKey],
+  data_refs: [],
 };
 const attested = makeBody({
   ctx_id: CTX_ATTESTED,
@@ -331,14 +338,19 @@ const attested = makeBody({
 // ══════════════════════════════════════════════════════════════════════
 // 2. Registry receipts (RFC-ACDP-0010)
 // ══════════════════════════════════════════════════════════════════════
-function makeReceipt({ ctx_id, lineage_id, origin_registry, content_hash, producerRawPubB64, registry, registryDid }) {
+// `created_at` and `body` are taken from the already-built, already-self-verified
+// producer body (`makeBody`'s return) rather than re-typed here — acdp-wasm 0.14.1's
+// verifyReceipt cross-checks the receipt's lineage_id/origin_registry/created_at
+// against the served body (RFC-ACDP-0010 §8 step 3), so deriving instead of
+// duplicating makes the two structurally incapable of drifting apart.
+function makeReceipt({ ctx_id, lineage_id, origin_registry, created_at, body, content_hash, producerRawPubB64, registry, registryDid }) {
   const key_fingerprint = acdp.fingerprintEd25519(producerRawPubB64);
   const unsigned = {
     registry_did: registryDid,
     ctx_id,
     lineage_id,
     origin_registry,
-    created_at: T.receiptCreated,
+    created_at,
     content_hash,
     key_fingerprint,
   };
@@ -349,7 +361,7 @@ function makeReceipt({ ctx_id, lineage_id, origin_registry, content_hash, produc
   };
   assertOk(
     `receipt ${ctx_id}`,
-    acdp.verifyReceipt(JSON.stringify(receipt), registry.rawPubB64, ctx_id, content_hash, key_fingerprint),
+    acdp.verifyReceipt(JSON.stringify(receipt), JSON.stringify(body), registry.rawPubB64, ctx_id, content_hash, key_fingerprint),
   );
   return receipt;
 }
@@ -357,6 +369,8 @@ const arcticReceipt = makeReceipt({
   ctx_id: CTX_ARCTIC_SRC,
   lineage_id: 'lin-arctic-001',
   origin_registry: AUTH_A,
+  created_at: arcticSrc.full.created_at,
+  body: arcticSrc.full,
   content_hash: arcticSrc.content_hash,
   producerRawPubB64: prodA.rawPubB64,
   registry: registryA,
@@ -366,6 +380,8 @@ const attestedReceipt = makeReceipt({
   ctx_id: CTX_ATTESTED,
   lineage_id: LIN_ATTESTED,
   origin_registry: AUTH_A,
+  created_at: attested.full.created_at,
+  body: attested.full,
   content_hash: attested.content_hash,
   producerRawPubB64: prodKey.rawPubB64,
   registry: registryA,

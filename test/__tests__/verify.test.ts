@@ -269,6 +269,50 @@ describe('verifyRegistryReceipt', () => {
     const result = await verifyRegistryReceipt(receipt(), bodyWithSignature(), undefined);
     expect(result.status).toBe('verified');
   });
+
+  it('a thrown ctx_id-parse error (acdp-wasm 0.14.1 CtxId::parse) is caught as failed, not an unhandled throw', async () => {
+    // acdp-wasm 0.14.1 parses `expected_ctx_id` via CtxId::parse before the
+    // body cross-check and THROWS on a non-conforming id, rather than
+    // returning a {valid:false} verdict like every other rejection path.
+    // fromWasm's existing try/catch (verify.ts:48-60) already handles any
+    // thrown wasm error uniformly — this proves that coverage extends to
+    // this specific new failure mode too, not just a generic Error.
+    resolveDidKey.mockReturnValue(JSON.stringify({ algorithm: 'ed25519', public_key_b64: 'raw-key' }));
+    canonicalPreimage.mockReturnValue('preimage-bytes');
+    fingerprintEd25519.mockReturnValue('sha256:fp');
+    verifyReceipt.mockImplementation(() => {
+      throw new Error('invalid ctx_id: malformed authority/uuid');
+    });
+    const result = await verifyRegistryReceipt(receipt(), bodyWithSignature(), undefined);
+    expect(result.status).toBe('failed');
+    expect(result.detail).toBe('malformed material: invalid ctx_id: malformed authority/uuid');
+  });
+
+  it('calls the wasm verifyReceipt binding with the 6 arguments in the exact documented order (receipt_json, body_json, registry_key, expected_ctx_id, recomputed_hash, fingerprint)', async () => {
+    // acdp-wasm 0.14.1's `verifyReceipt(receipt_json, body_json, registry_public_key_b64,
+    // expected_ctx_id, recomputed_body_hash, producer_key_fingerprint)` (acdp_wasm.d.ts) has 6
+    // same-typed (mostly string) parameters — a typecheck-clean argument swap in verify.ts would
+    // not be caught by any other test in this file, since they only assert the resulting Verdict.
+    resolveDidKey.mockReturnValue(JSON.stringify({ algorithm: 'ed25519', public_key_b64: 'raw-key' }));
+    canonicalPreimage.mockReturnValue('preimage-bytes');
+    fingerprintEd25519.mockReturnValue('sha256:fp');
+    verifyReceipt.mockReturnValue(JSON.stringify({ valid: true }));
+    const r = receipt();
+    const body = bodyWithSignature();
+    await verifyRegistryReceipt(r, body, undefined);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('preimage-bytes'));
+    const recomputed = `sha256:${Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')}`;
+    expect(verifyReceipt).toHaveBeenCalledWith(
+      JSON.stringify(r),
+      JSON.stringify(body),
+      'raw-key',
+      body.ctx_id,
+      recomputed,
+      'sha256:fp',
+    );
+  });
 });
 
 describe('verifyLineageHeadReceipt', () => {

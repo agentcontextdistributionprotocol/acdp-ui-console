@@ -177,7 +177,28 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     // the receipt under test — production binds against `body.ctx_id`, an
     // independent value (verify.ts:122).
     const verdict = JSON.parse(
-      acdp.verifyReceipt(JSON.stringify(receipt), registryKeyB64, body.ctx_id, recomputed, fingerprint),
+      acdp.verifyReceipt(JSON.stringify(receipt), JSON.stringify(body), registryKeyB64, body.ctx_id, recomputed, fingerprint),
+    ) as { valid: boolean };
+    expect(verdict.valid).toBe(true);
+  });
+
+  // `arcticSource` is the OTHER context whose `created_at` is structurally derived from its
+  // own receipt (mock-data.ts, same fix as `attested` — see the created_at-consistency test in
+  // mock-data.test.ts). Without this second real-binary receipt check, that derivation was only
+  // ever exercised against a hand-assembled body inside the generator (gen-mock-crypto.mjs),
+  // never against the actual body this console assembles and serves (MOCK_CONTEXTS[0].body) —
+  // this closes that one-sided coverage gap, mirroring the `attested` test above exactly.
+  it('arcticSource registry receipt verifies (independently recomputed body hash + fingerprint, did:web producer)', async () => {
+    const receipt = MOCK_CRYPTO.arcticSource.registry_receipt as RegistryReceipt;
+    const body = fullBodyOf('arcticSource');
+    const preimage = acdp.canonicalPreimage(JSON.stringify(body));
+    const recomputed = `sha256:${sha256Hex(preimage)}`;
+    const registryKeyB64 = await ed25519RawB64FromDoc(REGISTRY_A_DID);
+    const producerKeyB64 = await ed25519RawB64FromDoc('did:web:registry-a.local:agents:cross-a');
+    const fingerprint = acdp.fingerprintEd25519(producerKeyB64);
+    expect(fingerprint).toBe(receipt.key_fingerprint);
+    const verdict = JSON.parse(
+      acdp.verifyReceipt(JSON.stringify(receipt), JSON.stringify(body), registryKeyB64, body.ctx_id, recomputed, fingerprint),
     ) as { valid: boolean };
     expect(verdict.valid).toBe(true);
   });

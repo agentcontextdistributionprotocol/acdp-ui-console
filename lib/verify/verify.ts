@@ -119,7 +119,7 @@ export async function verifyRegistryReceipt(
   const recomputed = `sha256:${await sha256Hex(preimage)}`;
   const fingerprint = wasm.fingerprintEd25519(producerKey);
   return fromWasm(
-    () => wasm.verifyReceipt(JSON.stringify(receipt), registryKey, body.ctx_id, recomputed, fingerprint),
+    () => wasm.verifyReceipt(JSON.stringify(receipt), JSON.stringify(body), registryKey, body.ctx_id, recomputed, fingerprint),
     'registry signature valid; receipt binds to our recomputed body hash',
     'registry receipt failed verification',
   );
