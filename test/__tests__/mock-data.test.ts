@@ -157,6 +157,29 @@ describe('rich context bodies', () => {
     const hit = MockData.MOCK_SEARCH_HITS.find((h) => h.ctx_id === revocation!.body.ctx_id);
     expect(hit?.type).toBe('key-revocation');
   });
+
+  // Cross-phase coherence (UI-2 Phases 4 + 5): every mock run's revoked-key
+  // events reference sources[].ctxId as a narrative link to the context that
+  // declared the revocation. Each phase's own tests were green in isolation,
+  // but nothing checked that the referenced id isn't a dangling one, or that
+  // the two independently-authored timestamps (a run's Postgres-style
+  // `boundary` vs. the context's ISO `metadata.compromised_since`) actually
+  // agree on the same instant.
+  it('run-revoked-1\'s revoked-event sources resolve to a real context, boundary matching its compromised_since', () => {
+    const ctxIds = new Set(MOCK_CONTEXTS.map((c) => c.body.ctx_id));
+    const run = MOCK_RUNS.find((r) => r.runId === 'run-revoked-1');
+    expect(run?.trust?.revoked?.length).toBeGreaterThan(0);
+    for (const event of run!.trust!.revoked!) {
+      for (const source of event.sources) {
+        expect(ctxIds.has(source.ctxId)).toBe(true);
+      }
+    }
+    const revocationCtx = MOCK_CONTEXTS.find((c) => c.body.type === 'key-revocation')!;
+    const compromisedSince = revocationCtx.body.metadata?.compromised_since as string;
+    for (const event of run!.trust!.revoked!) {
+      expect(new Date(event.boundary).getTime()).toBe(new Date(compromisedSince).getTime());
+    }
+  });
 });
 
 describe('lineage chains', () => {
