@@ -607,15 +607,52 @@ export const REGISTRY_LABELS: Record<RegistryAuthority, string> = {
 export type CapabilityAuthority = RegistryAuthority;
 
 export interface HealthResult {
+  /**
+   * Whether the service is serving, NOT whether the request succeeded.
+   *
+   * A transport-level failure is one way to be `false`; the other is an
+   * upstream reporting degradation in-band on a 200 (the control plane returns
+   * `{ok:false}` at 200 when its database is down). `pingHealth` folds both
+   * into this one field — see the envelope table on it.
+   */
   ok: boolean;
   latencyMs?: number;
-  detail?: string;
+  /**
+   * Why `ok` is false — absent when it is true.
+   *
+   * `'degraded'` means something UPSTREAM answered and the answer was not a
+   * healthy one (the control plane's 200 with `ok:false`, the registry's 503,
+   * a 404 from a build with no `/healthz`). `'unreachable'` means nothing from
+   * beyond this console's boundary answered: a dead socket, the proxy's own
+   * 502, or any envelope the console minted itself — `middleware.ts`'s 401,
+   * 503 and Origin-mismatch 403, Next's 500 for an unset base URL. The
+   * discriminator is the proxy's
+   * `x-acdp-ui-proxy` stamp, not the status code.
+   *
+   * One case is under-claimed rather than wrong: a 200 whose body is not JSON
+   * throws a `SyntaxError`, not an `ApiError`, so it carries no stamp to read
+   * and lands on `'unreachable'` even though the upstream demonstrably
+   * answered. Deliberate — that is the fail-closed direction, and the shape of
+   * the escape is documented where it is decided (`lib/api/client.ts`,
+   * `failureKind`).
+   *
+   * A union rather than a free string because two surfaces render it verbatim
+   * to operators; a typo would reach the screen as a label.
+   */
+  detail?: 'degraded' | 'unreachable';
   /**
    * The service's own `/healthz` version string, when the response carried one
    * and could be parsed (registry-rs/control-plane/playground all now expose
    * `version` on this route, in differently-shaped envelopes). Per registry-rs's
    * own `docs/HTTP-API.md`, this field MUST be treated as opaque — display it
    * verbatim, never parse or compare it as a semver.
+   *
+   * Present on a `ok: false` result too, and meaningful there: both upstreams
+   * with a failure path put `version` on the degraded body deliberately,
+   * because build identity matters most when a service is unhealthy. It is
+   * always read from THIS response — never carried over from an earlier
+   * successful ping, which would look identical to an operator while being a
+   * weaker claim.
    */
   version?: string;
 }

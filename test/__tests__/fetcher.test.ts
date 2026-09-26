@@ -2,11 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, proxyUrl, fetchJson, fetchText, confirmSessionOrRedirect } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 
-function response(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
-  const { ok = true, status = 200 } = init;
+function response(
+  body: unknown,
+  init: { ok?: boolean; status?: number; fromUpstream?: boolean } = {},
+): Response {
+  const { ok = true, status = 200, fromUpstream = true } = init;
   return {
     ok,
     status,
+    // A real `Response` always has `headers`, and `ApiError.fromUpstream` reads
+    // the proxy's `x-acdp-ui-proxy` stamp off it. `fromUpstream: false` models
+    // an envelope the console minted itself (middleware's 401/503, the route's
+    // own 502) — those never carry the stamp.
+    headers: new Headers(fromUpstream ? { 'x-acdp-ui-proxy': 'control-plane' } : {}),
     json: async () => body,
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
   } as unknown as Response;
@@ -56,6 +64,60 @@ describe('ApiError', () => {
 
   it('isNotFound is false for non-404 statuses', () => {
     expect(new ApiError(403, 'forbidden', 'control-plane', '/x').isNotFound).toBe(false);
+  });
+
+  describe('body (the raw response text, for callers that need the bytes)', () => {
+    it('holds the response text verbatim', () => {
+      const raw = JSON.stringify({ status: 'degraded', storage: false, version: '0.1.4+gdeadbee' });
+      expect(new ApiError(503, raw, 'registry-a', '/healthz').body).toBe(raw);
+    });
+
+    it('holds the EMPTY string, where `message` substitutes prose', () => {
+      // This is the whole reason `body` exists rather than reusing `message`:
+      // the constructor falls back to a human sentence for an empty body, so a
+      // caller parsing `message` would hand `JSON.parse` the word "Request".
+      const err = new ApiError(502, '', 'control-plane', '/healthz');
+      expect(err.body).toBe('');
+      expect(err.message).toBe('Request failed with status 502');
+    });
+
+    it('does not parse or normalise the body it stores', () => {
+      expect(new ApiError(500, '  not json  ', 'playground', '/x').body).toBe('  not json  ');
+    });
+  });
+
+  describe('fromUpstream (did these bytes cross our own boundary?)', () => {
+    it('is true when the proxy stamped the response', async () => {
+      mockFetch(() => response('degraded', { ok: false, status: 503 }));
+      await expect(fetchJson('registry-a', '/healthz')).rejects.toMatchObject({ fromUpstream: true });
+    });
+
+    it.each([401, 403, 500, 502, 503])(
+      'is false for a console-minted %i, whatever the status says',
+      async (status) => {
+        // middleware's 401/503, the proxy route's own 403/502, Next's 500 for
+        // an unset base URL. Status alone cannot tell these from an upstream's
+        // — only the absent stamp can.
+        mockFetch(() => response('console', { ok: false, status, fromUpstream: false }));
+        await expect(fetchJson('registry-a', '/healthz')).rejects.toMatchObject({ fromUpstream: false });
+      },
+    );
+
+    it('defaults to false when constructed directly, so a new caller cannot over-claim', () => {
+      expect(new ApiError(503, 'x', 'registry-a', '/healthz').fromUpstream).toBe(false);
+    });
+
+    // fetchText is a second, independent throw site. Without these two, the
+    // argument could be dropped from it — or hardcoded `true` — and every
+    // other test in the repo still passes, because only fetchJson's site is
+    // exercised above.
+    it.each([
+      ['stamped', true],
+      ['unstamped', false],
+    ] as const)('threads the stamp through fetchText too (%s)', async (_label, fromUpstream) => {
+      mockFetch(() => response('boom', { ok: false, status: 503, fromUpstream }));
+      await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({ fromUpstream });
+    });
   });
 
   describe('errorCode (federation-proxy verifyCtxIdBinding error envelope)', () => {

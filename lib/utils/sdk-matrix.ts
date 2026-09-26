@@ -25,11 +25,20 @@ export interface SdkMatrixRowView {
 /**
  * All three backend services (control-plane, playground, registry-rs) expose a
  * `version` field on /healthz today — this console just never read it. A row
- * only ever claims `versionIsLive: true` when a real, reachable /healthz
- * response actually carried a parseable version string; a service that's
- * down, still loading, or running an older deployment predating this field
- * falls back to MOCK_SDK_MATRIX's static reference string, explicitly marked
- * unconfirmed (`versionIsLive: false`) rather than silently substituted.
+ * only ever claims `versionIsLive: true` when a real /healthz response
+ * actually carried a parseable version string; a service still loading, or
+ * running an older deployment predating this field, falls back to
+ * MOCK_SDK_MATRIX's static reference string, explicitly marked unconfirmed
+ * (`versionIsLive: false`) rather than silently substituted.
+ *
+ * A DOWN service is not automatically in that fallback group. Both upstreams
+ * with a failure path put `version` on the degraded body deliberately, and
+ * `pingHealth` reads it there, so a down row typically names the build that is
+ * down and reports it live — because it was observed live, on that very
+ * response. (This paragraph is the correction: the docblock previously listed
+ * "down" alongside loading and older-deployment as always falling back, which
+ * stopped being true once the failure path learned to read the version. The
+ * predicate below needed no change; only this description did.)
  * Demo mode's own `versionIsLive: true` branch just below is issue #69a's
  * defect (reference-ness reading as live-confirmed in demo mode), tracked
  * and fixed separately — this function's real-mode path below it is what

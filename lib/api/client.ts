@@ -70,14 +70,66 @@ const AUTHORITY_TO_SERVICE: Record<RegistryAuthority, ProxyService> = {
 const authToService = (a: RegistryAuthority): ProxyService => AUTHORITY_TO_SERVICE[a];
 
 // ── Health ────────────────────────────────────────────────────────────
-// Every service's /healthz body shapes its own envelope differently
-// (registry-rs: {status, storage, version}; control-plane/playground: {ok,
-// service, version}) but all three key the version string the same way, so
-// reading just that one field tolerates the rest of the shape varying.
+//
+// This is the only place in the repo that has to know all three /healthz
+// envelopes, so the table lives here rather than being re-derived from three
+// sibling repos:
+//
+// | service                 | healthy                                 | degraded                                      |
+// |-------------------------|-----------------------------------------|-----------------------------------------------|
+// | registry-a / registry-b | `200 {status:"ok", storage:true, …}`    | **`503`** `{status:"degraded", storage:false, …}` |
+// | control-plane           | `200 {ok:true, service, version}`       | **`200`** `{ok:false, service, version}`       |
+// | playground              | `200 {ok:true, service, version}`       | *(no failure path — static `ok:true`)*         |
+//
+// Only the registry signals degradation through the HTTP status. The control
+// plane signals it IN-BAND at 200 (`health.controller.ts` computes `dbOk` and
+// returns it as a field; no interceptor maps it to a status code), which is a
+// defensible choice for the same reason the registry spells out for `/livez` —
+// a k8s liveness probe must not restart a process that cannot fix the database
+// by restarting. The console talks to deployments it does not control, so it
+// has to tolerate both shapes regardless of what upstream might do later.
+//
+// Both upstreams with a failure path put `version` on the DEGRADED arm too
+// (the `…` in both cells above), deliberately: build identity matters most
+// when a service is unhealthy. Phase 7 of this plan exists to read it there.
+//
+// All three key the version string identically, so reading that one field
+// tolerates the rest of the shape varying.
 function extractHealthVersion(body: unknown): string | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
   const version = (body as { version?: unknown }).version;
   return typeof version === 'string' ? version : undefined;
+}
+
+/**
+ * In-band degradation on an otherwise successful response.
+ *
+ * Success path only — an HTTP-level failure already means `ok: false` and does
+ * not come through here.
+ *
+ * Reads as an ALLOW-list of the two signals upstream actually emits, because
+ * the default has to be "healthy": absence of a degradation marker is not
+ * evidence of degradation, and inventing one would red-flag every working
+ * older backend — the mirror of the bug this closes, and worse. So `{}`, a
+ * non-object body, and a body with neither key all stay healthy.
+ *
+ * `status !== 'ok'` was rejected as the test: any value a future upstream adds
+ * would be read pessimistically, and `"degraded"` is the only one anything
+ * sends today. (An earlier version of this note claimed the registry's
+ * `/livez` already emits other values. It does not — `meta.rs` `livez()` sends
+ * `{"status":"ok", version}`, the same marker a healthy `/healthz` sends, and
+ * the console never calls that route anyway. The rejection stands on the
+ * forward-compatibility half alone.)
+ *
+ * `ok` must be a real boolean — `{ok:"false"}` from a stringly-typed upstream
+ * stays healthy rather than turning the whole console red.
+ */
+function extractHealthOk(body: unknown): boolean {
+  if (typeof body !== 'object' || body === null) return true;
+  const { ok, status } = body as { ok?: unknown; status?: unknown };
+  if (ok === false) return false;
+  if (status === 'degraded') return false;
+  return true;
 }
 
 export async function pingHealth(service: ProxyService, demoMode: boolean): Promise<HealthResult> {
@@ -85,9 +137,94 @@ export async function pingHealth(service: ProxyService, demoMode: boolean): Prom
   const start = performance.now();
   try {
     const body = await fetchJson<unknown>(service, '/healthz');
-    return { ok: true, latencyMs: Math.round(performance.now() - start), version: extractHealthVersion(body) };
+    const ok = extractHealthOk(body);
+    return {
+      ok,
+      // A service that answered a 200 and called itself unwell is not
+      // "unreachable". The surfaces that render a word rather than a dot need
+      // to tell that from silence, so the reason is carried rather than
+      // re-derived from `ok` alone.
+      //
+      // (Not a universal claim that anything with a latency is reachable: a
+      // 200 whose body is not JSON throws a `SyntaxError`, which is not an
+      // `ApiError`, and lands on `unreachable` despite having answered. That
+      // path is indistinguishable from a dead socket without more plumbing
+      // than the distinction is worth.)
+      detail: ok ? undefined : 'degraded',
+      latencyMs: Math.round(performance.now() - start),
+      version: extractHealthVersion(body),
+    };
+  } catch (err) {
+    // The version rides the degraded/503 body too, deliberately and on both
+    // upstreams that have a failure path: build identity matters most when the
+    // service is unhealthy. Run it through the SAME extractor the success path
+    // uses, so the two envelopes cannot diverge in how strictly they are read.
+    //
+    // Only a version read from THIS response is shown. Remembering one from a
+    // prior successful ping and displaying it on a later down row would look
+    // identical to the operator while being a different claim — live evidence
+    // versus a stale memory — which is the honesty defect this plan's earlier
+    // phases exist to close.
+    return {
+      ok: false,
+      detail: failureKind(err),
+      latencyMs: Math.round(performance.now() - start),
+      version: failureVersion(err),
+    };
+  }
+}
+
+/**
+ * The upstream's build string off a failure body — and only ever the upstream's.
+ *
+ * Gated on the same `fromUpstream` fact `detail` is, and for the same reason.
+ * `sdk-matrix.ts` turns any version present here into `versionIsLive: true`, so
+ * an ungated read would let a console-minted envelope that happened to carry a
+ * JSON `version` put a build name on a `✗ down` row and mark it live — bytes
+ * that never crossed our boundary, presented as live evidence from the service.
+ * No envelope this console mints carries `version` today; that is a fact about
+ * today's code, not an invariant anything enforces, and it is exactly the class
+ * of claim this plan exists to stop making.
+ */
+function failureVersion(err: unknown): string | undefined {
+  if (!(err instanceof ApiError) || !err.fromUpstream) return undefined;
+  return extractHealthVersion(parseJsonOrUndefined(err.body));
+}
+
+/**
+ * Which kind of failure this was — did anything beyond our own boundary answer?
+ *
+ * Keyed on `ApiError.fromUpstream`, which is a FACT (the proxy stamps
+ * `x-acdp-ui-proxy` only when re-streaming an upstream response), not a guess
+ * from the status code. An earlier version of this deny-listed 502 as "the one
+ * status the console generates itself" and was wrong in a way that mattered:
+ * `middleware.ts` mints a **401** for a missing session and a **503** for an
+ * unconfigured password (and a **403** on an Origin mismatch, which a GET
+ * `/healthz` never reaches), and Next returns **500** for an unset
+ * `*_BASE_URL` — all of which that rule labelled `degraded`, which is a
+ * positive claim that the upstream reported itself unwell. The 401 is not
+ * hypothetical:
+ * `Topbar` renders four of these pills on every route including `/login`, and
+ * `redirectToLoginOn401` deliberately no-ops there, so every password-protected
+ * deployment's sign-in screen would have accused all four services of being
+ * degraded while the console's own gate refused the request.
+ *
+ * `degraded` therefore means "something upstream answered, and the answer was
+ * not a healthy one" — the registry's 503, the control plane's in-band 200, an
+ * upstream 404 from a build with no `/healthz`. It does NOT claim the service
+ * diagnosed itself; only that the bytes came from out there.
+ */
+function failureKind(err: unknown): 'degraded' | 'unreachable' {
+  if (!(err instanceof ApiError)) return 'unreachable';
+  return err.fromUpstream ? 'degraded' : 'unreachable';
+}
+
+/** Most error bodies are not JSON (plain text, an upstream's own 502 page). */
+function parseJsonOrUndefined(body: string): unknown {
+  try {
+    return JSON.parse(body);
   } catch {
-    return { ok: false, latencyMs: Math.round(performance.now() - start) };
+    return undefined;
   }
 }
 
