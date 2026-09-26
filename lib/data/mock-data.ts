@@ -13,6 +13,7 @@ import type {
   KnownAgent,
   KnownRegistry,
   LineageGraph,
+  LogWitnessState,
   PrometheusMetric,
   RegistryAuthority,
   RegistryCapabilities,
@@ -1158,6 +1159,119 @@ export const MOCK_JWKS: Record<RegistryAuthority, JwkSet> = {
         y: 'x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0',
       },
     ],
+  },
+};
+
+/**
+ * Transparency-log witness state, keyed by DNS authority (this endpoint is
+ * control-plane-side and authority-keyed, not `RegistryAuthority`-keyed like
+ * JWKS above). An authority absent from this map is the demo's 404 — the
+ * control plane's REGISTRY_NOT_FOUND, meaning no witness state was ever
+ * recorded, which the UI renders as no card rather than an error.
+ *
+ * The two entries deliberately exercise both halves of the null-vs-zero rule,
+ * so the degrade branch is reachable by a human in demo mode and not only in
+ * tests:
+ *   - A: quorum consumption ENABLED. Fresh quorum is met, one cosignature is
+ *     stale (fresh 2 < witnessed 3) and two verified under retired keys.
+ *   - B: quorum consumption produced NOTHING — all five quorum fields SQL
+ *     `NULL`, alongside a failed consistency proof, which is exactly what
+ *     upstream writes on that path whether or not quorum is enabled.
+ *     The card must show B's checkpoint and alert and print no quorum
+ *     figures at all; printing `0 witnesses` here would assert "we checked
+ *     and found none" when the truth is "we never checked".
+ * B also carries a live alert, using a real `WitnessAlertReason` value and
+ * the `{error, previous}` detail shape the upstream's own raiseAlert call
+ * sites emit — not an invented vocabulary.
+ */
+export const MOCK_LOG_WITNESS: Record<string, LogWitnessState> = {
+  [AUTH_A]: {
+    authority: AUTH_A,
+    logId: `${AUTH_A}/log/v1`,
+    lastWitnessedSize: 4821,
+    lastRootHash: 'sha256:9f2c41ab7d0e5c83b6a14f97e2d3c8b05a6f1e94d7c2b830a5e1f6c4d9b72e08',
+    lastSuccessAt: iso(240),
+    consecutiveFailures: 0,
+    alert: { alerted: false, reason: null, detail: null, at: null },
+    checkpoints: [
+      {
+        logId: `${AUTH_A}/log/v1`,
+        treeSize: 4821,
+        rootHash: 'sha256:9f2c41ab7d0e5c83b6a14f97e2d3c8b05a6f1e94d7c2b830a5e1f6c4d9b72e08',
+        timestamp: iso(258),
+        witnessedAt: iso(240),
+        signatureValid: true,
+        consistencyOk: true,
+        witnessedCount: 3,
+        meetsQuorum: true,
+        freshWitnessedCount: 2,
+        meetsFreshQuorum: true,
+        // Orthogonal to witnessedCount, never summed with it — picked so no
+        // pair of the rendered figures adds up to another one on screen.
+        historicalWitnessedCount: 2,
+      },
+      {
+        logId: `${AUTH_A}/log/v1`,
+        treeSize: 4796,
+        rootHash: 'sha256:2b8e07d5c1a9f34608e7b2d5c9a1f480e3b7c206d9a5f1e8c4b03a7d6e29f145',
+        timestamp: iso(3870),
+        witnessedAt: iso(3840),
+        signatureValid: true,
+        consistencyOk: true,
+        witnessedCount: 3,
+        meetsQuorum: true,
+        freshWitnessedCount: 3,
+        meetsFreshQuorum: true,
+        historicalWitnessedCount: 0,
+      },
+    ],
+    total: 2,
+  },
+  [AUTH_B]: {
+    authority: AUTH_B,
+    logId: `${AUTH_B}/log/v1`,
+    lastWitnessedSize: 1094,
+    lastRootHash: 'sha256:5d13c8b46f0a927e3c5b18d04a6f2e91b7c3d580a9e4f162c8b05d7a3e619f24',
+    lastSuccessAt: iso(9600),
+    consecutiveFailures: 3,
+    alert: {
+      alerted: true,
+      reason: 'consistency_failed',
+      detail: {
+        error: 'consistency proof 1094→1120 failed: leaf hash not reachable from the prior root',
+        previous: {
+          log_id: `${AUTH_B}/log/v1`,
+          tree_size: 1094,
+          root_hash: 'sha256:5d13c8b46f0a927e3c5b18d04a6f2e91b7c3d580a9e4f162c8b05d7a3e619f24',
+        },
+      },
+      at: iso(1800),
+    },
+    checkpoints: [
+      {
+        logId: `${AUTH_B}/log/v1`,
+        treeSize: 1094,
+        rootHash: 'sha256:5d13c8b46f0a927e3c5b18d04a6f2e91b7c3d580a9e4f162c8b05d7a3e619f24',
+        timestamp: iso(9640),
+        witnessedAt: iso(9600),
+        signatureValid: true,
+        // FALSE, not true, and the alert above is why. Upstream persists the
+        // offending head with `consistencyOk: false` immediately before raising
+        // `consistency_failed` (`checkpoint-witness.service.ts` :484→:485 and
+        // :521→:522), and rows come back newest-first — so the head an operator
+        // sees under a standing consistency alert is the one that failed. A
+        // fixture reading "Consistency: proven" directly beneath
+        // `consistency_failed` would teach the demo's viewer a state the real
+        // system cannot produce.
+        consistencyOk: false,
+        witnessedCount: null,
+        meetsQuorum: null,
+        freshWitnessedCount: null,
+        meetsFreshQuorum: null,
+        historicalWitnessedCount: null,
+      },
+    ],
+    total: 1,
   },
 };
 

@@ -9,6 +9,7 @@ import {
   startRun,
   listRevocations,
   getRegistryJwks,
+  getLogWitness,
   listEnrollments,
   enrollRegistry,
   getLineage,
@@ -101,6 +102,52 @@ describe('real-mode proxy paths', () => {
     const fetchMock = mockFetch(() => jsonResponse({ keys: [] }));
     await getRegistryJwks('b', false);
     expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/registry-b/.well-known/jwks.json');
+  });
+
+  it('getLogWitness → /registries/{authority}/log-witness', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'r-a', consecutiveFailures: 0, alert: { alerted: false }, checkpoints: [], total: 0 }));
+    await getLogWitness('registry-a.example.com', false);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/proxy/control-plane/registries/registry-a.example.com/log-witness',
+    );
+  });
+
+  it('getLogWitness percent-encodes the authority so it can never add a path segment', async () => {
+    // A well-formed DNS authority is a fixed point of encodeURIComponent, so
+    // the test above would stay green with the encoding deleted. This is the
+    // case that makes the call load-bearing: the authority reaches the client
+    // from control-plane data, and an unencoded '/' in it would splice a new
+    // segment into the proxy path — walking straight off the allow-listed
+    // route that the '$' anchor exists to pin down.
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'x', consecutiveFailures: 0, alert: { alerted: false }, checkpoints: [], total: 0 }));
+    await getLogWitness('registry-a.example.com/../enroll', false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toBe(
+      '/api/proxy/control-plane/registries/registry-a.example.com%2F..%2Fenroll/log-witness',
+    );
+    // The literal form that would escape the route, stated separately so the
+    // assertion above cannot be "fixed" by pasting in whatever it produced.
+    expect(url).not.toContain('/../');
+  });
+
+  it('getLogWitness surfaces a 404 as an ApiError rather than an empty state', async () => {
+    // The caller distinguishes "no witness state recorded" from "witnessed,
+    // nothing to report" — collapsing the 404 into `{checkpoints: []}` here
+    // would make an unwitnessed registry indistinguishable from a witnessed
+    // one with an empty retention window.
+    mockFetch(() => upstreamResponse({ errorCode: 'REGISTRY_NOT_FOUND' }, 404));
+    await expect(getLogWitness('nobody.example.com', false)).rejects.toMatchObject({
+      status: 404,
+      errorCode: 'REGISTRY_NOT_FOUND',
+    });
+  });
+
+  it('getLogWitness surfaces a 403 as an ordinary error, with no admin-scope special-casing', async () => {
+    // Unlike /auth/revocations this endpoint has no admin guard upstream, so a
+    // 403 is a genuine surprise. The client must not translate it into
+    // anything reassuring or self-diagnosing.
+    mockFetch(() => upstreamResponse({ message: 'nope' }, 403));
+    await expect(getLogWitness('registry-a.example.com', false)).rejects.toMatchObject({ status: 403 });
   });
 
   it('listEnrollments → reads { data } from /registries/enrollments', async () => {

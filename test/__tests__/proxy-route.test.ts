@@ -209,6 +209,9 @@ describe('proxy route — route allow-list', () => {
         path: decodedCatchAllPath('contexts', encodeURIComponent('acdp://registry-a.playground.local/f4a2c9e1')),
       },
       { method: 'GET', service: 'control-plane', path: ['auth', 'revocations'] },
+      // A DNS authority: dots, no slashes — so the `[^/]+` in the pattern is
+      // the right shape here, unlike the ctx_id case above.
+      { method: 'GET', service: 'control-plane', path: ['registries', 'registry-a.example.com', 'log-witness'] },
       { method: 'GET', service: 'registry-a', path: ['healthz'] },
       { method: 'GET', service: 'registry-a', path: ['contexts', 'search'] },
       { method: 'GET', service: 'registry-a', path: ['lineages', 'l1'] },
@@ -224,6 +227,50 @@ describe('proxy route — route allow-list', () => {
       const res = await handler(new NextRequest(url, { method }), ctx(service, path));
       expect(res.status, `${method} ${service}/${path.join('/')}`).not.toBe(403);
       expect(fetchMock, `${method} ${service}/${path.join('/')}`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // The `:authority/log-witness` entry is the only pattern in the file with a
+  // variable segment in the MIDDLE, so it is the one most able to over-reach.
+  // Each case below is a route that sits one character away from it and must
+  // stay out: the admin acknowledgement sibling, the collection-level alerts
+  // route, a multi-segment authority, the wrong method, and an arbitrary
+  // second tail under a legitimate authority.
+  it('the log-witness pattern admits exactly one shape and nothing adjacent to it', async () => {
+    const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness'],
+        why: 'read-only: no write verb is allow-listed on this path',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'registry-a.example.com', 'log-witness', 'ack'],
+        why: 'the admin acknowledgement sibling is deliberately not proxied',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'log-witness', 'alerts'],
+        why: 'the collection-level alerts route is a different, unproxied feature',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'a', 'b', 'log-witness'],
+        why: 'a DNS authority is one segment; [^/]+ must not span a slash',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'registry-a.example.com', 'enrollments'],
+        why: 'the variable segment must not admit an arbitrary tail',
+      },
+    ];
+    for (const { method, path, why } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/control-plane/${path.join('/')}`;
+      const handler = method === 'GET' ? GET : POST;
+      const res = await handler(new NextRequest(url, { method }), ctx('control-plane', path));
+      expect(res.status, `${method} ${path.join('/')} — ${why}`).toBe(403);
+      expect(fetchMock, `${method} ${path.join('/')} — ${why}`).not.toHaveBeenCalled();
     }
   });
 });

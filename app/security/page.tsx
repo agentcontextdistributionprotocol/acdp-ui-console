@@ -1,12 +1,14 @@
 'use client';
 
-import { ShieldCheck, KeyRound, Ban } from 'lucide-react';
+import { ShieldCheck, KeyRound, Ban, ScrollText } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
+import { LogWitnessCard } from '@/components/registries/log-witness-card';
 import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useRevocations, useRegistryJwks } from '@/lib/hooks/use-security';
+import { useRegistries } from '@/lib/hooks/use-registries';
 import { ApiError } from '@/lib/api/fetcher';
 import { formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { timeAgo, clockTime, shortId } from '@/lib/utils/format';
@@ -20,6 +22,8 @@ export default function SecurityPage() {
       <RevocationFeed />
       <div style={{ height: 18 }} />
       <SigningKeys />
+      <div style={{ height: 18 }} />
+      <LogWitness />
     </div>
   );
 }
@@ -89,6 +93,41 @@ function SigningKeys() {
       <JwksCard authority="a" label="Registry A" />
       <JwksCard authority="b" label="Registry B" />
     </div>
+  );
+}
+
+/**
+ * Transparency-log witness quorum, one card per registry (RFC-ACDP-0012).
+ *
+ * The registry list comes from `useRegistries()` rather than the hardcoded
+ * `a`/`b` pair `SigningKeys` uses, because this endpoint lives on the control
+ * plane and is keyed by DNS authority — it covers every enrolled registry, so
+ * the section grows correctly when a third is enrolled. JWKS is hardcoded
+ * because it is fetched from the two proxied registry services directly.
+ *
+ * Each card renders nothing at all when its authority has no witness state
+ * (a 404), so the section can legitimately end up empty.
+ */
+function LogWitness() {
+  const registries = useRegistries();
+  const rows = registries.data ?? [];
+  if (rows.length === 0) return null;
+
+  return (
+    <>
+      <div className="feed-header" style={{ border: 'none', paddingBottom: 6 }}>
+        <h2>
+          <ScrollText size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+          Transparency-log witness
+        </h2>
+        <span className="card-sub">Witnessed checkpoints + cosignature quorum · RFC-ACDP-0012</span>
+      </div>
+      <div className="grid-2">
+        {rows.map((r) => (
+          <LogWitnessCard key={r.authority} authority={r.authority} />
+        ))}
+      </div>
+    </>
   );
 }
 
