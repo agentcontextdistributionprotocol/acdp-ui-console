@@ -1168,12 +1168,20 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 ];
 
 // ── SDK matrix (config page) ──────────────────────────────────────────
+//
+// Reference versions only — no `status` field. Each row's status is COMPUTED
+// by `buildSdkMatrixRows` from whether the row has a backing service and what
+// that service's /healthz said; it was never read from here. Carrying a static
+// `status: 'ok'` alongside that was a trap: after the row/mode split, a row
+// could hold `'ok'` here while computing `'reference'`, and a future reader
+// would have no way to know which one the UI honours.
 export const MOCK_SDK_MATRIX = [
-  { component: 'ACDP spec', version: '0.4.0 Final', status: 'ok' },
-  { component: 'acdp-rs library', version: '0.14.1', status: 'ok' },
-  { component: 'acdp-py binding', version: '0.14.1', status: 'ok' },
-  { component: 'acdp-node binding', version: '0.14.1', status: 'ok' },
-  { component: 'Registry (Rust/axum)', version: '0.4.0 (witness aggregation)', status: 'ok' },
-  { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)', status: 'ok' },
-  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S34)', status: 'ok' },
+  { component: 'ACDP spec', version: '0.4.0 Final' },
+  { component: 'acdp-rs library', version: '0.14.1' },
+  { component: 'acdp-py binding', version: '0.14.1' },
+  { component: 'acdp-node binding', version: '0.14.1' },
+  // Label must match SDK_MATRIX_ROW_SERVICE's key exactly; see the note there.
+  { component: 'Registry A (Rust/axum)', version: '0.4.0 (witness aggregation)' },
+  { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)' },
+  { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S34)' },
 ];

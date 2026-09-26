@@ -52,11 +52,15 @@ describe('SDK matrix', () => {
     expect(specRow?.version).toBe('0.4.0 Final');
   });
 
-  it('every row has a non-empty component, version and ok status', () => {
+  it('every row has a non-empty component and version, and carries no status', () => {
     for (const row of MOCK_SDK_MATRIX) {
       expect(row.component.length).toBeGreaterThan(0);
       expect(row.version.length).toBeGreaterThan(0);
-      expect(row.status).toBe('ok');
+      // Status is computed by `buildSdkMatrixRows`, never stored here. This
+      // assertion replaces one that required a static `status: 'ok'` on every
+      // row — dead data the UI never read, and which could contradict the
+      // computed status once reference-ness stopped depending on the mode.
+      expect(row).not.toHaveProperty('status');
     }
   });
 });
