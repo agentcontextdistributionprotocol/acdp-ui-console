@@ -38,7 +38,13 @@ export interface ContextVerdicts {
 // ── The memo key ──────────────────────────────────────────────────────
 //
 // THE RULE: every input the effect or any of its callees dereferences must be
-// in this key. Anything read but not keyed produces a verdict computed against
+// in this key — with exactly one admitted exception, named here rather than
+// left for a reader to discover: the WALL CLOCK. Three callees pass
+// `new Date().toISOString()` for staleness windows, and `fromWasm` folds a
+// `stale` result into the verdict's detail STRING, so a verdict's text is
+// clock-dependent and unkeyed. Harmless while the windows are ten years and
+// `max_age_secs: null`, but the rule is stated absolutely everywhere else and
+// this is the one place it is not satisfied. Anything read but not keyed produces a verdict computed against
 // material the component is no longer showing — a stale green chip beside the
 // data that would have turned it red. The previous key was
 // `ctx_id:content_hash:requestedCtxId` while the effect also read
@@ -117,22 +123,48 @@ function witnessDigest(inclusion: LogInclusion | undefined | null) {
 }
 
 /**
- * Exported for tests only.
+ * The `witness_id` → selected `signature.key_id` mapping, sorted.
  *
- * Not because the hook is hard to drive — the hook-level tests are the ones
- * that prove the defect is fixed — but because some distinctions are
- * unreachable through it. A receipt re-issued under the SAME `key_id` with a
- * different `signature.value`, a cosignature re-attributed to another witness,
- * a set arriving in a different order: each needs a fixture differing in one
- * field from another fixture, which is more surface than the export costs. The
- * structural invariants this key depends on — that the signature row is
- * disjoint from the serialised body, that no row restates another — are also
- * only assertable here.
+ * Closes the one input that changed a verdict without changing this key.
+ * `verify.ts` picks a cosignature by FIRST MATCH on `witness_id`, and
+ * `resolve.ts` uses that entry's `key_id` to synthesize the `did:key`
+ * verification method. So two cosignatures sharing a `witness_id` but carrying
+ * different `key_id`s produce different quorum verdicts depending purely on
+ * which one comes first — and `witnessDigest` sorts, deliberately, so a pure
+ * reorder is invisible to it. Byte-identical key, different verdict: the stale
+ * green this file exists to prevent, through the one derivation that reads
+ * array position.
  *
- * (An earlier version of this note said the body serialisation SHADOWS
- * `body.signature`, so the signature row could not be pinned at hook level.
- * That stopped being true when `signature` was destructured out — the next
- * statement below — so deleting the row now fails a hook-level test on its own.)
+ * Keying the ORDER itself was rejected — a benign reorder would force a needless
+ * re-verify, which is exactly why `witnessDigest` sorts. What is keyed is the
+ * *derivation*: sorted, so it is invariant under every reorder that cannot
+ * change which entry `find` returns, and different exactly when the selected
+ * key is.
+ */
+function witnessKeySelection(inclusion: FullContext['log_inclusion']): string[][] | null {
+  const cosigs = inclusion?.witness_signatures;
+  if (!cosigs) return null;
+  return [...new Set(cosigs.map((c) => c.witness_id))]
+    .map((wid) => [wid, cosigs.find((c) => c.witness_id === wid)?.signature?.key_id ?? ''])
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+/**
+ * Exported for tests only — and for a narrower reason than this note used to give.
+ *
+ * NOT because mutation classes are unreachable through the hook. An earlier
+ * version claimed a receipt re-issued under the same `key_id` with a different
+ * `signature.value`, a re-attributed cosignature, and a reordered set were all
+ * hook-unreachable. They are not: the hook-level suite drives exactly those
+ * shapes via `refetch()` plus a one-field edit, and asserts the re-verify. That
+ * argument had already collapsed further than it looked when `signature` was
+ * destructured out below, making the signature row hook-killable on its own.
+ *
+ * What genuinely cannot be observed behaviourally is the set of STRUCTURAL
+ * invariants: that the signature row is disjoint from the serialised body, that
+ * no row restates another, and that the encoding is an array of a known length
+ * rather than a delimiter-joined string a registry could spell. Those are what
+ * the export earns its keep on, and they are why it stays.
  */
 export function verificationKey(ctx: FullContext, requestedCtxId: string): string {
   const { signature, ...unsigned } = ctx.body;
@@ -189,6 +221,7 @@ export function verificationKey(ctx: FullContext, requestedCtxId: string): strin
     ctx.lineage_head_receipt ?? null,
     inclusionRest,
     witnessDigest(inclusion),
+    witnessKeySelection(inclusion),
   ]);
 }
 

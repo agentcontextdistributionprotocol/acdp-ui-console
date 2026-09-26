@@ -11,7 +11,21 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      include: ['lib/**/*.ts', 'app/api/**/*.ts'],
+      // `components/**` and the page files were outside this glob, so every
+      // component test in `test/__tests__` ran and reported nothing. The number
+      // at the bottom of CI described `lib/` and `app/api/` only, while reading
+      // as the coverage of the repo — and the surfaces it omitted are the ones
+      // that render verdicts to an operator. Several defects this plan fixed
+      // (a hardcoded "all healthy" tile, `Pre-compromise 0` over a payload
+      // saying 2, a chip prop that did nothing) lived in exactly the unmeasured
+      // half.
+      //
+      // Widening drops the headline figure from 91.18% to 64.51% in one step.
+      // That drop is not a regression: the same lines were uncovered yesterday
+      // and are now counted. Recorded here so the next reader does not go
+      // looking for what "broke" — and so nobody narrows the glob back to make
+      // the number look better, which is what produced the misleading one.
+      include: ['lib/**/*.ts', 'app/api/**/*.ts', 'components/**/*.tsx', 'app/**/*.tsx'],
       exclude: [
         'lib/types.ts',
         'lib/colors.ts',

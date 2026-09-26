@@ -22,9 +22,21 @@ import {
   contextErrorMessage,
 } from '@/lib/utils/api-error-messages';
 
-/** An `ApiError` built the way `fetchJson` builds one: from a raw body string. */
-function apiError(status: number, body: unknown): ApiError {
-  return new ApiError(status, typeof body === 'string' ? body : JSON.stringify(body), 'control-plane', '/contexts/x');
+/**
+ * An `ApiError` built the way `fetchJson` builds one: from a raw body string.
+ *
+ * `fromUpstream` defaults to TRUE here because every test in this file is
+ * simulating a real backend answering — which is precisely the case the
+ * messages are written for. The console-minted case gets its own helper below,
+ * so a test can never reach the blame-an-upstream copy by accident.
+ */
+function apiError(status: number, body: unknown, fromUpstream = true): ApiError {
+  return new ApiError(status, typeof body === 'string' ? body : JSON.stringify(body), 'control-plane', '/contexts/x', fromUpstream);
+}
+
+/** An envelope this console minted itself — no `x-acdp-ui-proxy` stamp. */
+function consoleError(status: number, body: unknown = ''): ApiError {
+  return apiError(status, body, false);
 }
 
 const mismatch = apiError(502, { errorCode: 'CONTEXT_ID_MISMATCH', message: '…' });
@@ -111,14 +123,14 @@ describe('CRITERION 4: the fallbacks', () => {
     // A newer control plane, or a direct registry call — this console must not
     // guess what a code it has never seen means.
     const unknown = apiError(502, { errorCode: 'CONTEXT_WAS_EATEN_BY_A_BEAR' });
-    expect(contextErrorMessage(unknown)).toBe(contextErrorFallback(502));
+    expect(contextErrorMessage(unknown)).toBe(contextErrorFallback(apiError(502, '')));
     expect(contextErrorMessage(unknown)).not.toBe(contextErrorMessage(mismatch));
   });
 
   it('an ABSENT errorCode (a non-JSON body) falls back on status', () => {
     const html = apiError(502, '<html>502 Bad Gateway</html>');
     expect(html.errorCode).toBeUndefined();
-    expect(contextErrorMessage(html)).toBe(contextErrorFallback(502));
+    expect(contextErrorMessage(html)).toBe(contextErrorFallback(apiError(502, '')));
   });
 
   it('never renders blank, for any status', () => {
@@ -133,13 +145,14 @@ describe('CRITERION 4: the fallbacks', () => {
     // branch exists for a reason recorded in the plan's divergence note — a
     // registry answering 429 directly, or a 403 from the admin-gated routes —
     // so each reason gets an assertion.
-    expect(contextErrorFallback(403)).toMatch(/not authorized/i);
-    expect(contextErrorFallback(429)).toMatch(/rate limiting/i);
-    expect(contextErrorFallback(503)).toMatch(/rate limiting|unavailable/i);
-    expect(contextErrorFallback(500)).toMatch(/did not return this context/i);
-    expect(contextErrorFallback(400)).toBe('Could not load context.');
+    const up = (s: number) => contextErrorFallback(apiError(s, ''));
+    expect(up(403)).toMatch(/not authorized/i);
+    expect(up(429)).toMatch(/rate limiting/i);
+    expect(up(503)).toMatch(/rate limiting|unavailable/i);
+    expect(up(500)).toMatch(/did not return this context/i);
+    expect(up(400)).toBe('Could not load context.');
     // …and they are genuinely distinct, not four aliases of the default.
-    const named = [403, 404, 429, 500].map(contextErrorFallback);
+    const named = [403, 404, 429, 500].map(up);
     expect(new Set(named).size).toBe(named.length);
     for (const msg of named) expect(msg).not.toBe('Could not load context.');
   });
@@ -160,7 +173,7 @@ describe('CRITERION 4: the fallbacks', () => {
     // reached by falsiness rather than by a decision, so pin it.
     const blank = apiError(502, { errorCode: '' });
     expect(blank.errorCode).toBe('');
-    expect(contextErrorMessage(blank)).toBe(contextErrorFallback(502));
+    expect(contextErrorMessage(blank)).toBe(contextErrorFallback(apiError(502, '')));
   });
 
   it('a code-bearing NON-404 is still classified by its code, not by 404-ness', () => {
@@ -198,6 +211,63 @@ describe('CRITERION 4: the fallbacks', () => {
   });
 });
 
+describe('a console-minted envelope does not blame an upstream', () => {
+  // The branch this file exists to protect, one layer out. `middleware.ts`
+  // answers 503 when `ACDP_UI_CONSOLE_PASSWORD` is unset, the proxy route mints
+  // its own 403 for a path off the allow-list, and Next answers 500 for an
+  // unset `*_BASE_URL`. None of those bytes ever reached a registry. Keyed on
+  // the status alone, each told the operator to wait and retry, or that they
+  // were not authorized to read a context — blaming a service never contacted
+  // and prescribing an action that can never resolve it. `fromUpstream` (the
+  // `x-acdp-ui-proxy` stamp) is what separates them.
+
+  it('CRITERION: the console-side copy names THIS console, not a registry', () => {
+    const msg = contextErrorFallback(consoleError(503));
+    expect(msg).toMatch(/this console/i);
+    expect(msg).not.toMatch(/registry|control plane/i);
+    // …and it is actionable in the place the fix actually lives.
+    expect(msg).toMatch(/configuration|sign in/i);
+  });
+
+  it('DISCRIMINATES: the SAME status from upstream still blames upstream', () => {
+    // The whole point of the discriminator. If this pair ever collapses to one
+    // string, the branch has stopped doing anything and the test above would
+    // keep passing on the wrong copy.
+    for (const status of [403, 429, 500, 502, 503, 504]) {
+      expect(contextErrorFallback(consoleError(status))).not.toBe(
+        contextErrorFallback(apiError(status, '')),
+      );
+    }
+    expect(contextErrorFallback(apiError(503, ''))).toMatch(/registry/i);
+    expect(contextErrorFallback(apiError(403, ''))).toMatch(/not authorized/i);
+  });
+
+  it('404 stays ungated, because not-found is not a blame claim', () => {
+    // Demo mode throws its 404 with `fromUpstream: false`, so gating 404 on the
+    // stamp would have replaced the whole demo not-found experience with a
+    // misconfiguration warning. Asserted here so the ordering of the two guards
+    // inside `contextErrorFallback` cannot be swapped silently.
+    expect(contextErrorFallback(consoleError(404))).toBe(
+      CONTEXT_ERROR_MESSAGES.get('CONTEXT_NOT_FOUND'),
+    );
+    expect(contextErrorFallback(consoleError(404))).toBe(contextErrorFallback(apiError(404, '')));
+  });
+
+  it('a mapped errorCode still wins over the console-side branch', () => {
+    // `contextErrorMessage` consults the map first. A console-minted envelope
+    // that somehow carries a known code is answered by the code — the branch is
+    // a fallback, not an override.
+    const msg = contextErrorMessage(consoleError(502, { errorCode: 'CONTEXT_ID_MISMATCH' }));
+    expect(msg).toBe(CONTEXT_ERROR_MESSAGES.get('CONTEXT_ID_MISMATCH'));
+  });
+
+  it('never renders blank on the console side either, for any status', () => {
+    for (const status of [400, 403, 404, 418, 429, 500, 502, 503, 504]) {
+      expect(contextErrorMessage(consoleError(status))).toBeTruthy();
+    }
+  });
+});
+
 describe('the lookup is defensive about where a code came from', () => {
   it('does NOT case-fold — registry codes are snake_case and must not alias', () => {
     // `fetcher.ts`'s `error.code` fallback also matches the registry's
@@ -205,7 +275,7 @@ describe('the lookup is defensive about where a code came from', () => {
     // case would manufacture the collision the two vocabularies avoid today.
     const registryStyle = apiError(502, { error: { code: 'context_id_mismatch' } });
     expect(registryStyle.errorCode).toBe('context_id_mismatch');
-    expect(contextErrorMessage(registryStyle)).toBe(contextErrorFallback(502));
+    expect(contextErrorMessage(registryStyle)).toBe(contextErrorFallback(apiError(502, '')));
     expect(contextErrorMessage(registryStyle)).not.toBe(contextErrorMessage(mismatch));
   });
 
@@ -216,7 +286,7 @@ describe('the lookup is defensive about where a code came from', () => {
     for (const code of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
       const msg = contextErrorMessage(apiError(502, { errorCode: code }));
       expect(typeof msg).toBe('string');
-      expect(msg).toBe(contextErrorFallback(502));
+      expect(msg).toBe(contextErrorFallback(apiError(502, '')));
     }
   });
 

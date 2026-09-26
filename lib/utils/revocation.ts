@@ -123,9 +123,25 @@ export function preCompromiseCount(trust: RunTrustSummary): number {
 /**
  * Does this run carry a revocation verdict that should redden its trust icon,
  * put it in the violations list, and sort it to the top?
+ *
+ * Takes the whole `RunTrustSummary` and delegates to `failClosedCount`, so
+ * there is exactly one definition of "fail-closed" and this predicate cannot
+ * disagree with the number rendered next to it.
+ *
+ * It did. The docblock named three call sites and had none: every one of them
+ * had moved to `failClosedCount` when the counters were added, leaving this
+ * function reading `revoked[]` alone — the pre-hardening rule, preserved intact
+ * behind a comment asserting it was the one in force. On the payload the
+ * counter hardening exists for (`revokedAtOrAfter: 2`, `revoked: []`) it
+ * returns `false` where every real caller says `true`. Nothing caught it
+ * because nothing called it, and its tests passed for the same reason.
+ *
+ * Kept rather than deleted because the question it names is a real one and is
+ * asked as a boolean in three places; reshaped so that adopting it is now the
+ * cheap path and re-deriving the rule by hand is the expensive one.
  */
-export function hasFailClosedRevocation(revoked: RevocationEntry[] | undefined): boolean {
-  return failClosedEntries(revoked).length > 0;
+export function hasFailClosedRevocation(trust: RunTrustSummary): boolean {
+  return failClosedCount(trust) > 0;
 }
 
 /**

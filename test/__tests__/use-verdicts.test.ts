@@ -664,14 +664,22 @@ describe('a body JSON.stringify refuses', () => {
 // no-op in CI. This asserts it directly instead of trusting a soft gate.
 // ══════════════════════════════════════════════════════════════════════
 describe('the exhaustive-deps suppression stays gone', () => {
-  it('has no eslint-disable for react-hooks in the hook source', async () => {
+  it('has no eslint-disable of ANY kind in the hook source', async () => {
+    // Deliberately broader than `/eslint-disable[^\n]*react-hooks/`, which was
+    // the first form and which three real suppressions walk straight past: a
+    // bare `// eslint-disable-next-line` naming no rule, a multi-line block
+    // comment (the `[^\n]*` stops at the newline), and a file-wide
+    // `/* eslint-disable */`. The file contains no disable comment of any kind,
+    // so the strictly stronger assertion is available for free. Residual gap,
+    // named rather than left implicit: a per-file override in
+    // `eslint.config.mjs` would not be caught here.
     // `process.cwd()`, not `import.meta.url`: under the jsdom environment the
     // module URL is not a `file:` scheme and `readFileSync` rejects it. Vitest
     // runs from the repo root.
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');
     const src = readFileSync(join(process.cwd(), 'lib/verify/use-verdicts.ts'), 'utf8');
-    expect(src).not.toMatch(/eslint-disable[^\n]*react-hooks/);
+    expect(src).not.toMatch(/eslint-disable/);
   });
 });
 
@@ -932,6 +940,51 @@ describe('verificationKey — every row is load-bearing', () => {
     expect(pair(A, B)).toBe(pair(B, A));
   });
 
+  it('KEYS the witness_id -> selected key_id mapping, which array order silently decides', () => {
+    // The one input that changed a verdict without changing the key.
+    // `verify.ts` picks a cosignature by FIRST MATCH on `witness_id`, and
+    // `resolve.ts` builds the did:key verification method from THAT entry's
+    // `key_id`. Two cosignatures sharing a `witness_id` but carrying different
+    // `key_id`s therefore verify against different keys depending purely on
+    // which arrives first — while `witnessDigest` sorts, so the reorder is
+    // invisible to it. Byte-identical key, different verdict: a stale green.
+    const sameIdDifferentKey = (order: 0 | 1) =>
+      keyAfter((c) => {
+        const w = c.log_inclusion!.witness_signatures!;
+        const template = clone(w[0]);
+        const mk = (kid: string) => ({
+          ...clone(template),
+          witness_id: 'did:key:z6MkDuplicated',
+          signature: { ...clone(template.signature), key_id: kid },
+        });
+        const both = [mk('did:key:z6MkFirst#z6MkFirst'), mk('did:key:z6MkSecond#z6MkSecond')];
+        w.length = 0;
+        w.push(both[order], both[1 - order]);
+      });
+    expect(sameIdDifferentKey(0)).not.toBe(sameIdDifferentKey(1));
+  });
+
+  it('DISCRIMINATES: a benign reorder still costs no re-verify', () => {
+    // The reason the ORDER itself is not keyed. Distinct `witness_id`s means
+    // `find` cannot return a different entry however they are arranged, so the
+    // derived mapping — and the whole key — must be identical. A row that keyed
+    // position would fail this and re-verify for nothing.
+    const distinctIds = (order: 0 | 1) =>
+      keyAfter((c) => {
+        const w = c.log_inclusion!.witness_signatures!;
+        const template = clone(w[0]);
+        const mk = (wid: string, kid: string) => ({
+          ...clone(template),
+          witness_id: wid,
+          signature: { ...clone(template.signature), key_id: kid },
+        });
+        const both = [mk('did:key:z6MkAlpha', 'did:key:z6MkAlpha#1'), mk('did:key:z6MkBeta', 'did:key:z6MkBeta#1')];
+        w.length = 0;
+        w.push(both[order], both[1 - order]);
+      });
+    expect(distinctIds(0)).toBe(distinctIds(1));
+  });
+
   it('orders on more than signature.value alone', () => {
     // The mirror: two witnesses sharing a signature value. Contrived, but it
     // is the other half of "the WHOLE cosignature" and the only thing standing
@@ -969,7 +1022,7 @@ describe('verificationKey — every row is load-bearing', () => {
     expect(hostileKey).not.toBe(base());
     // And it is still a single well-formed JSON document, not a torn one.
     expect(() => JSON.parse(hostileKey)).not.toThrow();
-    expect(JSON.parse(hostileKey)).toHaveLength(8);
+    expect(JSON.parse(hostileKey)).toHaveLength(9);
   });
 
   it('gives a receipt-bearing and a receipt-less context different keys', () => {
