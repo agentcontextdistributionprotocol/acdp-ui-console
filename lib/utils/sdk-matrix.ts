@@ -7,10 +7,40 @@ import type { HealthResult, ProxyService } from '@/lib/types';
  * language bindings) aren't backed by any service this console talks to.
  */
 export const SDK_MATRIX_ROW_SERVICE: Record<string, ProxyService> = {
-  'Registry (Rust/axum)': 'registry-a',
+  // `registry-a` only — deliberately, and the label says so. This console
+  // talks to two registries, and while this column was static reference text
+  // that did not matter. Now that it is live, a row labelled "Registry" would
+  // present registry-a's confirmed build id as THE registry version while
+  // registry-b ran something else entirely. Showing both is a table-shape
+  // change for a design pass; naming the one we actually probed is honest today.
+  // NOTE: this key and the `component` string in MOCK_SDK_MATRIX must move
+  // together or the row silently falls through to `reference` in real mode —
+  // `sdk-matrix-utils.test.ts` asserts every key here exists there.
+  'Registry A (Rust/axum)': 'registry-a',
   'Control Plane (NestJS)': 'control-plane',
   'Playground (FastAPI)': 'playground',
 };
+
+/**
+ * The backing service for a row, or `undefined` for the four rows that have
+ * none.
+ *
+ * Exists to make that `undefined` visible to the type checker. This repo runs
+ * `strict` without `noUncheckedIndexedAccess`, so a direct
+ * `SDK_MATRIX_ROW_SERVICE[component]` is typed `ProxyService` — non-nullable —
+ * even though it really is `undefined` for four of seven rows. The
+ * `if (!service)` branch below is now the load-bearing first decision of this
+ * whole function, and against a non-nullable type TypeScript would believe
+ * that branch can never fire, so deleting it would raise no error at all.
+ * Declaring the `| undefined` here makes the guard load-bearing to the
+ * compiler too: drop it and `healthByService.get(service)` stops typechecking.
+ *
+ * The exported map keeps its `Record` type so `Object.keys`/`Object.values`
+ * stay usable by callers that legitimately want all of them.
+ */
+function backingServiceFor(component: string): ProxyService | undefined {
+  return SDK_MATRIX_ROW_SERVICE[component];
+}
 
 export type SdkMatrixRowStatus = 'ok' | 'down' | 'unknown' | 'reference';
 
@@ -39,24 +69,37 @@ export interface SdkMatrixRowView {
  * "down" alongside loading and older-deployment as always falling back, which
  * stopped being true once the failure path learned to read the version. The
  * predicate below needed no change; only this description did.)
- * Demo mode's own `versionIsLive: true` branch just below is issue #69a's
- * defect (reference-ness reading as live-confirmed in demo mode), tracked
- * and fixed separately — this function's real-mode path below it is what
- * this phase corrects, and deliberately doesn't touch the demo branch.
+ *
+ * **Reference-ness is a property of the ROW, not of the mode.** The four rows
+ * with no entry in `SDK_MATRIX_ROW_SERVICE` — the spec and the three language
+ * bindings — are not backed by anything this console can probe in *either*
+ * mode, so they are `reference` in both. That check therefore runs FIRST, and
+ * `demoMode` decides only what the health probe reports, which is the one
+ * thing demo mode is entitled to fake.
+ *
+ * Demo mode claims no live version at all, for any row. It never pings, so it
+ * has no live version to report: `pingHealth`'s demo branch returns no
+ * `version` field (asserted in `client-demo.test.ts`), and a row asserting
+ * `versionIsLive: true` beside a probe that demonstrably returned nothing is
+ * incoherent whichever row it is. `status: 'ok'` for the service-backed rows
+ * stays — the demo is a story about a system that is up, and faking the probe
+ * is exactly what it is for. Faking *provenance* is not.
  */
 export function buildSdkMatrixRows(
   demoMode: boolean,
   healthByService: ReadonlyMap<ProxyService, HealthResult | undefined>,
 ): SdkMatrixRowView[] {
   return MOCK_SDK_MATRIX.map((row) => {
-    const service = SDK_MATRIX_ROW_SERVICE[row.component];
+    const service = backingServiceFor(row.component);
 
-    if (demoMode) {
-      return { component: row.component, version: row.version, versionIsLive: true, status: 'ok' };
-    }
-
+    // Row-intrinsic first: no backing service in any mode means `reference` in
+    // any mode. Only below this does the mode get a say.
     if (!service) {
       return { component: row.component, version: row.version, versionIsLive: false, status: 'reference' };
+    }
+
+    if (demoMode) {
+      return { component: row.component, version: row.version, versionIsLive: false, status: 'ok' };
     }
 
     const health = healthByService.get(service);
