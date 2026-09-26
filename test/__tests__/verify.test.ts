@@ -356,7 +356,7 @@ describe('verifyRegistryReceipt', () => {
     // acdp-wasm 0.14.1 parses `expected_ctx_id` via CtxId::parse before the
     // body cross-check and THROWS on a non-conforming id, rather than
     // returning a {valid:false} verdict like every other rejection path.
-    // fromWasm's existing try/catch (verify.ts:48-60) already handles any
+    // fromWasm's existing try/catch already handles any
     // thrown wasm error uniformly — this proves that coverage extends to
     // this specific new failure mode too, not just a generic Error.
     resolveDidKey.mockReturnValue(JSON.stringify({ algorithm: 'ed25519', public_key_b64: 'raw-key' }));

@@ -181,8 +181,40 @@ describe('RunTrustPanel — was revocation checked at all?', () => {
       />,
     );
     expect(statValue('Revoked')).toBe('0');
-    expect(statValue('Pre-compromise')).toBe('0');
+    // TWO, not zero — the counter says two and the array is empty. This
+    // assertion used to read `'0'` under a title claiming "zeros included",
+    // pinning the exact defect the surrounding phase exists to remove: a stat
+    // stating a number the payload contradicts, on the panel whose whole job is
+    // never to do that. `failClosedCount` had been made counter-aware and its
+    // pre-compromise counterpart had not.
+    expect(statValue('Pre-compromise')).toBe('2');
     expect(screen.queryByText(/Key revocation not reported/)).toBeNull();
+  });
+
+  it('DISCRIMINATES: the pre-compromise stat still reads the array when it is the larger source', () => {
+    // The other half of the `max`. With an entry present and no counter, the
+    // stat must come from the array — otherwise "counter-aware" would quietly
+    // mean "counter-only", losing detail upstream does emit today.
+    render(
+      <RunTrustPanel
+        trust={summary({
+          revoked: [
+            {
+              eventId: 'e1',
+              ctxId: 'c1',
+              status: 'pre_compromise',
+              boundary: '2026-01-01T00:00:00Z',
+              trustClass: 'producer_signed',
+              sources: [],
+            },
+          ],
+          keyRevocationPreCompromise: 0,
+          keyRevocationRevokedAtOrAfter: 0,
+          keyRevocationRevokedTimeUnverifiable: 0,
+        })}
+      />,
+    );
+    expect(statValue('Pre-compromise')).toBe('1');
   });
 
   it('PROOF ARM: audited === 0 renders absent even with non-zero counters', () => {

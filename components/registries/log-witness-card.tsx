@@ -14,11 +14,16 @@ import type { LogWitnessCheckpoint, LogWitnessAlert } from '@/lib/types';
  * "We counted", as distinct from "we never counted".
  *
  * This is the single most important line in the file. The control plane writes
- * SQL `NULL` to every quorum column when `WITNESS_QUORUM_ENABLED=false`, and an
- * older deployment omits them entirely — so absence means *quorum consumption
- * is switched off*, while `0` means *we ran the count and no trusted witness
- * attested this head*, which is the alarming case an operator most needs to
- * see. `x ?? 0` and `if (x)` both erase exactly that distinction, in the
+ * SQL `NULL` to every quorum column in at least three situations — quorum
+ * consumption disabled, ANY failure-path persist (six upstream call sites omit
+ * the quorum argument entirely, so a head can be all-null with quorum
+ * *enabled*, e.g. one whose checkpoint signature failed before quorum was ever
+ * attempted), and a deployment too old to have the columns. They are not
+ * distinguishable from here, which is why the row below says "not reported"
+ * rather than "disabled". What they share is the only thing that matters:
+ * absence means *we never counted*, while `0` means *we ran the count and no
+ * trusted witness attested this head*, which is the alarming case an operator
+ * most needs to see. `x ?? 0` and `if (x)` both erase exactly that distinction, in the
  * direction that hides a real failure behind a reassuring blank. Hence a
  * `typeof` test, everywhere, with no shorthand. (The cursor's
  * `lastWitnessedSize` gets the same treatment for the same reason: a log with
@@ -44,9 +49,9 @@ function decided(x: boolean | null | undefined): x is boolean {
  * explicit "not reported" line. Silently dropping four rows and saying nothing
  * looks identical to a rendering bug from the operator's side — "where did the
  * numbers go?" deserves an answer, and the honest answer is that this head was
- * never counted. The wording stays at "not reported" rather than "disabled"
- * because absence cannot distinguish `WITNESS_QUORUM_ENABLED=false` from a
- * control plane too old to have the columns at all.
+ * never counted — see `counted()` above for the three ways that happens, none
+ * of which this console can tell apart, which is why the wording stays at "not
+ * reported" rather than "disabled".
  */
 function hasQuorumData(cp: LogWitnessCheckpoint): boolean {
   return (

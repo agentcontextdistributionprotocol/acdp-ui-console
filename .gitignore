@@ -18,3 +18,8 @@ CLAUDE.md
 scripts/ui-walk.mjs
 scripts/ui-run-flow.mjs
 scripts/ui-interactive.mjs
+# /drive run bookkeeping — deliberately local, never committed.
+.drive.lock
+PROGRESS.md
+ASSUMPTIONS.md
+DECISIONS.md

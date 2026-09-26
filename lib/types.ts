@@ -155,8 +155,13 @@ export interface RunTrustSummary {
   // They ARE genuinely absent against a control plane that predates the field.
   // Use `runRevocationReported()` (`lib/utils/revocation.ts`) rather than a
   // presence check — it handles both, and carries the proof arm that
-  // `audited === 0` makes definitive. Tracked upstream as
-  // acdp-control-plane#176.
+  // `audited === 0` makes definitive.
+  //
+  // acdp-control-plane#176 asked upstream for an explicit signal and shipped
+  // (their PR #178) — but ONLY on `/dashboard/overview`, which gained a
+  // `features` object and a nullable tile. The RUN-scoped payload these three
+  // fields belong to was not changed, so the ambiguity above is still real
+  // here even though the dashboard's version of it is now solvable.
   keyRevocationPreCompromise?: number;
   keyRevocationRevokedAtOrAfter?: number;
   keyRevocationRevokedTimeUnverifiable?: number;
@@ -244,17 +249,22 @@ export interface CpDashboardOverview {
   didMethods?: Array<{ method: 'did:web' | 'did:key' | 'other'; publish_count: number }>;
   // RFC-ACDP-0014: window-scoped key-revocation counters.
   //
-  // Absent ONLY against a control plane that predates the field. This comment
-  // previously also claimed absence when `KEY_REVOCATION_CHECK_ENABLED=false`,
-  // and said that was why the tile could never be "a misleading zero-filled
-  // tile" — which is precisely what shipped. `dashboard.service.ts` builds this
-  // object unconditionally with `?? 0` on all three members and no reference to
-  // the feature flag, and that flag defaults to **false**. So the gate this
-  // comment justified only ever fired against a pre-Phase-14 deployment.
+  // Optional for TWO reasons now, and the history is worth keeping because
+  // this comment has been wrong in both directions.
   //
-  // Use `dashboardRevocationReported()` (`lib/utils/revocation.ts`), which
-  // treats an all-zero payload as not-reported. Provisional until
-  // acdp-control-plane#176 gives us an explicit signal.
+  //  1. A control plane that predates the field omits it.
+  //  2. Since acdp-control-plane#178 the field is `null` when
+  //     `KEY_REVOCATION_CHECK_ENABLED=false`. An earlier version of this
+  //     comment claimed exactly that and was wrong at the time — upstream then
+  //     built it unconditionally with `?? 0` — so the correction said "absent
+  //     ONLY against a control plane that predates the field". That correction
+  //     is now itself out of date. The claim was premature, not false.
+  //
+  // Both land on absent, so `dashboardRevocationReported()`
+  // (`lib/utils/revocation.ts`) stays correct either way. What it still cannot
+  // do is tell "enabled and clean" from "never checked"; the `features` object
+  // that same upstream release added answers that, and is not modelled here
+  // yet — issue #97.
   keyRevocation?: { preCompromise: number; revokedAtOrAfter: number; revokedTimeUnverifiable: number };
 }
 

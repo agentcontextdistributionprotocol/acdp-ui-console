@@ -171,8 +171,9 @@ describe('revocationChipClass', () => {
 // Was revocation checked AT ALL? A different question from "is this verdict a
 // violation", and the payload cannot answer it directly: the counters are
 // always numbers (`?? 0`) and `revoked` is always present (`[]` when the check
-// is disabled), while `KEY_REVOCATION_CHECK_ENABLED` — default false — is on
-// no HTTP surface. Provisional until acdp-control-plane#176.
+// is disabled), while `KEY_REVOCATION_CHECK_ENABLED` — default false — reaches
+// no run-scoped surface. (acdp-control-plane#176 shipped a `features` flag, but
+// on `/dashboard/overview` only — see lib/utils/revocation.ts.)
 // ══════════════════════════════════════════════════════════════════════
 function summary(over: Partial<Parameters<typeof runRevocationReported>[0]> = {}) {
   return {

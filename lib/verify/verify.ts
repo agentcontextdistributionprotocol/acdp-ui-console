@@ -187,8 +187,11 @@ const CTX_ID_BINDING_UNCHECKABLE: ReadonlyArray<{
 // whose comment (above) reads a throw as "malformed host input (RFC-ACDP spec
 // violation in the material itself)". That reading does not hold here, and the
 // dominant trigger shows why: a body with NO `signature` throws
-// `invalid body JSON: missing field \`signature\``, yet `lib/types.ts:310`
-// declares `signature?` optional, `:318` declares `data_refs?` optional, and
+// `invalid body JSON: missing field \`signature\``, yet `lib/types.ts`'s
+// `ContextBody` declares BOTH `signature?` and `data_refs?` optional (cited by
+// field name, not line: an earlier version of this note pinned line numbers
+// that later commits pushed 33 lines out of place, landing the argument this
+// whole phase rests on on two unrelated fields), and
 // `context-detail.tsx` renders an unsigned context with a neutral `unsigned`
 // chip as a legitimate state. Mapping that to `failed` renders
 // "✗ ctx_id binding · verification failed" — the one verdict in this module
@@ -239,10 +242,12 @@ const CTX_ID_BINDING_UNCHECKABLE: ReadonlyArray<{
 //
 // THIS OVERRIDES TWO RECORDED, CONFIRMED REJECTIONS, both named so a future
 // simplification pass does not re-reject the change by pointing at them:
-// `ASSUMPTIONS.md` alternative (c) of "UI-2 Phase 2: ctxIdBinding's two
-// strict-parse failure surfaces" (the `invalid expected_ctx_id:` arm) and
-// alternative (a) of the `fromWasm` entry (the `invalid body JSON:` arm).
-// Their stated grounds were (i) string matching is brittle across acdp-wasm
+// alternative (c) of UI-2 Phase 2's "ctxIdBinding's two strict-parse failure
+// surfaces" (the `invalid expected_ctx_id:` arm) and alternative (a) of the
+// `fromWasm` entry (the `invalid body JSON:` arm). Both were recorded in the
+// plan's assumptions log, which is a local working file and NOT in this repo —
+// so their grounds are restated here in full rather than cited, since a clone
+// has no way to look them up. They were: (i) string matching is brittle across acdp-wasm
 // versions — now answered by the real-binary prefix test, which did not exist
 // when they were written; (ii) the hover tooltip already carries the needed
 // information "for anyone who hovers" — a `title` attribute is invisible on
@@ -254,9 +259,11 @@ const CTX_ID_BINDING_UNCHECKABLE: ReadonlyArray<{
 //
 // NOT touched: `verifyReceipt`'s mapping (`verifyRegistryReceipt` below) and
 // `fromWasm` itself. Widening this to `fromWasm` would silently re-decide
-// DECISIONS.md's deferred question about `verifyReceipt`'s strict `body_json`
+// a deliberately deferred question about `verifyReceipt`'s strict `body_json`
 // parse on a schema-drifted-but-cryptographically-valid REAL body, which is
-// pending a live-registry smoke test. The cost of that scoping, stated: on a
+// pending a live-registry smoke test. (Deferred in the plan's decision log,
+// another local-only working file — hence the question is stated here rather
+// than pointed at.) The cost of that scoping, stated: on a
 // body carrying a `signature` but no `data_refs`, one view shows
 // `ctx_id binding · body not parseable` (amber) beside
 // `registry receipt · verification failed` (red) — two colours for one cause.

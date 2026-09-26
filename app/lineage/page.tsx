@@ -164,7 +164,7 @@ function ByLineage({ demoMode }: { demoMode: boolean }) {
             the WHOLE lineage chain in one `getLineage` call and `onOpen` just selects
             an already-fetched entry by its own `body.ctx_id` (lineage-chain.tsx) — so
             there is no independently-requested id here to bind against; the check is
-            structurally tautological on this page (see ASSUMPTIONS.md). Still wired
+            structurally tautological on this page. Still wired
             for chip-language consistency with the other two views, not because it can
             meaningfully fail here. */}
         {openCtx && <ContextDetail ctx={openCtx} requestedCtxId={openCtx.body.ctx_id} />}

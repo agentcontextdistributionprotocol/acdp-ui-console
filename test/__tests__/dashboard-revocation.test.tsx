@@ -69,10 +69,11 @@ describe('dashboard — Key Revocation with an all-zero payload', () => {
     // Half one: the card is still there. A card that vanishes is
     // indistinguishable from a control plane that predates the feature.
     expect(card).toBeInTheDocument();
-    expect(card.textContent).toContain('Revocation checking is not reported by this deployment');
+    expect(card.textContent).toContain('Nothing in this window carried a revocation classification');
     // Half two: no numeric KPI inside it. Asserted structurally rather than by
-    // searching for the string "0" — the citation `acdp-control-plane#176`
-    // contains digits, and a substring check would be satisfied by them.
+    // searching for the string "0" — the surrounding prose has carried digits
+    // before (it used to cite an upstream issue number), and a substring check
+    // would have been satisfied by those.
     expect(card.querySelectorAll('.kpi-value')).toHaveLength(0);
     expect(card.textContent).not.toContain('Pre-compromise (authorized)');
     expect(card.textContent).not.toContain('Revoked at/after boundary');
@@ -88,21 +89,30 @@ describe('dashboard — Key Revocation with an all-zero payload', () => {
     const card = revocationCard();
     const values = [...card.querySelectorAll('.kpi-value')].map((v) => v.textContent);
     expect(values).toEqual(['9', '0', '0']);
-    expect(card.textContent).not.toContain('not reported by this deployment');
+    expect(card.textContent).not.toContain('Nothing in this window carried');
   });
 
   it('a pre-Phase-14 backend that omits the field lands in the same absent state', () => {
     renderWith(overview({ keyRevocation: undefined }));
     const card = revocationCard();
-    expect(card.textContent).toContain('Revocation checking is not reported by this deployment');
+    expect(card.textContent).toContain('Nothing in this window carried a revocation classification');
     expect(card.querySelectorAll('.kpi-value')).toHaveLength(0);
   });
 
-  it('names the upstream issue, so the provisional heuristic points somewhere', () => {
+  it('scopes the absence claim to the WINDOW, never to the deployment', () => {
+    // The copy used to read "Revocation checking is not reported by this
+    // deployment" — a claim this card cannot support and that the demo dataset
+    // refutes one click away: `DEMO_WINDOW_REVOCATION` is all-zero at 1h and
+    // non-zero at 6h, so the same deployment produced both verdicts. Evidence
+    // gathered over a window can only ever license a statement about that
+    // window; /trust's equivalent copy already got this right.
     renderWith(
       overview({ keyRevocation: { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 } }),
     );
-    expect(revocationCard().textContent).toContain('acdp-control-plane#176');
+    const text = revocationCard().textContent ?? '';
+    expect(text).toContain('window');
+    expect(text).not.toMatch(/not reported by this deployment/);
+    expect(text).not.toMatch(/this deployment (does not|never)/);
   });
 
   it('records that the counters are window-scoped and counted at audit time', () => {
