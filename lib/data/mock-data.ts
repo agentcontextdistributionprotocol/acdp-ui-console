@@ -855,11 +855,50 @@ export const MOCK_ENROLLMENTS: RegistryEnrollment[] = [
 
 export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities> = {
   // registry-a hosts the receipts profile directly (playground consolidated to a
-  // two-registry topology): its capabilities advertise the full ACDP 0.3.0
-  // trust-profile stack — RFC-ACDP-0010 receipts, RFC-ACDP-0011 head receipts,
-  // RFC-ACDP-0012 transparency log, RFC-ACDP-0013 lifecycle.
+  // two-registry topology): its capabilities advertise the full trust-profile
+  // stack — RFC-ACDP-0010 receipts, RFC-ACDP-0011 head receipts, RFC-ACDP-0012
+  // transparency log, RFC-ACDP-0013 lifecycle.
+  //
+  // `acdp_version` is 0.5.0. The demo describes ONE registry-a and used to give
+  // it two different protocol versions on two different pages: this value on
+  // /registries (`registry-card.tsx`) and the SDK matrix's registry row on
+  // /config.
+  //
+  // 0.5.0 is not a judgement call — it is what the real binary advertises.
+  // Both playground registries build from `acdp-registry-rs`
+  // (`acdp-playground/docker-compose.yml`), whose
+  // `acdp_version_claim()` folds an UNCONDITIONAL `(5, "0.5.0")` anchors claim
+  // into its max-over-claims (`crates/acdp-registry-server/src/main.rs`,
+  // `ANCHORS_VERSION_CLAIM`). Its own comment: "this always advertises >= 0.5.0
+  // regardless of config", its own test asserts `"0.5.0"` on bare defaults, and
+  // `docs/HTTP-API.md` states it unconditionally. In real mode this page shows
+  // 0.5.0; the demo now says the same thing.
+  //
+  // Both earlier numbers were superseded upstream rather than wrong-at-the-time:
+  // 0.3.0 came from `acdp-playground/config/registry-a.toml`'s own comment about
+  // the receipts/lifecycle/log ladder, and 0.4.0 is a middle rung that the
+  // unconditional anchors claim now shadows. Note also that the demo carries
+  // `s33_anchors` below, and a publish with `anchors` is REJECTED by a registry
+  // advertising < 0.5.0 — so 0.4.0 would have made the demo internally
+  // impossible, not merely stale. (`s33_anchors` is in MOCK_SCENARIOS, far
+  // above this block.)
+  //
+  // Do NOT reconcile `MOCK_CRYPTO.keyRevocation.hashed.acdp_version` ('0.5.0')
+  // against anything here. It is a different field on a different type
+  // (`ContextBody.acdp_version` in `lib/types.ts` — acdp-rs calls that type
+  // `Body` — not `RegistryCapabilities.acdp_version`) and it sits
+  // inside a signed fixture's hash preimage: editing it breaks the signature.
+  // A grep-driven "align the versions" pass is exactly what would hit both.
+  //
+  // `profiles` is deliberately NOT extended. registry-rs advertises a closed
+  // set (`acdp-registry-types/src/config.rs`, `REGISTRY_ADVERTISABLE_PROFILES`)
+  // and none of it is version- or witness-specific — a registry may aggregate
+  // cosignatures under `acdp-registry-transparency-log` without advertising
+  // anything new (RFC-ACDP-0015 §6.1). So raising the protocol version needs no
+  // new profile and must not invent one. `acdp_version` is the protocol spoken;
+  // `profiles` are capability flags. They move independently.
   a: {
-    acdp_version: '0.3.0',
+    acdp_version: '0.5.0',
     registry_did: 'did:web:registry-a.playground.local',
     authority: AUTH_A,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
@@ -874,6 +913,28 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
     anonymous_public_reads: true,
     limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
   },
+  // registry-b stays at 0.1.0 ON PURPOSE — it is the demo's older, simpler
+  // peer, and the point is heterogeneity: a federation where every registry
+  // advertises the same thing would not exercise the console's version-aware
+  // surfaces at all. Nothing compares it against the SDK matrix, which has one
+  // registry row. Do not "fix" this to match a.
+  //
+  // Be honest about what that costs: against the real binary this value is
+  // COUNTERFACTUAL, and by the same evidence that forces `a` to 0.5.0. Both
+  // playground registries build from the same image and the 0.5.0 claim is
+  // unconditional, so a real registry-b would also advertise 0.5.0. It is kept
+  // at 0.1.0 because a federation whose peers all advertise the same thing
+  // exercises none of the console's version-aware surfaces — a demo-narrative
+  // choice knowingly made against the facts, which is exactly the kind of thing
+  // that should be written down rather than discovered later.
+  //
+  // Its `profiles` are NOT evidence for that story and should not be read as
+  // such. `acdp-consumer` is a profile a registry is explicitly forbidden to
+  // advertise, and `acdp-federated` is not a spec profile id at all (the real
+  // one is `acdp-registry-federated`) — a real registry refuses to start with
+  // either. They are demo shorthand that predates this plan. Left alone here
+  // because correcting them is a dataset change with its own blast radius, not
+  // because they are right. Tracked as issue #95.
   b: {
     acdp_version: '0.1.0',
     registry_did: 'did:web:registry-b.playground.local',
@@ -1181,7 +1242,12 @@ export const MOCK_SDK_MATRIX = [
   { component: 'acdp-py binding', version: '0.14.1' },
   { component: 'acdp-node binding', version: '0.14.1' },
   // Label must match SDK_MATRIX_ROW_SERVICE's key exactly; see the note there.
-  { component: 'Registry A (Rust/axum)', version: '0.4.0 (witness aggregation)' },
+  // 0.5.0, matching what the real registry advertises and what
+  // MOCK_CAPABILITIES.a now says — see the note there. The parenthetical names
+  // WHY the claim is 0.5.0: RFC-ACDP-0016 external anchors, which registry-rs
+  // folds in unconditionally. It used to read "(witness aggregation)", which is
+  // the 0.4.0 rung and no longer the reason for the number.
+  { component: 'Registry A (Rust/axum)', version: '0.5.0 (external anchors)' },
   { component: 'Control Plane (NestJS)', version: '0.4.0 (witness cosigning)' },
   { component: 'Playground (FastAPI)', version: '0.4.0 (S28-S34)' },
 ];

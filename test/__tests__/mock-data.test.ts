@@ -37,14 +37,102 @@ describe('mock scenarios', () => {
 });
 
 describe('SDK matrix', () => {
-  it("the acdp-rs row matches the version this console's wasm is locked to", () => {
-    const wasmVersion: string =
-      packageLock.packages['node_modules/@agentcontextdistributionprotocol/acdp-wasm'].version;
-    const wasmMajorMinor = wasmVersion.split('.').slice(0, 2).join('.');
-    const rustRow = MOCK_SDK_MATRIX.find((r) => r.component === 'acdp-rs library');
-    expect(rustRow).toBeDefined();
-    const rustMajorMinor = rustRow!.version.split('.').slice(0, 2).join('.');
-    expect(rustMajorMinor).toBe(wasmMajorMinor);
+  /**
+   * The LOCKED acdp-wasm version — the lock, never `package.json`'s `^0.14.1`
+   * range. The range is a floor; the lock is the fact, and it is what a
+   * dependabot bump actually changes.
+   */
+  const lockedWasmVersion: string =
+    packageLock.packages['node_modules/@agentcontextdistributionprotocol/acdp-wasm'].version;
+
+  function rowVersion(component: string): string {
+    const row = MOCK_SDK_MATRIX.find((r) => r.component === component);
+    if (!row) throw new Error(`No SDK matrix row '${component}'`);
+    return row.version;
+  }
+
+  // ── Version drift (issue #69c) ────────────────────────────────────────
+  //
+  // WHAT THESE THREE ROWS MEAN, because the guard is only as honest as that:
+  // they name the ACDP library release this console's own pinned artifact was
+  // cut from. All four — the `acdp` crate, the PyPI and npm bindings, and the
+  // `acdp-wasm` this console bundles — are stamped from the same `acdp-rs`
+  // release at publish time (its `*-release.yml` workflows), which is why npm
+  // `acdp` and PyPI `acdp` both read 0.14.1 today, matching our lock. That
+  // shared origin is the coupling; being "built against" all three would not be
+  // true, since this repo has no acdp-node dependency and no Python at all.
+  //
+  // They do NOT claim to be the LATEST published version, and that distinction
+  // is load-bearing: as of 2026-09-25 crates.io `acdp` is 0.14.2 while PyPI and
+  // npm are still 0.14.1, so "the published SDK version" is not even a single
+  // number. Pinning these rows to it would make the demo assert something this
+  // repo cannot check and cannot keep true.
+  //
+  // 0.14.2 is NOT a trivial patch, and this comment previously called it
+  // "CI-only", which was false. It carries an RFC-ACDP-0014 §5 security
+  // regression fix (acdp-rs#301): a did:key producer could self-sign a
+  // revocation of its own key via the §10 interim form and have it accepted,
+  // on registries advertising `acdp_version` in [0.3.0, 0.5.0). This console
+  // does not consume that crate, so the row is still right — but the reason is
+  // "we do not ship it", not "nothing happened".
+  //
+  // What this repo CAN check is its own lockfile, so that is what the rows are
+  // pinned to. Whether those published versions have moved on is genuinely
+  // unanswerable from inside this repo — that is issue #83's scheduled
+  // published-version check, deliberately not built here.
+  //
+  // The old test could not catch drift at all, for two reasons. It truncated
+  // both sides to `major.minor`, so `0.8.3` vs `0.8.5` — the exact drift that
+  // recurred — compared equal; and it only ever looked at `acdp-rs library`,
+  // so the py and node rows sat at 0.8.0 through two lockfile bumps completely
+  // uncovered. #63 patched these strings and #69 found them stale again six
+  // days later.
+  //
+  // **This takes acdp-wasm bumps off the unattended-merge path, deliberately.**
+  // Every dependabot acdp-wasm PR now goes RED until these three strings are
+  // edited in that same PR. `auto-merge.yml` still ARMS native auto-merge; the
+  // PR is blocked on the failing required check and merges by itself once the
+  // strings are fixed. Note the shape: this reddens only on a PR that is
+  // already changing the thing it guards, and the fix is three lines right
+  // there — a different animal from a scheduled check that reddens on someone
+  // else's timetable with no PR to fix it in.
+  it.each(['acdp-rs library', 'acdp-py binding', 'acdp-node binding'])(
+    'the %s row matches the exact acdp-wasm version this console locks',
+    (component) => {
+      expect(rowVersion(component)).toBe(lockedWasmVersion);
+    },
+  );
+
+  it("registry-a's advertised protocol version agrees with its SDK matrix row", () => {
+    // The two pages that show a version for the SAME demo registry:
+    // /registries renders `MOCK_CAPABILITIES.a.acdp_version`, /config renders
+    // this row. They said 0.3.0 and 0.4.0 respectively until this change, and
+    // both were superseded — the real binary advertises 0.5.0 unconditionally.
+    //
+    // Scope: this guards the DEMO dataset against contradicting itself. Real
+    // mode is a separate question and still open — /registries shows the live
+    // capability document while /config shows the live /healthz BUILD version
+    // or falls back to the reference string, which are different numbers by
+    // design. That display question is #69a's, not this test's.
+    const advertised = MOCK_CAPABILITIES.a.acdp_version;
+    // Shape first. `startsWith` alone is a weak guard: an empty string is a
+    // prefix of everything, and so are '0' and '0.5' — all three would pass
+    // against '0.5.0 (external anchors)' while saying nothing. Requiring a full
+    // dotted triple is what makes the prefix check mean "the numbers agree".
+    expect(advertised).toMatch(/^\d+\.\d+\.\d+$/);
+    // Then the coupling. Prefix rather than equality because the matrix row
+    // carries a curated parenthetical the capability document does not, and
+    // normalising that away would re-enable the string-merging #69 objected to
+    // on the record. The row must START with the advertised version and then
+    // either stop or continue with a space — so '0.5.0' does not match a row
+    // reading '0.5.01'.
+    // ORDER IS LOAD-BEARING: `advertised` is interpolated into a RegExp with
+    // only dots escaped, which is safe ONLY because the shape assertion above
+    // has already proved it is digits and dots. Move or delete that line and
+    // dataset content becomes a regular expression.
+    expect(rowVersion('Registry A (Rust/axum)')).toMatch(
+      new RegExp(`^${advertised.replace(/\./g, '\\.')}( |$)`),
+    );
   });
 
   it('the ACDP spec row is 0.4.0 Final (RFC-ACDP-0015 promoted 2026-08-28)', () => {
@@ -305,7 +393,13 @@ describe('receipts + degraded demo parity', () => {
 
   it('registry-a hosts the receipts profile in a two-registry topology (registry-c retired)', () => {
     expect(MOCK_CAPABILITIES.a.profiles).toContain('acdp-registry-receipts');
-    expect(MOCK_CAPABILITIES.a.acdp_version).toBe('0.3.0');
+    // 0.5.0: what the real registry-rs binary advertises unconditionally, and
+    // what the demo's own s33_anchors scenario requires (a publish carrying
+    // `anchors` is rejected by a registry claiming less). Was 0.3.0, which gave
+    // one registry two different versions on two pages. `profiles` is unchanged
+    // — registry-rs's advertisable set has no version-specific entry, so the
+    // two fields move independently.
+    expect(MOCK_CAPABILITIES.a.acdp_version).toBe('0.5.0');
     expect(MOCK_CAPABILITIES).not.toHaveProperty('c');
   });
 });
