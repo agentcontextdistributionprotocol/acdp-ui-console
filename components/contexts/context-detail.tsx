@@ -34,24 +34,30 @@ import type { Verdict } from '@/lib/verify/verify';
  * `unavailable` ("material only") is honest about a missing signer key/DID doc
  * and is NEVER shown as a pass.
  *
- * `unavailableLabel` overrides that default status word for a verdict that is
- * `unavailable` for some OTHER reason — "material only" would then be actively
- * misleading. Optional and additive: every caller that omits it renders exactly
- * as before. Note it is NOT the same thing as `label`, which is the field-name
- * prefix rendered before every status word ("ctx_id binding · material only").
+ * A verdict may carry its own `unavailableLabel`, which overrides that default
+ * status word when it is `unavailable` for some OTHER reason — "material only"
+ * would then be actively misleading. It is NOT the same thing as `label`, which
+ * is the field-name prefix rendered before every status word ("ctx_id binding ·
+ * material only").
+ *
+ * The chip deliberately reads that label off the verdict and takes no prop for
+ * it. An earlier shape had both, and the one call site that passed the prop
+ * passed `verdicts.ctxIdBinding?.unavailableLabel` — the same value the
+ * fallback already resolved, from the same object. Two spellings of one path,
+ * where deleting either kept every test green: a prop that looked like the
+ * mechanism while the verdict field did the work. One path now, so the chip
+ * cannot be wired up to look right and do nothing.
  */
 function VerdictChip({
   verdict,
   ready,
   error,
   label,
-  unavailableLabel,
 }: {
   verdict?: Verdict;
   ready: boolean;
   error?: string;
   label?: string;
-  unavailableLabel?: string;
 }) {
   if (error && !verdict) {
     return (
@@ -83,12 +89,12 @@ function VerdictChip({
   return (
     <span className="chip warn" title={verdict.detail}>
       {prefix}
-      {/* The explicit prop wins, but a verdict that carries its own label is
-          honoured wherever it is rendered — otherwise a future producer setting
-          `unavailableLabel` on a verdict whose chip doesn't forward the prop
-          would have it silently dropped, with no type error and no failing
-          test, and the chip would claim a missing key it actually has. */}
-      {unavailableLabel ?? verdict.unavailableLabel ?? 'material only'}
+      {/* Read off the verdict, so a producer setting `unavailableLabel` has it
+          honoured wherever the verdict is rendered. Routed through a prop, a
+          producer setting it on a surface whose chip didn't forward the prop
+          would have it silently dropped — no type error, no failing test — and
+          the chip would claim a missing key it actually has. */}
+      {verdict.unavailableLabel ?? 'material only'}
     </span>
   );
 }
@@ -336,7 +342,6 @@ export function ContextDetail({
             ready={verdicts.ready}
             error={verdicts.error}
             label="ctx_id binding"
-            unavailableLabel={verdicts.ctxIdBinding?.unavailableLabel}
           />
           {b.signature ? (
             <VerdictChip

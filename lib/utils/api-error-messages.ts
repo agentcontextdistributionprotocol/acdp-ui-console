@@ -105,9 +105,31 @@ const GENERIC = 'Could not load context.';
  * body) or one this console has never seen — a newer control plane, or a direct
  * registry call. Never blank, and never a claim about trust: a status alone
  * establishes nothing about whether a context was substituted.
+ *
+ * **Keyed on the error, not on a bare status, and that is load-bearing.** Every
+ * arm below except 404 names an upstream as the cause, and `fetcher.ts` spells
+ * out at length that a status alone cannot tell an upstream's envelope from one
+ * this console minted — `middleware.ts`'s own 503 when `ACDP_UI_CONSOLE_PASSWORD`
+ * is unset, the proxy route's own 403 and 502, Next's 500 for an unset
+ * `*_BASE_URL`. Keyed on the number, a console-side 503 told the operator "the
+ * registry is unavailable or rate limiting right now — wait and retry": blaming
+ * a service that was never contacted, and prescribing an action that can never
+ * resolve it. That is the same could-not-establish over-claim this module exists
+ * to remove, one layer out — so it is gated on the `x-acdp-ui-proxy` stamp the
+ * console already carries rather than guessed from the status.
+ *
+ * 404 stays ungated deliberately: not-found is not a blame claim, and it is the
+ * status demo mode throws (with `fromUpstream: false`) for a context it has no
+ * body for.
  */
-export function contextErrorFallback(status: number): string {
+export function contextErrorFallback(error: ApiError): string {
+  const { status } = error;
   if (status === 404) return CONTEXT_ERROR_MESSAGES.get('CONTEXT_NOT_FOUND')!;
+  if (!error.fromUpstream) {
+    // The bytes never left this console. Say so, rather than inventing an
+    // upstream to blame — the operator's fix is here, not over there.
+    return 'This console could not complete the request — it looks misconfigured or signed out. Check the deployment configuration, or sign in again.';
+  }
   if (status === 403) return 'Not authorized to read this context.';
   // 429 is the registry answering this console directly; 503 is the control
   // plane's own translation of an upstream 429 when the code is missing.
@@ -133,5 +155,5 @@ export function contextErrorMessage(error: unknown): string {
     const mapped = CONTEXT_ERROR_MESSAGES.get(error.errorCode);
     if (mapped) return mapped;
   }
-  return contextErrorFallback(error.status);
+  return contextErrorFallback(error);
 }

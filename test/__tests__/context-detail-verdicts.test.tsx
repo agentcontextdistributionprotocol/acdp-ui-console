@@ -165,12 +165,15 @@ describe('ContextDetail — every other VerdictChip is unchanged', () => {
     ).toBeInTheDocument();
   });
 
-  it('a verdict that carries its own `unavailableLabel` is honoured by a chip that does not forward the prop', () => {
-    // `unavailableLabel` lives on `Verdict`, so any producer can set it, but
-    // only the ctx_id-binding chip passes the prop through. Without this
-    // fallback a future producer setting it on another surface would have it
-    // silently dropped — no type error, no failing test — and the chip would
-    // claim a missing signer key it actually has.
+  it('a verdict that carries its own `unavailableLabel` is honoured on EVERY chip', () => {
+    // `unavailableLabel` lives on `Verdict` and the chip reads it off the
+    // verdict, so any producer can set it on any surface and have it rendered.
+    // This asserts that on a chip other than ctx_id-binding, because the chip
+    // briefly took a prop for it too and exactly one call site passed one —
+    // sourced from this same field. Had the prop been the real path, a producer
+    // setting it anywhere else would have had it silently dropped (no type
+    // error, no failing test) and the chip would claim a missing signer key it
+    // actually has.
     renderWith(ok('served body is bound to the requested ctx_id'), {
       producerSignature: {
         status: 'unavailable',
@@ -184,7 +187,7 @@ describe('ContextDetail — every other VerdictChip is unchanged', () => {
     expect(screen.queryByText(`sig ${CTX.body.signature!.algorithm} · material only`)).not.toBeInTheDocument();
   });
 
-  it('a chip that passes `label` renders the field-name prefix, not the new prop', () => {
+  it('a chip that passes `label` renders the field-name prefix, not the status word', () => {
     renderWith(ok('served body is bound to the requested ctx_id'));
     // `label` (field-name prefix) and `unavailableLabel` (status word) are
     // different axes — reusing `label` for the latter would have changed these.

@@ -80,7 +80,7 @@ describe('counting', () => {
     // The inverse criterion, and as important as the positive one: fixing the
     // under-claim must not introduce a false alarm on an authorized event.
     const authorizedOnly = [entry('pre_compromise', 'a'), entry('pre_compromise', 'b')];
-    expect(hasFailClosedRevocation(authorizedOnly)).toBe(false);
+    expect(hasFailClosedRevocation(summary({ revoked: authorizedOnly }))).toBe(false);
     expect(failClosedEntries(authorizedOnly)).toHaveLength(0);
   });
 
@@ -88,10 +88,41 @@ describe('counting', () => {
     // NB: "no fail-closed entries" is not the same claim as "revocation was
     // checked and found nothing" — that distinction is Phase 3's, and these
     // helpers deliberately do not speak to it.
-    expect(hasFailClosedRevocation(undefined)).toBe(false);
-    expect(hasFailClosedRevocation([])).toBe(false);
+    expect(hasFailClosedRevocation(summary({ revoked: undefined }))).toBe(false);
+    expect(hasFailClosedRevocation(summary({ revoked: [] }))).toBe(false);
     expect(failClosedEntries(undefined)).toEqual([]);
     expect(preCompromiseEntries(undefined)).toEqual([]);
+  });
+
+  it('hasFailClosedRevocation CANNOT disagree with the number rendered beside it', () => {
+    // It could, and did. The predicate took `revoked[]` and nothing else, so on
+    // the exact payload the counter hardening exists for it answered "clean"
+    // while `failClosedCount` answered 2. It survived review because it had
+    // zero callers — every real one had already moved to `failClosedCount` —
+    // behind a docblock that named three. A boolean and a count derived from
+    // one payload must not be able to contradict each other, so it now
+    // delegates rather than re-deriving the rule.
+    const counterOnly = summary({
+      revoked: [],
+      keyRevocationRevokedAtOrAfter: 2,
+      keyRevocationRevokedTimeUnverifiable: 0,
+    });
+    expect(failClosedCount(counterOnly)).toBe(2);
+    expect(hasFailClosedRevocation(counterOnly)).toBe(true);
+
+    // …and the agreement is total, not a single lucky fixture.
+    const payloads = [
+      summary({ revoked: [] }),
+      summary({ revoked: [entry('pre_compromise')] }),
+      summary({ revoked: [entry('revoked_at_or_after')] }),
+      summary({ revoked: [entry('something_new')] }),
+      summary({ revoked: [], keyRevocationRevokedTimeUnverifiable: 1 }),
+      summary({ revoked: [], keyRevocationPreCompromise: 3 }),
+      summary({ revoked: [entry('pre_compromise')], keyRevocationRevokedAtOrAfter: 1 }),
+    ];
+    for (const p of payloads) {
+      expect(hasFailClosedRevocation(p)).toBe(failClosedCount(p) > 0);
+    }
   });
 });
 

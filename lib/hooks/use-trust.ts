@@ -5,6 +5,7 @@ import { getCpDashboard, getCpRun, listCpRuns } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import {
   failClosedCount,
+  hasFailClosedRevocation,
   preCompromiseCount,
   runRevocationReported,
   violationCount,
@@ -98,7 +99,7 @@ export function useTrust(window = '24h') {
           errors: acc.errors + trust.errors,
           flaggedRuns: acc.flaggedRuns + (trust.flagged.length > 0 ? 1 : 0),
           flaggedEvents: acc.flaggedEvents + trust.flagged.length,
-          revokedRuns: acc.revokedRuns + (failClosedCount(trust) > 0 ? 1 : 0),
+          revokedRuns: acc.revokedRuns + (hasFailClosedRevocation(trust) ? 1 : 0),
           revokedEvents: acc.revokedEvents + failClosedCount(trust),
           preCompromiseEvents: acc.preCompromiseEvents + preCompromiseCount(trust),
           revocationReportedRuns: acc.revocationReportedRuns + (runRevocationReported(trust) ? 1 : 0),
