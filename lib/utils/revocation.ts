@@ -98,6 +98,29 @@ export function preCompromiseEntries(revoked: RevocationEntry[] | undefined): Re
 }
 
 /**
+ * How many historically-authorized verdicts this run carries, reading BOTH the
+ * array and the counter — the exact counterpart of `failClosedCount`, and
+ * added for the same reason after the asymmetry shipped.
+ *
+ * `failClosedCount` was made counter-aware and this one was not, so a payload
+ * with `revoked: []` and `keyRevocationPreCompromise: 2` rendered
+ * **`Pre-compromise 0`** on the very panel whose purpose is never to state a
+ * number nobody established — while the identical counter rendered as a figure
+ * on the dashboard. A stat reading zero over a payload that says two is the
+ * same defect as a green check over a live violation, pointed the other way:
+ * both assert a fact the evidence contradicts.
+ *
+ * `max`, like its sibling: neither source may be trusted to be complete, and
+ * under-reporting an authorized-but-retired key is still under-reporting.
+ */
+export function preCompromiseCount(trust: RunTrustSummary): number {
+  return Math.max(
+    preCompromiseEntries(trust.revoked).length,
+    trust.keyRevocationPreCompromise ?? 0,
+  );
+}
+
+/**
  * Does this run carry a revocation verdict that should redden its trust icon,
  * put it in the violations list, and sort it to the top?
  */
@@ -151,24 +174,27 @@ export function violationCount(trust: RunTrustSummary): number {
 
 // ── was revocation checked AT ALL? ─────────────────────────────────────
 //
-// Distinct from everything above, and the harder question. The payload cannot
-// say "checked, clean" versus "never checked": the control plane builds
-// `keyRevocation` UNCONDITIONALLY with `?? 0` on every member, always emits
-// `revoked` (as `[]` when disabled), makes `key_revocation_status` NOT NULL
-// DEFAULT 'none', and exposes `KEY_REVOCATION_CHECK_ENABLED` — which defaults
-// to **false** — on no HTTP surface at all. So with the check off, every
-// revocation figure is a legitimate, meaningless zero.
+// Distinct from everything above, and the harder question: "checked, clean"
+// versus "never checked". The run-scoped payload still cannot say — it always
+// emits `revoked` (as `[]` when disabled) and `key_revocation_status` is NOT
+// NULL DEFAULT 'none', so with the check off every revocation figure is a
+// legitimate, meaningless zero.
 //
 // Rendering those zeros is a confident "we checked and found nothing" from a
 // deployment that never looked. Under-claiming is the correct direction for an
 // ambiguous trust signal, per this console's standing invariant that it never
 // renders an unverified thing as verified.
 //
-// PROVISIONAL. The heuristic below is designed to be deleted: we have asked
-// upstream for an explicit signal in acdp-control-plane#176 (a null field, a
-// capabilities object, or a per-payload discriminator — any of them closes
-// this). Replace `revocationReported*` with that signal when it lands; do not
-// build more inference on top of these.
+// PROVISIONAL, AND NOW OUTLIVED UPSTREAM ON ONE SURFACE. When this heuristic
+// was written the control plane exposed `KEY_REVOCATION_CHECK_ENABLED` nowhere,
+// and acdp-control-plane#176 asked for a signal. **It shipped** (their PR #178):
+// `GET /dashboard/overview` now returns `keyRevocation: null` when the check is
+// off and carries a `features` object with all six audit/witness flags. So for
+// the DASHBOARD tile an explicit answer now exists and this inference is
+// obsolete — tracked here as issue #97, deliberately not folded into the plan
+// that wrote this. Do not build more inference on top of these; the run-scoped
+// half below is still the only option, because `features` rides on the overview
+// payload and nothing else.
 
 /**
  * Did this RUN's payload actually carry a revocation classification?
@@ -198,7 +224,9 @@ export function violationCount(trust: RunTrustSummary): number {
  * deployment with the check ENABLED and a genuinely clean estate also reads
  * "not reported", and since it never classifies anything it stays that way.
  * That is the healthy steady state and the one an operator most wants
- * confirmed, and it is exactly what acdp-control-plane#176 fixes.
+ * confirmed. acdp-control-plane#176 asked for the signal that would fix it and
+ * shipped as their PR #178 — but on `/dashboard/overview` only; this run-scoped
+ * payload was not touched, so the cost above still stands here.
  */
 export function runRevocationReported(trust: RunTrustSummary): boolean {
   // Entries FIRST, before the defensive guard below. `revoked[]` rows are
@@ -234,9 +262,17 @@ export type DashboardRevocation = {
  * PREDICATE so the three KPIs that follow a true result read
  * `d.keyRevocation.preCompromise` rather than asserting past the optional with
  * `!` — the guarantee is then checked by the compiler instead of promised in a
- * comment. No proof arm is
- * available here — the overview payload carries no `audited` total to lean on
- * — so this is heuristic only.
+ * comment.
+ *
+ * Heuristic, and now unnecessarily so. A post-#178 control plane answers this
+ * question outright: `keyRevocation` arrives as `null` when the check is off
+ * (which the `!keyRevocation` guard below already handles correctly, by luck of
+ * falsiness rather than by design), and `features.keyRevocationCheck` states it
+ * explicitly. Neither is read yet — `features` is not modelled in `lib/types.ts`
+ * — so the all-zero fallback still runs against every deployment. Its one
+ * remaining failure mode is the case the explicit flag exists to fix: a check
+ * that IS enabled over a genuinely clean estate reads "not reported" forever.
+ * Retiring this is issue #97.
  */
 export function dashboardRevocationReported(
   keyRevocation: DashboardRevocation | undefined,

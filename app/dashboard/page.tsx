@@ -202,14 +202,14 @@ export default function DashboardPage() {
           ) : (
             <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
               <strong style={{ color: 'var(--text)' }}>
-                Revocation checking is not reported by this deployment.
+                Nothing in this window carried a revocation classification.
               </strong>
               <br />
-              No figures are shown rather than zeros: the control plane emits these counters
-              whether or not the check ran, and the check is disabled by default — so a zero here
-              would claim &ldquo;nothing is revoked&rdquo; without having looked. Figures appear as
-              soon as anything is classified. Tracked upstream as{' '}
-              <span className="did">acdp-control-plane#176</span>.
+              No figures are shown rather than zeros: a zero would claim &ldquo;nothing is
+              revoked&rdquo; when it cannot be told apart from never having looked — the check is
+              disabled by default. This is a statement about the selected window, not about the
+              deployment: a different window may well show figures. They appear as soon as
+              anything is classified.
             </div>
           )}
         </CardBody>

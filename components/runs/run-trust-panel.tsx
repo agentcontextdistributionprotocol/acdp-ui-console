@@ -5,7 +5,7 @@ import { formatCtxId } from '@/lib/utils/acdp';
 import {
   failClosedCount,
   hasTrustViolation,
-  preCompromiseEntries,
+  preCompromiseCount,
   revocationChipClass,
   runRevocationReported,
   undetailedFailClosedCount,
@@ -41,7 +41,6 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
   const hasFlags = trust.flagged.length > 0;
   const revoked = trust.revoked ?? [];
   const hasRevoked = revoked.length > 0;
-  const preCompromise = preCompromiseEntries(revoked);
   // The header verdict must reflect BOTH violation mechanisms — via the one
   // shared predicate, so this panel, `/trust`'s filter and `useTrust`'s sort
   // cannot drift apart again.
@@ -51,6 +50,7 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
   // payload reporting fail-closed verdicts without per-event detail still
   // reddens this panel rather than rendering a reassuring zero.
   const failedClosedTotal = failClosedCount(trust);
+  const preCompromiseTotal = preCompromiseCount(trust);
   const undetailed = undetailedFailClosedCount(trust);
   return (
     <div className="card" style={{ marginBottom: 14 }}>
@@ -77,7 +77,7 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
               because it is conceptually the same thing: valid, but signed under
               a key that is no longer current. */}
           {revocationReported && (
-            <Stat label="Pre-compromise" value={preCompromise.length} tone={C.muted} />
+            <Stat label="Pre-compromise" value={preCompromiseTotal} tone={C.muted} />
           )}
           <Stat label="Structural" value={trust.structural} tone={C.info} />
           <Stat label="No receipt" value={trust.noReceipt} tone={C.muted} />

@@ -131,7 +131,7 @@ describe('ContextDetail — ctx_id binding chip', () => {
     //
     // Scoped to the Integrity group on purpose. The Registry-receipt,
     // lineage-head, transparency-log and witness groups each render an
-    // *ungated* VerdictCaption (context-detail.tsx:397,:436,:479,:554), so the
+    // *ungated* VerdictCaption (every call site in context-detail.tsx), so the
     // error text does appear again further down the page. That is pre-existing
     // UI-2 behavior on other surfaces, unchanged by this phase and deliberately
     // not widened into here; asserting over the whole document would make this

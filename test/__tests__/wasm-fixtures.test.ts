@@ -1,8 +1,9 @@
 // @vitest-environment node
 // ══════════════════════════════════════════════════════════════════════
 // Loads the REAL acdp_wasm_bg.wasm and drives it over the committed demo
-// fixtures. Every other test in this repo `vi.mock`s the 12 wasm symbols
-// (see verify.test.ts / use-verdicts.test.ts) — this is the ONLY place the
+// fixtures. `verify.test.ts` `vi.mock`s all 13 wasm symbols and
+// `use-verdicts.test.ts` mocks a layer higher (`@/lib/verify/verify`) — so this
+// is the ONLY place the
 // actual verifier binary is ever executed in CI. If a bump silently changes
 // verifier semantics, this is the file that is supposed to turn red.
 //
@@ -190,7 +191,7 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     const preimage = acdp.canonicalPreimage(JSON.stringify(body));
     const recomputed = `sha256:${sha256Hex(preimage)}`;
     const registryKeyB64 = await ed25519RawB64FromDoc(REGISTRY_A_DID);
-    // Recompute the producer-key fingerprint OURSELVES too (verify.ts:120) —
+    // Recompute the producer-key fingerprint OURSELVES too (as verifyReceipt does) —
     // never trust the receipt's echoed key_fingerprint. `attested`'s producer
     // key is a did:key (offline), resolved the same way as the standalone
     // signature test above.
@@ -205,7 +206,7 @@ describe('wasm-fixtures (real acdp_wasm_bg.wasm)', () => {
     expect(fingerprint).toBe(receipt.key_fingerprint);
     // ctx_id comes from FULL_BODY (the value that was actually signed), not
     // the receipt under test — production binds against `body.ctx_id`, an
-    // independent value (verify.ts:122).
+    // independent value (as verifyReceipt does).
     const verdict = JSON.parse(
       acdp.verifyReceipt(JSON.stringify(receipt), JSON.stringify(body), registryKeyB64, body.ctx_id, recomputed, fingerprint),
     ) as { valid: boolean };

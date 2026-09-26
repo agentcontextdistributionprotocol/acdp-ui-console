@@ -101,9 +101,16 @@ function SigningKeys() {
  *
  * The registry list comes from `useRegistries()` rather than the hardcoded
  * `a`/`b` pair `SigningKeys` uses, because this endpoint lives on the control
- * plane and is keyed by DNS authority — it covers every enrolled registry, so
- * the section grows correctly when a third is enrolled. JWKS is hardcoded
- * because it is fetched from the two proxied registry services directly.
+ * plane and is keyed by DNS authority, so the section grows on its own rather
+ * than being edited. JWKS stays hardcoded because it is fetched from the two
+ * proxied registry services directly.
+ *
+ * Note this is the OBSERVED list (`GET /registries`, populated by webhook
+ * ingest), not the ENROLLED one (`/registries/enrollments`) — they are
+ * different tables. So a registry that is enrolled but has never emitted an
+ * event gets no card, and one that is observed without being enrolled does.
+ * Observed is the right list here, because witness state only exists for a
+ * registry the control plane has actually been talking to.
  *
  * Each card renders nothing at all when its authority has no witness state
  * (a 404), so the section can legitimately end up empty.
