@@ -15,6 +15,7 @@ import {
   MOCK_JWKS,
   MOCK_LINEAGE,
   MOCK_LINEAGE_CHAINS,
+  MOCK_LOG_WITNESS,
   MOCK_METRICS,
   MOCK_METRICS_TEXT,
   MOCK_ENROLLMENTS,
@@ -44,6 +45,7 @@ import type {
   KnownRegistry,
   LineageGraph,
   ListRunsQuery,
+  LogWitnessState,
   PlaygroundRunResponse,
   PlaygroundRunStatus,
   PrometheusMetric,
@@ -770,6 +772,39 @@ export async function listRevocations(
 export async function getRegistryJwks(authority: RegistryAuthority, demoMode: boolean): Promise<JwkSet> {
   if (demoMode) return delay(MOCK_JWKS[authority]);
   return fetchJson<JwkSet>(authToService(authority), '/.well-known/jwks.json');
+}
+
+/**
+ * Transparency-log witness state for one registry, by DNS authority
+ * (RFC-ACDP-0012). Read-only: the sibling admin `POST .../log-witness/ack` is
+ * deliberately neither called nor proxied.
+ *
+ * A **404** is the ordinary "no witness state recorded for this authority"
+ * answer — the control plane raises REGISTRY_NOT_FOUND when there is neither a
+ * cursor nor any checkpoint — so callers must render nothing for it rather
+ * than an error panel. The demo branch reproduces that by throwing the same
+ * shape for an unknown authority, so the absent path is exercised in demo mode
+ * too; note that the endpoint is NOT admin-guarded upstream, so a 403 here
+ * would be a genuine surprise and must not be explained as a missing admin key.
+ */
+export async function getLogWitness(authority: string, demoMode: boolean): Promise<LogWitnessState> {
+  const path = `/registries/${encodeURIComponent(authority)}/log-witness`;
+  if (demoMode) {
+    const state = MOCK_LOG_WITNESS[authority];
+    if (!state) {
+      throw new ApiError(
+        404,
+        JSON.stringify({
+          errorCode: 'REGISTRY_NOT_FOUND',
+          message: `no transparency-log witness state for '${authority}'`,
+        }),
+        'control-plane',
+        path,
+      );
+    }
+    return delay(state);
+  }
+  return fetchJson<LogWitnessState>('control-plane', path);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

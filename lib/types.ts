@@ -586,6 +586,92 @@ export interface JwkSet {
   keys: Jwk[];
 }
 
+// ── Transparency-log witness (RFC-ACDP-0012 / RFC-ACDP-0015) ──────────
+/**
+ * One witnessed checkpoint — a signed tree head the control plane retained as
+ * evidence. Shape is `log_witness_checkpoints` verbatim (the endpoint returns
+ * a whole-row `select()`), minus four columns this console deliberately does
+ * not model: `id`, `tenantId` (never rendered — it is deployment-internal),
+ * `registryAuthority` (redundant — the envelope's own `authority` is the one
+ * the caller asked for) and `rawCheckpoint` (a large opaque jsonb blob; this is
+ * a status card, not an inspector). All four arrive on the wire and are simply
+ * not read.
+ *
+ * **The five quorum fields are nullable on purpose and the distinction is
+ * load-bearing.** The control plane writes SQL `NULL` to all of them in at
+ * least three situations — quorum consumption disabled
+ * (`WITNESS_QUORUM_ENABLED=false`), any failure-path persist (which omits the
+ * quorum argument entirely, so a head can be all-null with quorum *enabled*),
+ * and an older deployment that omits the columns from the JSON. They are not
+ * distinguishable from here, which is why the UI says "not reported" rather
+ * than "disabled".
+ *
+ * What they DO have in common is the only thing that matters: `null`/`undefined`
+ * means *we never counted*, while `0` means *we counted and found none* — a
+ * real, alarming value that must render. Never collapse the two with `?? 0`
+ * or a truthiness check; test for `typeof x === 'number'`.
+ */
+export interface LogWitnessCheckpoint {
+  logId: string;
+  treeSize: number;
+  rootHash: string;
+  /** Registry-asserted evaluation time from the checkpoint itself (ISO 8601). */
+  timestamp: string;
+  /** When this control plane witnessed it (ISO 8601). */
+  witnessedAt: string;
+  signatureValid: boolean;
+  /** §9.2 verdict vs the previous head of the same log; null for the first. */
+  consistencyOk?: boolean | null;
+  /** RFC-ACDP-0015 §8: distinct trusted witnesses attesting this exact tuple. */
+  witnessedCount?: number | null;
+  meetsQuorum?: boolean | null;
+  /**
+   * §8.1: the subset of `witnessedCount` also inside the staleness window. A
+   * stale-but-valid cosignature still counts toward `witnessedCount`, so
+   * `meetsFreshQuorum: false` alongside `meetsQuorum: true` is a SOFT liveness
+   * signal upstream explicitly calls "never a failure" — warn, do not alarm.
+   */
+  freshWitnessedCount?: number | null;
+  meetsFreshQuorum?: boolean | null;
+  /**
+   * §9: witnesses whose cosignature verified under a RETIRED key. **Never**
+   * folded into the counts above — upstream (`src/db/schema.ts`) warns it is
+   * a separate sub-count and is also orthogonal to two similarly named fields
+   * in other RFCs (`receipt_audits.verified_historical`, RFC-ACDP-0014's
+   * producer `pre_compromise`). Render it apart; never as a pass.
+   */
+  historicalWitnessedCount?: number | null;
+}
+
+/** Cursor-level alert state: root rewrites, split views, tree-size regressions. */
+export interface LogWitnessAlert {
+  alerted: boolean;
+  /** One of the upstream `WitnessAlertReason` enum values when alerted. */
+  reason?: string | null;
+  /**
+   * Structured jsonb, **not** a string — stringifying it yields
+   * `[object Object]`. Every upstream `raiseAlert` call site puts the
+   * human-readable message in `detail.error`; nothing else in it is a stable
+   * contract, so read that key and ignore the rest.
+   */
+  detail?: Record<string, unknown> | null;
+  at?: string | null;
+}
+
+/** `GET control-plane /registries/:authority/log-witness`. */
+export interface LogWitnessState {
+  authority: string;
+  logId?: string | null;
+  lastWitnessedSize?: number | null;
+  lastRootHash?: string | null;
+  lastSuccessAt?: string | null;
+  consecutiveFailures: number;
+  alert: LogWitnessAlert;
+  /** Newest-first, capped at 20 by the control plane. May be empty. */
+  checkpoints: LogWitnessCheckpoint[];
+  total: number;
+}
+
 // ── Misc ──────────────────────────────────────────────────────────────
 /** The registry authorities the console proxies, in display order. */
 export const REGISTRY_AUTHORITIES = ['a', 'b'] as const;

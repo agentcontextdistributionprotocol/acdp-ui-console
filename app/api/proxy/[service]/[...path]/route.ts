@@ -63,6 +63,17 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     { method: 'GET', pattern: /^\/registries$/ },
     { method: 'GET', pattern: /^\/registries\/enrollments$/ },
     { method: 'POST', pattern: /^\/registries\/enroll$/ },
+    // Transparency-log witness state, read-only. `[^/]+` IS right here: the
+    // parameter is a DNS authority, which contains dots but never slashes —
+    // the opposite of the ctx_id case below. The trailing `$` is what keeps
+    // the sibling admin route `:authority/log-witness/ack` out, and the fixed
+    // two-segment shape is what keeps the collection route
+    // `/registries/log-witness/alerts` out. The route test asserts five
+    // adjacent shapes are rejected: those two, a POST to this same path, a
+    // multi-segment authority, and an arbitrary tail under a valid authority.
+    // (`/registries/enrollments` needs no such guard — it is allow-listed on
+    // its own line above, so this pattern can neither admit nor deny it.)
+    { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },
     { method: 'GET', pattern: /^\/metrics$/ },
     { method: 'GET', pattern: /^\/webhooks$/ },
     { method: 'POST', pattern: /^\/webhooks$/ },

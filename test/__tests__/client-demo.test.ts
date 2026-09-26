@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   searchContexts,
   listRevocations,
@@ -19,6 +19,7 @@ import {
   deleteWebhook,
   listEnrollments,
   enrollRegistry,
+  getLogWitness,
   pingHealth,
   LIVE_RUN_ID,
   COMPLETED_RUN_ID,
@@ -31,6 +32,7 @@ import {
   MOCK_REVOCATIONS,
   MOCK_CONTEXT_EVENTS,
   MOCK_LINEAGE,
+  MOCK_LOG_WITNESS,
   MOCK_METRICS,
 } from '@/lib/data/mock-data';
 
@@ -448,6 +450,70 @@ describe('enrollRegistry (demo)', () => {
     const patched = await enrollRegistry({ authority: existing.authority, enabled: false }, DEMO);
     expect(patched.enabled).toBe(false);
     expect((await listEnrollments(DEMO)).length).toBe(before);
+  });
+});
+
+// ── Transparency-log witness ───────────────────────────────────────────
+describe('getLogWitness (demo)', () => {
+  // Demo mode's whole promise is that the console works with zero backends,
+  // so "returns the fixture" is only half the claim — the other half is that
+  // no network call happens at all. A stub that throws is what makes the
+  // second half falsifiable; asserting on the returned value alone would pass
+  // just as happily if a fetch had been fired and ignored.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function forbidFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        throw new Error('demo mode must not touch the network');
+      }),
+    );
+  }
+
+  it('returns the fixture for a known authority without touching fetch', async () => {
+    forbidFetch();
+    const authority = Object.keys(MOCK_LOG_WITNESS)[0];
+    const state = await getLogWitness(authority, DEMO);
+    expect(state).toEqual(MOCK_LOG_WITNESS[authority]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('throws the control plane\'s own 404 shape for an authority with no witness state', async () => {
+    forbidFetch();
+    await expect(getLogWitness('never-witnessed.example.com', DEMO)).rejects.toMatchObject({
+      status: 404,
+      errorCode: 'REGISTRY_NOT_FOUND',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('ships one fixture with quorum enabled and one with it disabled, so both branches are reachable by hand', () => {
+    const heads = Object.values(MOCK_LOG_WITNESS).map((s) => s.checkpoints[0]);
+    expect(heads.length).toBeGreaterThanOrEqual(2);
+    // `null` is the quorum-disabled signal and `number` the enabled one; an
+    // `undefined` here would mean the fixture simply forgot the field, which
+    // is a third thing and not what either branch is meant to demonstrate.
+    expect(heads.some((h) => h && typeof h.freshWitnessedCount === 'number')).toBe(true);
+    expect(heads.some((h) => h && h.freshWitnessedCount === null)).toBe(true);
+  });
+
+  it('never shows a proven-consistent head beneath a standing consistency alert', async () => {
+    // Upstream persists the offending head with `consistencyOk: false`
+    // immediately before raising `consistency_failed`, and heads come back
+    // newest-first — so "Consistency: proven" under that alert is a state the
+    // real system cannot produce. The demo shipped exactly that, and a demo
+    // that teaches an impossible state is worse than no demo.
+    for (const s of Object.values(MOCK_LOG_WITNESS)) {
+      if (s.alert.reason !== 'consistency_failed') continue;
+      expect(s.checkpoints[0]?.consistencyOk, s.authority).toBe(false);
+    }
+    // Anti-vacuity: the loop above passes trivially if no fixture alerts.
+    expect(
+      Object.values(MOCK_LOG_WITNESS).some((s) => s.alert.reason === 'consistency_failed'),
+    ).toBe(true);
   });
 });
 
