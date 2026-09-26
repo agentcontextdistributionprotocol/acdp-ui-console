@@ -28,7 +28,10 @@ function HealthCard({ service, name, port }: { service: ProxyService; name: stri
       <div className="health-status">
         <span className={`dot ${ok ? 'ok' : 'err'}`} />
         <span style={{ color: ok ? 'var(--success)' : 'var(--danger)' }}>
-          {isLoading ? 'checking…' : ok ? 'healthy' : 'unreachable'}
+          {/* `detail` separates in-band degradation from a dead socket — a
+              control plane whose database is down answers in milliseconds,
+              and the latency beside this word would contradict "unreachable". */}
+          {isLoading ? 'checking…' : ok ? 'healthy' : (data?.detail ?? 'unreachable')}
         </span>
         {data?.latencyMs !== undefined && <span className="health-latency">{data.latencyMs} ms</span>}
       </div>

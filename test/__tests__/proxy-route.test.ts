@@ -91,6 +91,10 @@ describe('proxy route — route allow-list', () => {
       error: "Forbidden: GET / is not an allowed proxy route for 'playground'",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+    // Console-minted envelope: no upstream was contacted at all, so the
+    // pass-through stamp must be absent. See the 502 test for why this
+    // invariant is load-bearing for `ApiError.fromUpstream`.
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
   });
 
   it('rejects a known path with the wrong method', async () => {
@@ -322,6 +326,12 @@ describe('proxy route — response header scrubbing & errors', () => {
     const body = await res.json();
     expect(body.error).toBe("Upstream 'control-plane' unreachable");
     expect(body.detail).toContain('ECONNREFUSED');
+    // The stamp must be ABSENT here. `ApiError.fromUpstream` reads exactly this
+    // header to decide whether bytes crossed our boundary, and `pingHealth`
+    // turns that into the word an operator reads. Stamping this envelope would
+    // report the proxy's own "upstream unreachable" as the SERVICE reporting
+    // itself degraded — the defect Phase 6 round 3 caught, in its purest form.
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
   });
 });
 

@@ -14,8 +14,11 @@ export function ConnectionStatus({ label, service }: { label: string; service: P
     retry: false,
   });
   const ok = data?.ok ?? false;
+  // `detail` distinguishes "answered, and told us it is degraded" from "never
+  // answered". Both are red; only one is unreachable.
+  const state = ok ? 'healthy' : (data?.detail ?? 'unreachable');
   return (
-    <div className={`pill${ok ? ' active-pill' : ''}`} title={`${label}: ${ok ? 'healthy' : 'unreachable'}`}>
+    <div className={`pill${ok ? ' active-pill' : ''}`} title={`${label}: ${state}`}>
       <span className={`dot ${ok ? 'ok' : 'err'}${ok ? ' pulse' : ''}`} />
       {label}
     </div>

@@ -14,13 +14,42 @@ import {
   getLineage,
   pingHealth,
 } from '@/lib/api/client';
+import { buildSdkMatrixRows } from '@/lib/utils/sdk-matrix';
+import type { HealthResult, ProxyService } from '@/lib/types';
 
+/**
+ * A response as re-streamed by the proxy — i.e. one that really came from an
+ * upstream service, carrying the `x-acdp-ui-proxy` stamp the route sets on
+ * that path and only that path. This is the default because nearly every test
+ * here is simulating a real backend.
+ */
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
     ok,
     status,
+    headers: new Headers({ 'x-acdp-ui-proxy': 'registry-a' }),
     json: async () => body,
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+  } as unknown as Response;
+}
+
+/** An upstream response at an explicit status — the stamp is present. */
+function upstreamResponse(body: unknown, status: number): Response {
+  return jsonResponse(body, false, status);
+}
+
+/**
+ * An envelope this console minted ITSELF — middleware's 401/503, the proxy
+ * route's own 400/403/502, Next's 500. No stamp, because the request never
+ * reached an upstream.
+ */
+function consoleResponse(body: unknown, status: number): Response {
+  return {
+    ok: false,
+    status,
+    headers: new Headers(),
+    json: async () => body,
+    text: async () => JSON.stringify(body),
   } as unknown as Response;
 }
 
@@ -174,8 +203,179 @@ describe('pingHealth (real mode)', () => {
     expect(result.version).toBeUndefined();
   });
 
-  it('reports ok: false with no version when the service is down', async () => {
+  it('reports ok: false with no version when the down response carries none', async () => {
     mockFetch(() => jsonResponse('down', false, 503));
+    const result = await pingHealth('registry-a', false);
+    expect(result.ok).toBe(false);
+    expect(result.version).toBeUndefined();
+  });
+
+  // ── In-band degradation (Phase 6) ───────────────────────────────────
+  //
+  // Only the registry signals degradation through the HTTP status. The control
+  // plane returns 200 with `ok:false`, so a transport-only reading of health
+  // renders a control plane whose database is down as `● ok` in the topbar, the
+  // observability grid, the connection panel and the SDK matrix at once.
+  it('treats the control plane\'s 200-with-ok:false as degraded, keeping its live version', async () => {
+    mockFetch(() => jsonResponse({ ok: false, service: 'acdp-control-plane', version: '1.4.2' }));
+    const result = await pingHealth('control-plane', false);
+    expect(result.ok).toBe(false);
+    // The degraded body still carries the version, and the success-path
+    // extraction still runs on it — so the row reads `✗ down` AND names the
+    // build that is down.
+    expect(result.version).toBe('1.4.2');
+    // A service that answered is not "unreachable". Two surfaces render this
+    // word next to a latency, so the distinction has to survive the trip.
+    expect(result.detail).toBe('degraded');
+  });
+
+  it('calls the registry\'s 503 DEGRADED, not unreachable — it answered', async () => {
+    // The registry's degradation signal IS a 503, and an ApiError is only
+    // thrown after a real HTTP response arrived. Labelling that "unreachable"
+    // beside the version just read off the same response is the overclaim this
+    // phase exists to remove — and it would have been rendered next to a
+    // single-digit latency.
+    mockFetch(() => jsonResponse({ status: 'degraded', storage: false, version: '0.1.4' }, false, 503));
+    const result = await pingHealth('registry-a', false);
+    expect(result.detail).toBe('degraded');
+    expect(result.version).toBe('0.1.4');
+  });
+
+  // Every envelope the CONSOLE mints itself must read `unreachable`, whatever
+  // its status. Calling these `degraded` would be a positive claim that the
+  // upstream reported itself unwell, when the request never left the box.
+  //
+  // The 401 is the one that forced this: `Topbar` renders four of these pills
+  // on every route including `/login`, and `redirectToLoginOn401` deliberately
+  // no-ops there — so a status-based rule made every password-protected
+  // deployment's sign-in screen accuse all four services at once.
+  it.each([
+    ['the proxy\'s own 502', 502, { error: "Upstream 'registry-a' unreachable" }],
+    ['middleware\'s 401 for a missing session', 401, { error: 'Unauthorized: sign in at /login required.' }],
+    ['middleware\'s 503 for an unconfigured password', 503, { error: 'ACDP_UI_CONSOLE_PASSWORD is not configured.' }],
+    ['a 500 from an unset base URL', 500, { error: 'Internal Server Error' }],
+  ])('calls %s unreachable — it never left this console', async (_label, status, body) => {
+    // No `x-acdp-ui-proxy` header: the proxy stamps that only when
+    // re-streaming a real upstream response.
+    mockFetch(() => consoleResponse(body, status));
+    expect((await pingHealth('registry-a', false)).detail).toBe('unreachable');
+  });
+
+  it('calls an upstream 404 degraded — a build with no /healthz still answered', async () => {
+    mockFetch(() => upstreamResponse({ error: 'Not Found' }, 404));
+    expect((await pingHealth('registry-a', false)).detail).toBe('degraded');
+  });
+
+  it('calls a transport failure unreachable, and a healthy response neither', async () => {
+    mockFetch(() => { throw new TypeError('Failed to fetch'); });
+    expect((await pingHealth('registry-a', false)).detail).toBe('unreachable');
+
+    mockFetch(() => jsonResponse({ ok: true, version: '1.0.0' }));
+    expect((await pingHealth('control-plane', false)).detail).toBeUndefined();
+  });
+
+  it('treats a 200 body claiming status: degraded as degraded', async () => {
+    mockFetch(() => jsonResponse({ status: 'degraded', storage: false, version: '0.1.4' }));
+    const result = await pingHealth('registry-a', false);
+    expect(result.ok).toBe(false);
+    expect(result.version).toBe('0.1.4');
+  });
+
+  // The default must be "healthy". Absence of a degradation marker is not
+  // evidence of degradation, and inventing one would red-flag every working
+  // older backend — the mirror of the bug above, and worse.
+  it.each([
+    ['an empty object', {} as unknown],
+    ['a non-object body', 'not an object' as unknown],
+    ['a stringly-typed ok', { ok: 'false' } as unknown],
+    // `=== false`, not falsiness. A null or 0 from a sloppy upstream is an
+    // absent signal, not a reported failure, and reading it as one would turn
+    // the console red on a service that never claimed to be down.
+    ['a null ok', { ok: null } as unknown],
+    ['a numeric ok', { ok: 0 } as unknown],
+    ['an unrecognised status value', { status: 'starting' } as unknown],
+  ])('stays healthy for %s', async (_label, body) => {
+    mockFetch(() => jsonResponse(body));
+    const result = await pingHealth('control-plane', false);
+    expect(result.ok).toBe(true);
+  });
+
+  // ── Version on the failure path (Phase 7, issue #73 point 3) ────────
+  it('reads the version off a 503 degraded body — the exact shape meta.rs emits', async () => {
+    mockFetch(() => jsonResponse({ status: 'degraded', storage: false, version: '0.1.4+gdeadbee' }, false, 503));
+    const result = await pingHealth('registry-a', false);
+    expect(result.ok).toBe(false);
+    expect(result.version).toBe('0.1.4+gdeadbee');
+  });
+
+  it.each([
+    ['an empty body', ''],
+    ['a body that is not JSON', 'not json'],
+    ['a non-string version', '{"version":7}'],
+    ['an upstream HTML error page', '<html><body>502 Bad Gateway</body></html>'],
+  ])('survives %s on the failure path with version undefined', async (_label, raw) => {
+    // A raw-text failure body, not `jsonResponse` — the point is bytes the
+    // caller must parse defensively, including bytes that are not JSON.
+    //
+    // `headers` is REQUIRED, and its absence made all four of these pass
+    // vacuously: `cameFromUpstream(response)` is evaluated as an argument to
+    // `new ApiError`, so a fixture without it threw a TypeError inside
+    // `fetchJson` before any ApiError existed, `pingHealth` took the
+    // non-ApiError branch, and these asserted the fallback instead of the
+    // parse guard they exist to pin. A real Response always has headers.
+    mockFetch(() => ({
+      ok: false,
+      status: 503,
+      headers: new Headers({ 'x-acdp-ui-proxy': 'registry-a' }),
+      json: async () => JSON.parse(raw),
+      text: async () => raw,
+    }) as unknown as Response);
+    const result = await pingHealth('registry-a', false);
+    expect(result.ok).toBe(false);
+    expect(result.version).toBeUndefined();
+  });
+
+  // Phase 6's criterion 5, end to end. `sdk-matrix-utils.test.ts` pins the
+  // second half of this seam by hand-feeding an already-reduced HealthResult,
+  // which cannot tell you that `pingHealth` produces one — that test passes
+  // byte-identically on main. This is the only assertion that carries the
+  // control plane's in-band `200 {ok:false}` all the way from the wire to the
+  // row an operator reads.
+  it('carries a control plane degraded at HTTP 200 from the wire to a down matrix row', async () => {
+    mockFetch(() => jsonResponse({ ok: false, service: 'acdp-control-plane', version: '1.4.2' }));
+    const health = new Map<ProxyService, HealthResult | undefined>([
+      ['control-plane', await pingHealth('control-plane', false)],
+    ]);
+    const row = buildSdkMatrixRows(false, health).find((r) => r.component === 'Control Plane (NestJS)');
+    expect(row?.status).toBe('down');
+    expect(row?.version).toBe('1.4.2');
+    expect(row?.versionIsLive).toBe(true);
+  });
+
+  it('will not put a version on a down row unless the bytes came from upstream', async () => {
+    // `sdk-matrix.ts` turns any version here into `versionIsLive: true`, so an
+    // ungated read would mark a build name live on a `✗ down` row from bytes
+    // that never crossed our boundary. The same `fromUpstream` fact gates both
+    // fields; nothing the console mints carries `version` today, but that is a
+    // property of today's code, not an invariant.
+    mockFetch(() => consoleResponse({ error: 'Internal Server Error', version: '9.9.9' }, 500));
+    const minted = await pingHealth('registry-a', false);
+    expect(minted.detail).toBe('unreachable');
+    expect(minted.version).toBeUndefined();
+
+    // Byte-identical body, stamped: now it is the service's own build string.
+    mockFetch(() => upstreamResponse({ error: 'Internal Server Error', version: '9.9.9' }, 500));
+    const upstream = await pingHealth('registry-a', false);
+    expect(upstream.detail).toBe('degraded');
+    expect(upstream.version).toBe('9.9.9');
+  });
+
+  it('does not throw when the failure is not an ApiError at all', async () => {
+    // A DNS failure or a dead socket — `fetch` itself rejects, so nothing
+    // constructs an ApiError. NOT a 401: `redirectToLoginOn401` navigates and
+    // then throws an ApiError anyway, so that case takes the narrowing branch
+    // and is covered by the console-minted cases above.
+    mockFetch(() => { throw new TypeError('Failed to fetch'); });
     const result = await pingHealth('registry-a', false);
     expect(result.ok).toBe(false);
     expect(result.version).toBeUndefined();

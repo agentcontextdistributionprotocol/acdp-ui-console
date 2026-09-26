@@ -161,6 +161,15 @@ async function forward(
     });
 
     const responseHeaders = new Headers(response.headers);
+    // LOAD-BEARING, not a debugging aid: this stamp is the only evidence the
+    // browser gets that these bytes came from beyond our own boundary.
+    // `ApiError.fromUpstream` reads it and `pingHealth` turns it into the word
+    // an operator sees — `degraded` (something upstream answered, badly) vs
+    // `unreachable` (nothing out there answered). It belongs ONLY here, on the
+    // pass-through: setting it on any envelope this route mints itself would
+    // report the console's own failure as the service reporting itself unwell.
+    // `proxy-route.test.ts` asserts both its presence here and its absence on
+    // the 403 and 502 below.
     responseHeaders.set('x-acdp-ui-proxy', service);
     // The body is re-streamed decoded, so length/encoding framing no longer applies.
     responseHeaders.delete('content-encoding');

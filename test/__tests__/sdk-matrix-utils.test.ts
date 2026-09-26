@@ -43,13 +43,55 @@ describe('buildSdkMatrixRows', () => {
     }
   });
 
-  it('live mode: a down service never claims a live version, even if one rode a prior response', () => {
+  it('live mode: a down service with no version falls back to the reference string', () => {
     const health = new Map<ProxyService, HealthResult | undefined>([['registry-a', { ok: false }]]);
     const rows = buildSdkMatrixRows(false, health);
     const row = rows.find((r) => r.component === 'Registry (Rust/axum)');
     expect(row?.status).toBe('down');
     expect(row?.versionIsLive).toBe(false);
     expect(row?.version).toBe(MOCK_SDK_MATRIX.find((m) => m.component === 'Registry (Rust/axum)')?.version);
+  });
+
+  it('live mode: a down service DOES report the version its own failure response carried', () => {
+    // Deliberate behaviour change (issue #73 point 3). This test was previously
+    // titled "a down service never claims a live version, even if one rode a
+    // prior response" — but its fixture had no version field at all, so it
+    // asserted nothing its title claimed and passed vacuously. The title would
+    // have become false the moment `pingHealth` started reading the version off
+    // a degraded body, while the test kept passing: a green test documenting
+    // the opposite of the truth.
+    //
+    // `versionIsLive: true` is correct here. The version was observed live, on
+    // this response — it is not a memory of an earlier success. A row that names
+    // WHICH build is down is the more useful failure display, which is what the
+    // issue asked for.
+    const health = new Map<ProxyService, HealthResult | undefined>([
+      ['registry-a', { ok: false, version: '0.1.4+gdeadbee' }],
+    ]);
+    const rows = buildSdkMatrixRows(false, health);
+    const row = rows.find((r) => r.component === 'Registry (Rust/axum)');
+    expect(row?.status).toBe('down');
+    expect(row?.version).toBe('0.1.4+gdeadbee');
+    expect(row?.versionIsLive).toBe(true);
+  });
+
+  it('live mode: a control plane reported unhealthy maps to a down row with its version', () => {
+    // HALF of Phase 6's criterion 5, and only half: this hand-feeds an
+    // already-reduced HealthResult, so it says nothing about HTTP 200 or
+    // `extractHealthOk` and would pass byte-identically before that phase.
+    // What it does pin is that `ok: false` + a version reaches the operator as
+    // a `down` row naming the build. The wire-to-row half — the control
+    // plane's in-band `200 {ok:false}` actually producing this HealthResult —
+    // is `client.test.ts`'s "carries a control plane degraded at HTTP 200 from
+    // the wire to a down matrix row".
+    const health = new Map<ProxyService, HealthResult | undefined>([
+      ['control-plane', { ok: false, version: '1.4.2' }],
+    ]);
+    const rows = buildSdkMatrixRows(false, health);
+    const row = rows.find((r) => r.component === 'Control Plane (NestJS)');
+    expect(row?.status).toBe('down');
+    expect(row?.version).toBe('1.4.2');
+    expect(row?.versionIsLive).toBe(true);
   });
 
   it('live mode: service-backed row status reflects actual health, up/down/unknown', () => {
