@@ -522,6 +522,56 @@ describe('proxy route — response header scrubbing & errors', () => {
     expect(res.headers.get('transfer-encoding')).toBeNull();
   });
 
+  // The stamp asserts "something beyond our boundary answered". A cache that can
+  // replay a stamped 200 turns that into a claim about the past presented as the
+  // present, which is exactly what a /healthz read must never be.
+  it('overwrites a cacheable upstream cache-control with no-store', async () => {
+    mockFetch(() =>
+      upstream({
+        headers: new Headers({ 'cache-control': 'public, max-age=300', etag: 'W/"abc"' }),
+      }),
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/registry-a/healthz'),
+      ctx('registry-a', ['healthz']),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-acdp-ui-proxy')).toBe('registry-a');
+    // Not deleted: byte-for-byte relay of everything else is preserved, and
+    // `no-store` already forbids building a conditional request from it.
+    expect(res.headers.get('etag')).toBe('W/"abc"');
+  });
+
+  it('sets no-store when the upstream sent no cache-control at all', async () => {
+    mockFetch(() => upstream({ headers: new Headers({ 'content-type': 'application/json' }) }));
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/control-plane/runs'),
+      ctx('control-plane', ['runs']),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  // A relayed 503 is as replayable as a relayed 200, and a cached one reports a
+  // service as down after it has recovered.
+  it('sets no-store on a relayed non-2xx as well', async () => {
+    mockFetch(() =>
+      upstream({
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: new Headers({ 'cache-control': 'max-age=60' }),
+      }),
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/registry-b/healthz'),
+      ctx('registry-b', ['healthz']),
+    );
+    expect(res.status).toBe(503);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('x-acdp-ui-proxy')).toBe('registry-b');
+  });
+
   it('returns 502 when the upstream fetch throws', async () => {
     mockFetch(() => {
       throw new Error('ECONNREFUSED');
