@@ -339,7 +339,7 @@ describe('an unstamped 2xx is warned about, never thrown on', () => {
   });
 
   it('warns once per page load, not once per request', async () => {
-    // Health is polled every 30s across four services. Without the latch this
+    // Health is polled every 15s across four services. Without the latch this
     // line would repeat until it buried the rest of the console log, which is
     // how a real signal gets ignored.
     const warn = spyOnWarn();
@@ -386,7 +386,15 @@ describe('an unstamped 2xx is warned about, never thrown on', () => {
     expect(String(warn.mock.calls[0][0])).toContain("expected 'registry-a'");
   });
 
-  it('does not warn on a FAILURE response, stamped or not — that path already reads the stamp', async () => {
+  // Renamed, not widened. The old name promised "stamped or not"; round 2 of
+  // verification asked for the missing half and round 3 proved the half I added
+  // could not fail under any single-point change — `warnOnUnstampedSuccess` is
+  // unreachable past the `!ok` throw, and would early-return on a correct stamp
+  // even if it were reachable. A test that reads as a guard and guards nothing
+  // is the thing this branch exists to remove, so the honest fix is the name.
+  // The unstamped case below is the one with teeth: it dies if the warn call is
+  // ever hoisted above the failure throw.
+  it('does not warn on an unstamped FAILURE response — that path already reads the stamp', async () => {
     // A console-minted 401/503 arriving unstamped is normal and expected;
     // warning there would fire on every signed-out page load and mean nothing.
     const warn = spyOnWarn();
@@ -408,30 +416,138 @@ describe('401 → redirect to /login', () => {
     return assign;
   }
 
+  // `fromUpstream: false` is load-bearing in these two, and was missing before
+  // #91: `response()` defaults it to TRUE (see :21), so these cases were
+  // modelling a stamped, relayed 401 while calling themselves "the auth gate".
+  // The auth gate is `middleware.ts:94`, whose 401 the console mints itself and
+  // never stamps. The assertions are unchanged; only the fixture now says what
+  // the test name always claimed.
   it('fetchJson redirects the browser to /login on a 401 (the auth gate)', async () => {
     const assign = stubLocation();
-    mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, fromUpstream: false }));
     await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 401 });
     expect(assign).toHaveBeenCalledWith('/login');
   });
 
   it('fetchText redirects the browser to /login on a 401 (the auth gate)', async () => {
     const assign = stubLocation();
-    mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, fromUpstream: false }));
     await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({ status: 401 });
     expect(assign).toHaveBeenCalledWith('/login');
   });
 
+  // The #91 pair. A 401 that carries the proxy's stamp came from the service
+  // itself — a wrong or rotated CONTROL_PLANE_API_KEY — and the operator's own
+  // session is fine. Bouncing them to /login sends them to re-enter a
+  // passphrase that was never the problem, and returns them to a page that
+  // 401s again: a loop signing in cannot break.
+  it('fetchJson does NOT redirect on an upstream 401 — the session is valid', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('upstream refused', { ok: false, status: 401 }));
+    await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({
+      status: 401,
+      fromUpstream: true,
+    });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('fetchText does NOT redirect on an upstream 401 — the session is valid', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('upstream refused', { ok: false, status: 401 }));
+    await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({
+      status: 401,
+      fromUpstream: true,
+    });
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  // `cameFromUpstream` compares the stamp's VALUE, so a stamp naming another
+  // service is not evidence that the service we asked about refused us, and
+  // `ApiError.fromUpstream` is false — which is right, because that flag is a
+  // provenance claim about one named service.
+  //
+  // Reusing it for the redirect gate is slightly over-broad and worth being
+  // honest about: the route stamps only on the pass-through, and in production
+  // that runs only after middleware validated the session — so ANY stamp,
+  // matching or not, is proof the operator's session was fine, and redirecting
+  // is useless either way. (In development with ACDP_UI_CONSOLE_PASSWORD unset
+  // middleware fails open, so the route stamps with nothing validated; there is
+  // no session to expire on that path either, so the conclusion survives.)
+  // The case is unreachable in a correct deployment and fails towards
+  // redirecting rather than away, so it stands; it is not, however, the crisp
+  // "conservative" argument an earlier version of this comment claimed.
+  //
+  // Unlike the four cases above this one does not gate the change — every 401
+  // redirected before it. It pins the direction the value comparison must fail
+  // in, which is the part a future "simplify to a presence check" would break.
+  it('redirects when the stamp names a DIFFERENT service than the call asked about', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, stamp: 'registry-b' }));
+    await expect(fetchJson('registry-a', '/contexts')).rejects.toMatchObject({
+      status: 401,
+      fromUpstream: false,
+    });
+    expect(assign).toHaveBeenCalledWith('/login');
+  });
+
+  // The `fetchText` twin. Round 4 of verification mutation-tested both call
+  // sites separately and found this one was the single remaining unpinned
+  // change in the file: weakening `fetchText`'s redirect argument to a
+  // presence check killed no test, while the same weakening in `fetchJson`
+  // died at the case above. Two call sites, two tests.
+  it('fetchText redirects too when the stamp names a DIFFERENT service', async () => {
+    const assign = stubLocation();
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, stamp: 'registry-b' }));
+    await expect(fetchText('registry-a', '/metrics')).rejects.toMatchObject({
+      status: 401,
+      fromUpstream: false,
+    });
+    expect(assign).toHaveBeenCalledWith('/login');
+  });
+
+  // UNSTAMPED, and that is the whole point of this case. The guard is
+  // `status !== 401 || fromUpstream || …`; with a stamped 502 the second arm
+  // short-circuits and the status arm is never exercised, so the test would
+  // survive its own deletion. An unstamped 502 is also the honest fixture: a
+  // backend that is down surfaces as the proxy route's OWN 502, which it mints
+  // and never stamps.
+  //
+  // Losing the status arm would be strictly worse than the bug #91 fixes — any
+  // console-minted non-401 (that 502, middleware's 503 for an unset
+  // ACDP_UI_CONSOLE_PASSWORD, Next's 500 for an unset *_BASE_URL) would sign
+  // the operator out because a backend was unreachable.
   it('does not redirect on other error statuses', async () => {
     const assign = stubLocation();
-    mockFetch(() => response('boom', { ok: false, status: 502 }));
+    mockFetch(() => response('boom', { ok: false, status: 502, fromUpstream: false }));
     await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 502 });
     expect(assign).not.toHaveBeenCalled();
   });
 
+  // The SSR arm of the same guard, which had no test at all. `fetchJson` and
+  // `fetchText` are plain module functions — usually a React Query `queryFn`,
+  // but nothing stops one running where there is no `window`. A redirect is
+  // meaningless there, and without this arm the very next line dereferences
+  // `window.location` and turns a 401 into a `TypeError` the caller never asked
+  // for. The assertion is that the `ApiError` reaches the caller intact.
+  //
+  // Round 3 of verification found this arm killed no test in the whole suite,
+  // then demonstrated it IS observable under jsdom rather than accepting the
+  // usual "can't test SSR here" excuse.
+  it('does not touch window on a 401 when there is no window (SSR)', async () => {
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, fromUpstream: false }));
+    vi.stubGlobal('window', undefined);
+    await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 401 });
+  });
+
+  // `fromUpstream: false` for the same reason as the two above, and it matters
+  // more here: with a stamped 401 this test would exit at the `fromUpstream`
+  // arm and never reach the pathname guard it is named for, asserting nothing.
+  // That guard is load-bearing — `Topbar` renders on every route including
+  // `/login` and polls health every 15s, so losing it makes the sign-in page
+  // navigate to itself every 15 seconds, before an operator can finish typing.
   it('does not redirect again when already on /login', async () => {
     const assign = stubLocation('/login');
-    mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, fromUpstream: false }));
     await expect(fetchJson('control-plane', '/runs')).rejects.toMatchObject({ status: 401 });
     expect(assign).not.toHaveBeenCalled();
   });
@@ -439,15 +555,33 @@ describe('401 → redirect to /login', () => {
   describe('confirmSessionOrRedirect', () => {
     it('redirects to /login when the confirm request comes back 401', async () => {
       const assign = stubLocation();
-      const fetchMock = mockFetch(() => response('unauthorized', { ok: false, status: 401 }));
+      const fetchMock = mockFetch(() =>
+        response('unauthorized', { ok: false, status: 401, fromUpstream: false }),
+      );
       await confirmSessionOrRedirect();
       expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/healthz');
       expect(assign).toHaveBeenCalledWith('/login');
     });
 
+    // Asserted here rather than through the hooks: `use-live-run.ts` and
+    // `use-global-events.ts` both call this helper after an EventSource error,
+    // and both of their test files `vi.mock` it — so nothing over there would
+    // ever catch this regressing. A rotated CONTROL_PLANE_API_KEY makes this
+    // probe 401 with the operator's session perfectly valid; before #91 that
+    // bounced them to /login on every SSE hiccup.
+    it('does NOT redirect when the probe gets a stamped upstream 401', async () => {
+      const assign = stubLocation();
+      mockFetch(() => response('upstream refused', { ok: false, status: 401 }));
+      await expect(confirmSessionOrRedirect()).resolves.toBeUndefined();
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    // Unstamped, for both reasons given on the `fetchJson` sibling above: a
+    // stamped 502 masks the status arm behind the `fromUpstream` arm, and a
+    // network blip reaching an upstream IS the proxy route's own unstamped 502.
     it('does not redirect and does not throw on a non-401 failure (e.g. a network blip)', async () => {
       const assign = stubLocation();
-      mockFetch(() => response('boom', { ok: false, status: 502 }));
+      mockFetch(() => response('boom', { ok: false, status: 502, fromUpstream: false }));
       await expect(confirmSessionOrRedirect()).resolves.toBeUndefined();
       expect(assign).not.toHaveBeenCalled();
     });
