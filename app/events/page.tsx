@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EventsTable } from '@/components/events/events-table';
 import { listCpEvents } from '@/lib/api/client';
 import { useGlobalEvents } from '@/lib/hooks/use-global-events';
@@ -126,7 +127,12 @@ export default function EventsPage() {
       </div>
 
       {history.isLoading && <LoadingSkeleton rows={6} height={42} />}
-      {history.error && <ErrorPanel message={String(history.error)} />}
+      {history.error && (
+        <ErrorPanel
+          message={operatorErrorMessage(history.error, 'Could not load the event history')}
+          details={errorDiagnostic(history.error)}
+        />
+      )}
       {!history.isLoading && !history.error && (
         <>
           <Card>

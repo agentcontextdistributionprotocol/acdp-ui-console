@@ -7,6 +7,7 @@ import { ArrowLeft } from 'lucide-react';
 import { RunWorkbench } from '@/components/runs/run-workbench';
 import { LoadingPanel } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { useRun } from '@/lib/hooks/use-runs';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { getRunLineageGraph } from '@/lib/api/client';
@@ -43,7 +44,29 @@ export default function RunDetailPage({ params }: { params: Promise<{ runId: str
       </Link>
 
       {isLoading && <LoadingPanel label="Loading run…" />}
-      {error && <ErrorPanel message={`Run not found: ${runId}`} />}
+      {/* Not a `String(error)` site, and the same over-claim: this said
+          `Run not found: <id>` for EVERY error — a 503, a console-minted 401, a
+          network `TypeError` — so an operator was sent looking for a run that
+          may exist and be perfectly reachable in a minute.
+
+          No `codes` map, despite `RUN_NOT_FOUND` existing in the control
+          plane's enum (`src/errors/error-codes.ts:2`): `GET /runs/:runId` lands
+          in `src/storage/run.repository.ts:145`, which throws a bare
+          `NotFoundException`, and Nest's default object body already carries an
+          `error` key (the string `'Not Found'`), so `withAcdpEnvelope`
+          (`exception.filter.ts:72`) leaves it alone and no `errorCode` is ever
+          minted for this route. A map keyed on a code that
+          cannot arrive would be copy no test could honestly exercise. The 404
+          arm does the work instead, via `notFound`, which keeps the id in the
+          sentence — the one genuinely useful part of the old string. */}
+      {error && (
+        <ErrorPanel
+          message={operatorErrorMessage(error, 'Could not load this run', {
+            notFound: `no run with id ${runId} exists on this control plane.`,
+          })}
+          details={errorDiagnostic(error)}
+        />
+      )}
       {run && <RunWorkbench run={run} scenarioName={scenarioName} fallbackLineage={fallbackLineage} />}
     </div>
   );

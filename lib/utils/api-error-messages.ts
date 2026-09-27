@@ -94,6 +94,111 @@ export const CONTEXT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * The registry's own RFC-ACDP-0007 §5 vocabulary, for the surfaces that reach a
+ * registry **directly** rather than through the control plane.
+ *
+ * Lowercase snake_case, because that is what `wire_code()` emits
+ * (`acdp-registry-rs/crates/acdp-registry-types/src/error.rs:152-200`); the
+ * control-plane map above is SCREAMING_SNAKE. Both are looked up with no
+ * normalisation, so the two namespaces cannot collide and one map could hold
+ * both — they are kept apart because they are two upstreams' contracts, and a
+ * surface that can only reach one of them should not be able to render copy
+ * from the other's vocabulary.
+ *
+ * Only the codes a **read** path can produce are here. The publish-side codes
+ * (`duplicate_publish`, `immutable_field`, `superseded_target`,
+ * `schema_violation`, …) are real and are deliberately absent: this console has
+ * no publish surface, so an entry for one would be copy that cannot be reached
+ * and cannot be tested — a vacuous mock in prose form.
+ */
+export const REGISTRY_ERROR_CODES: ReadonlyMap<string, string> = new Map([
+  [
+    // 404, from the single-record reads (`GET /contexts/{ctx_id}`,
+    // `/lineages/{id}/current`). NOT from `GET /lineages/{id}`, which answers an
+    // unpublished id with `200 []` (`acdp-registry-core/src/handlers/context.rs`
+    // — `Ok(Json(items))` on an empty vec), so that route reaches this entry
+    // only for a tenancy or caller failure upstream of the lookup.
+    //
+    // Says "the registry this console asked", not "this deployment": every path
+    // that can reach this message queries ONE authority — `authToService` takes
+    // a single `RegistryAuthority`, and both surfaces that render it put that
+    // choice behind a Registry A / Registry B picker. A deployment-wide claim
+    // would be false AND would suppress the likeliest fix, which is to flip the
+    // picker. (An earlier draft said exactly that; the gate caught it. It is
+    // this module's own defect class — claiming more than was established —
+    // committed inside the map that exists to remove it.)
+    'not_found',
+    'Nothing is published under that id on the registry this console asked — and it asks one registry at ' +
+      "a time. Check the spelling, try the other registry, or open a context from a run's lineage graph.",
+  ],
+  [
+    // 403. Distinct from the shared 403 arm because the registries take no
+    // credential from this console at all (`integrations.ts` returns auth
+    // material for `control-plane` only), so "not authorized by registry A"
+    // invites an operator to go looking for a console-side key that does not
+    // exist. The fix is on the registry.
+    'not_authorized',
+    'The registry refused this read. Registry visibility and tenancy are enforced by the registry itself — ' +
+      'this console sends it no credential — so the grant has to be made there.',
+  ],
+  [
+    // Both 400. Split, because they are the registry's own two spellings and
+    // RFC-ACDP-0007 keeps them apart: one is a cursor that never parsed, the
+    // other a cursor that parsed and aged out. The recovery is the same and
+    // saying so is the entire value — nothing on screen said it, and a bare
+    // "registry A answered 400" reads like an operator mistake.
+    //
+    // These two fire on ONE path: `/contexts`' "Load more"
+    // (`app/contexts/page.tsx:62` keysets on `next_cursor`, and
+    // `client.ts:632` puts it on a direct-to-registry `/contexts/search`).
+    // `/lineages/{id}` takes no cursor parameter at all, so a chain lookup can
+    // never reach them — which is why `contextErrorMessage` consults this map
+    // too. Mapping them only on the lineage surface would have been copy no
+    // real request could produce.
+    'invalid_cursor',
+    'The page marker this console sent was not one the registry recognises. Search again from the start — ' +
+      'nothing is wrong with the query itself.',
+  ],
+  [
+    'cursor_expired',
+    'The page marker this console sent has expired. Search again from the start — nothing is wrong with the ' +
+      'query itself, and no results were lost.',
+  ],
+  [
+    // 429. The shared arm already says "unavailable or rate limiting"; this
+    // says which, and that the read is retryable rather than broken.
+    'rate_limited',
+    'The registry is rate limiting this console. Wait and retry — nothing about this request was rejected on ' +
+      'its merits.',
+  ],
+  [
+    // 502. The registry is fine; a registry it federates to is not. Without
+    // this the operator reads "registry A did not answer successfully (502)"
+    // and starts debugging registry A.
+    'cross_registry_resolution_failed',
+    'The registry could not reach the other registry this record points at, so the answer is incomplete. ' +
+      'The registry this console queried is healthy — the federated hop is not.',
+  ],
+  [
+    // 400 vs 502, and the split is the same could-check / could-not-check
+    // distinction this whole module exists to preserve — the registry's own
+    // mirror of `CONTEXT_ID_MISMATCH` vs `CONTEXT_BINDING_UNVERIFIABLE`
+    // (`error.rs:157-158`, statuses at `:214` and `:241`). `_failed` is
+    // permanent and about the material; `_unreachable` is transient and about
+    // the network. Neither is "the signature is bad", and saying so is the
+    // point: no verdict was reached either way.
+    'key_resolution_failed',
+    "A signing key referenced by this record could not be resolved — the reference itself is unusable. No " +
+      'signature has been judged either way; the check could not run.',
+  ],
+  [
+    'key_resolution_unreachable',
+    'The service holding a signing key referenced by this record did not answer, so the check could not run. ' +
+      'No signature has been judged either way. This one is transient — retry.',
+  ],
+]);
+
+/**
  * The one string this module ends on when it knows nothing at all. Named rather
  * than written twice: it is the default of `contextErrorFallback` AND the
  * answer for a non-`ApiError` throw, and a module whose whole purpose is
@@ -358,6 +463,29 @@ export function contextErrorMessage(error: unknown): string {
   if (error.errorCode) {
     const mapped = CONTEXT_ERROR_MESSAGES.get(error.errorCode);
     if (mapped) return mapped;
+    // The registry's own vocabulary, second. Both context surfaces can reach a
+    // registry DIRECTLY — `searchContexts` calls `authToService(authority)`
+    // (`client.ts:645`) rather than going through the control plane — so a
+    // registry code arrives here as readily as a control-plane one.
+    //
+    // This lookup is what makes the two cursor entries real rather than
+    // decorative. `/contexts`' "Load more" is the ONLY path in this console
+    // that sends a cursor, so before this line an expired cursor fell all the
+    // way through to `GENERIC` — `Could not load context.` — on the one surface
+    // that could produce it, while the strings naming the recovery sat in a map
+    // wired to a route with no cursor parameter. The gate caught that; it is
+    // the "copy no real request can exercise" class the test-hygiene work is
+    // about, and the fix is a consumer, not a deletion.
+    //
+    // Control-plane codes win because they are the more specific claim when
+    // both could apply: `CONTEXT_BINDING_UNVERIFIABLE` describes what the
+    // federation proxy established about a body, which no registry-side code
+    // can restate. The two vocabularies do not collide today (SCREAMING_SNAKE
+    // vs lowercase snake_case) and `api-error-messages.test.ts` asserts the
+    // key sets are disjoint, so the ordering is a tie-break that never fires
+    // rather than a precedence anyone has to reason about.
+    const fromRegistry = REGISTRY_ERROR_CODES.get(error.errorCode);
+    if (fromRegistry) return fromRegistry;
   }
   return contextErrorFallback(error);
 }

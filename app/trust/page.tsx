@@ -7,6 +7,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { LoadingPanel } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ReceiptCoverageBars, DidMethodBars } from '@/components/trust/coverage-bars';
 import { useTrust } from '@/lib/hooks/use-trust';
@@ -44,7 +45,17 @@ export default function TrustPage() {
     return (
       <div className="page">
         <SectionTitle icon={BadgeCheck} title="Trust" />
-        <ErrorPanel message={String(trust.error ?? 'Trust data unavailable.')} />
+        {/* Same compound branch as `/dashboard` (`error || !data`): the
+            no-error-no-data case is a live path and is not a failure, so the
+            literal stays and only the error arm gains a cause clause. */}
+        <ErrorPanel
+          message={
+            trust.error
+              ? operatorErrorMessage(trust.error, 'Could not load trust signals')
+              : 'Trust data unavailable.'
+          }
+          details={errorDiagnostic(trust.error)}
+        />
       </div>
     );
   }

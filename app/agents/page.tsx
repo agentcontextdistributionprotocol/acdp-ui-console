@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Modal } from '@/components/ui/modal';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
 import { listAgents, listCpEvents } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
@@ -37,7 +38,12 @@ export default function AgentsPage() {
       <SectionTitle icon={Users} title="Agents" sub="Known agent DIDs observed through the control plane" />
 
       {isLoading && <LoadingSkeleton rows={4} height={44} />}
-      {error && <ErrorPanel message={String(error)} />}
+      {error && (
+        <ErrorPanel
+          message={operatorErrorMessage(error, 'Could not load the agent inventory')}
+          details={errorDiagnostic(error)}
+        />
+      )}
       {data && data.length === 0 && <EmptyState title="No agents observed yet" />}
       {data && data.length > 0 && (
         <Card>

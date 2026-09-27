@@ -16,6 +16,11 @@ import { LineageChain } from '@/components/contexts/lineage-chain';
 import { useRuns } from '@/lib/hooks/use-runs';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { getRunLineageGraph, getLineage } from '@/lib/api/client';
+import {
+  errorDiagnostic,
+  operatorErrorMessage,
+  REGISTRY_ERROR_CODES,
+} from '@/lib/utils/api-error-messages';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { C } from '@/lib/colors';
 import type { FullContext, RegistryAuthority } from '@/lib/types';
@@ -96,7 +101,15 @@ function ByRun({ demoMode }: { demoMode: boolean }) {
               {lineage.data?.nodes.length ?? 0} contexts · {lineage.data?.edges.length ?? 0} edges
             </span>
           </div>
-          {lineage.error && <ErrorPanel message={String(lineage.error)} />}
+          {/* The run DAG goes through the control plane (`getRunLineageGraph`
+              → `getCpRunLineage`), not a registry, so it carries no
+              `REGISTRY_ERROR_CODES` map — the chain lookup below does. */}
+          {lineage.error && (
+            <ErrorPanel
+              message={operatorErrorMessage(lineage.error, "Could not load this run's lineage graph")}
+              details={errorDiagnostic(lineage.error)}
+            />
+          )}
           {lineage.data && (
             <LineageDag graph={lineage.data} activeCtx={activeCtx ?? undefined} onSelectCtx={setActiveCtx} />
           )}
@@ -153,7 +166,18 @@ function ByLineage({ demoMode }: { demoMode: boolean }) {
       )}
 
       {chain.isLoading && <LoadingSkeleton rows={3} height={72} />}
-      {chain.error && <ErrorPanel message={String(chain.error)} />}
+      {/* `getLineage` goes straight to a registry (`authToService`,
+          `client.ts:737`), so this surface can see the registry's own
+          RFC-ACDP-0007 §5 codes — including the two cursor codes, which are
+          recoverable by re-searching and which nothing on screen named before. */}
+      {chain.error && (
+        <ErrorPanel
+          message={operatorErrorMessage(chain.error, 'Could not resolve this lineage_id', {
+            codes: REGISTRY_ERROR_CODES,
+          })}
+          details={errorDiagnostic(chain.error)}
+        />
+      )}
       {chain.data && chain.data.length === 0 && <EmptyState title="No contexts for this lineage_id" />}
       {chain.data && chain.data.length > 0 && (
         <LineageChain chain={chain.data} onOpen={(ctxId) => setOpenCtx(chain.data!.find((c) => c.body.ctx_id === ctxId) ?? null)} />

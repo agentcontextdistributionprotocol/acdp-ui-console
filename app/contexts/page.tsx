@@ -14,7 +14,7 @@ import { ContextDetail } from '@/components/contexts/context-detail';
 import { searchContexts, getContext } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import { contextErrorMessage } from '@/lib/utils/api-error-messages';
+import { contextErrorMessage, errorDiagnostic } from '@/lib/utils/api-error-messages';
 import { KEY_REVOCATION_TYPE } from '@/lib/utils/revocation';
 import { C } from '@/lib/colors';
 import type { ContextSearchParams, RegistryAuthority } from '@/lib/types';
@@ -190,7 +190,17 @@ export default function ContextsPage() {
       )}
 
       {search.isLoading && <LoadingSkeleton rows={4} height={84} />}
-      {search.error && <ErrorPanel message={String(search.error)} />}
+      {/* `contextErrorMessage`, not the generic sweep: this is a context fetch,
+          and that function carries the four `errorCode`-keyed strings — the
+          could-check / could-not-check split above all — that a generic status
+          message would throw away. The page already renders it at `:277` and
+          `:285`; this site was simply the one that was missed. */}
+      {search.error && (
+        <ErrorPanel
+          message={contextErrorMessage(search.error)}
+          details={errorDiagnostic(search.error)}
+        />
+      )}
       {/* Three distinct zero-match states, because they mean three different
           things and only one of them is "there are none".
 
@@ -282,7 +292,19 @@ export default function ContextsPage() {
             borrows `CONTEXT_ID_MISMATCH`'s sentence — the control plane is
             explicit that no mismatch was established for it, so claiming one
             here was a lie the console told on upstream's behalf. */}
-        {detail.error && !bodyUnavailable && <ErrorPanel message={contextErrorMessage(detail.error)} />}
+        {/* `details` here too, so the two ErrorPanels on this page offer the
+            same affordance. A disclosure inside a modal is fine where it is
+            bounded — the `<pre>` carries its own `max-height` + `overflow`, so
+            it cannot push the rest of the modal out of reach. (The three
+            inline-text sites in `enrollments`/`webhook-config` get no
+            disclosure; a `<details>` in a modal FOOTER or a table cell is a
+            different question, and the answer there is no.) */}
+        {detail.error && !bodyUnavailable && (
+          <ErrorPanel
+            message={contextErrorMessage(detail.error)}
+            details={errorDiagnostic(detail.error)}
+          />
+        )}
         {/* requestedCtxId is `openCtx` (the search hit the operator clicked), never
             `detail.data.body.ctx_id` — a genuine independent request/response pair,
             so the ctxIdBinding chip actually catches a registry serving the wrong

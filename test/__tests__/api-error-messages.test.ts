@@ -22,6 +22,7 @@ import {
   contextErrorMessage,
   errorDiagnostic,
   operatorErrorMessage,
+  REGISTRY_ERROR_CODES,
 } from '@/lib/utils/api-error-messages';
 import type { ProxyService } from '@/lib/types';
 
@@ -594,5 +595,220 @@ describe('errorDiagnostic', () => {
     const d = errorDiagnostic(apiError(500, body))!;
     expect(d).toContain(body);
     expect(d.length).toBeGreaterThan(40_000);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The registry's own vocabulary.
+//
+// Copy correctness for `REGISTRY_ERROR_CODES` lives here, against upstream's
+// source, exactly as the control-plane map above is checked against
+// `error-codes.ts`. `error-copy-sweep.test.tsx` asserts the WIRING — that
+// `/lineage`'s chain lookup passes the map at all — and deliberately asserts
+// nothing about the strings.
+//
+// Every key below is quoted from
+// `acdp-registry-rs/crates/acdp-registry-types/src/error.rs:152-200`
+// (`wire_code()`), with the HTTP status from `http_status_for_acdp` at `:204`.
+// ══════════════════════════════════════════════════════════════════════
+describe('REGISTRY_ERROR_CODES', () => {
+  /** A registry answering directly — lowercase snake_case, per RFC-ACDP-0007 §5. */
+  function registryError(status: number, code: string): ApiError {
+    return new ApiError(
+      status,
+      JSON.stringify({ error: { code, message: '…' } }),
+      'registry-a',
+      '/lineages/lin-1',
+      true,
+    );
+  }
+
+  // The eight read-path codes, each with the status `http_status_for_acdp`
+  // assigns it. A code dropped from the map fails here rather than silently
+  // falling back to a status arm that says less.
+  const READ_PATH: [string, number][] = [
+    ['not_found', 404],
+    ['not_authorized', 403],
+    ['invalid_cursor', 400],
+    ['cursor_expired', 400],
+    ['rate_limited', 429],
+    ['cross_registry_resolution_failed', 502],
+    ['key_resolution_failed', 400],
+    ['key_resolution_unreachable', 502],
+  ];
+
+  it.each(READ_PATH)('maps %s, and it beats the %d status arm', (code, status) => {
+    const mapped = REGISTRY_ERROR_CODES.get(code);
+    expect(mapped).toBeDefined();
+    const msg = operatorErrorMessage(registryError(status, code), 'Could not resolve this lineage_id', {
+      codes: REGISTRY_ERROR_CODES,
+    });
+    expect(msg).toBe(`Could not resolve this lineage_id. ${mapped}`);
+  });
+
+  // The `it.each` above computes its expectation FROM the map, so it cannot
+  // catch a wrong string — it proves wiring, not copy. These pin the content.
+  // Two of the eight originally had no content assertion at all, and one of
+  // those two shipped an over-claim past every test in the file.
+  it('does not claim a deployment-wide sweep for `not_found`', () => {
+    // Every path that reaches this string queries ONE authority:
+    // `authToService` takes a single `RegistryAuthority`, and both surfaces put
+    // that choice behind a Registry A / Registry B picker. The first cut said
+    // "No registry in this deployment has published anything under that id",
+    // which is false and suppresses the likeliest fix — flip the picker.
+    const msg = REGISTRY_ERROR_CODES.get('not_found')!;
+    expect(msg).toContain('the registry this console asked');
+    expect(msg).toContain('try the other registry');
+    expect(msg).not.toMatch(/no registry|this deployment|any registry/i);
+  });
+
+  it('says `rate_limited` is retryable and not a rejection on the merits', () => {
+    const msg = REGISTRY_ERROR_CODES.get('rate_limited')!;
+    expect(msg).toContain('Wait and retry');
+    expect(msg).toContain('nothing about this request was rejected on its merits');
+  });
+
+  it('holds no publish-side code, because this console has no publish surface', () => {
+    // A mapped code that no surface can reach is untestable copy — the same
+    // vacuous-fixture problem `#101` is about, in prose. These are all real
+    // `wire_code()` values; none is reachable from a read.
+    for (const code of [
+      'duplicate_publish',
+      'immutable_field',
+      'superseded_target',
+      'schema_violation',
+      'invalid_signature',
+      'not_implemented',
+    ]) {
+      expect(REGISTRY_ERROR_CODES.has(code)).toBe(false);
+    }
+  });
+
+  it('names the same recovery for both cursor codes without collapsing them', () => {
+    // RFC-ACDP-0007 keeps `invalid_cursor` (never parsed) and `cursor_expired`
+    // (parsed, aged out) apart, so the map does too — but the operator's action
+    // is identical and is the whole point of mapping them at all.
+    const invalid = REGISTRY_ERROR_CODES.get('invalid_cursor')!;
+    const expired = REGISTRY_ERROR_CODES.get('cursor_expired')!;
+    expect(invalid).not.toBe(expired);
+    expect(invalid).toContain('Search again from the start');
+    expect(expired).toContain('Search again from the start');
+    // Neither blames the query, which is what a bare 400 implies.
+    expect(invalid).toContain('nothing is wrong with the query itself');
+    expect(expired).toContain('nothing is wrong with the query itself');
+  });
+
+  it('keeps key resolution a could-not-check, never a failed verification', () => {
+    // `error.rs:157-158` is the registry's own mirror of the
+    // `CONTEXT_ID_MISMATCH` / `CONTEXT_BINDING_UNVERIFIABLE` split this module
+    // exists to preserve. Neither of these establishes anything about a
+    // signature, and saying otherwise is this file's oldest documented defect.
+    for (const code of ['key_resolution_failed', 'key_resolution_unreachable']) {
+      const msg = REGISTRY_ERROR_CODES.get(code)!;
+      expect(msg).toContain('No signature has been judged either way');
+      expect(msg).not.toMatch(/invalid signature|signature is bad|failed verification/i);
+    }
+    // …and they are told apart on the axis that matters to an operator:
+    // permanent (400, the reference is unusable) vs transient (502, retry).
+    expect(REGISTRY_ERROR_CODES.get('key_resolution_unreachable')).toContain('retry');
+    expect(REGISTRY_ERROR_CODES.get('key_resolution_failed')).not.toContain('retry');
+  });
+
+  it('does not accuse a registry of refusing credentials it was never offered', () => {
+    // The 403 arm. This console sends the registries nothing
+    // (`integrations.ts` returns auth material for `control-plane` alone), so
+    // the fix is a grant on the registry, not a key on this side.
+    const msg = REGISTRY_ERROR_CODES.get('not_authorized')!;
+    expect(msg).toContain('this console sends it no credential');
+    expect(msg).not.toContain('CONTROL_PLANE_API_KEY');
+  });
+
+  it('points a federated 502 at the far registry, not the near one', () => {
+    const msg = REGISTRY_ERROR_CODES.get('cross_registry_resolution_failed')!;
+    expect(msg).toContain('is healthy');
+    expect(msg).toContain('federated hop');
+  });
+
+  it('is prototype-safe, like the control-plane map', () => {
+    // An upstream error code is attacker-influenced input from here.
+    expect(REGISTRY_ERROR_CODES.get('constructor')).toBeUndefined();
+    expect(REGISTRY_ERROR_CODES.get('toString')).toBeUndefined();
+    expect(REGISTRY_ERROR_CODES.get('__proto__')).toBeUndefined();
+  });
+
+  it('shares no key with the control-plane map, so neither can shadow the other', () => {
+    for (const k of REGISTRY_ERROR_CODES.keys()) {
+      expect(CONTEXT_ERROR_MESSAGES.has(k)).toBe(false);
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// `contextErrorMessage` reaches the registry's vocabulary too.
+//
+// Both context surfaces call a registry DIRECTLY — `searchContexts` goes
+// through `authToService(authority)` (`client.ts:645`), not the control plane —
+// so a registry code arrives at that function as readily as a control-plane
+// one. Without this lookup the two cursor strings were unreachable: `/contexts`
+// "Load more" is the ONLY path in this console that sends a cursor
+// (`app/contexts/page.tsx:62`, `client.ts:632`), and it renders
+// `contextErrorMessage`, so an expired cursor fell through to the GENERIC
+// sentence while the copy naming the recovery sat in a map wired to a route
+// that takes no cursor parameter at all.
+// ══════════════════════════════════════════════════════════════════════
+describe('contextErrorMessage consults the registry map', () => {
+  function registrySearchError(status: number, code: string): ApiError {
+    return new ApiError(
+      status,
+      JSON.stringify({ error: { code, message: '…' } }),
+      'registry-a',
+      '/contexts/search?cursor=abc',
+      true,
+    );
+  }
+
+  it.each([
+    ['cursor_expired', 400],
+    ['invalid_cursor', 400],
+  ])('names the re-search recovery for %s instead of the generic sentence', (code, status) => {
+    const msg = contextErrorMessage(registrySearchError(status, code));
+    expect(msg).toBe(REGISTRY_ERROR_CODES.get(code));
+    expect(msg).toContain('Search again from the start');
+    // The sentence this displaced. It is what the surface rendered before, and
+    // it told an operator with a recoverable state precisely nothing.
+    expect(msg).not.toBe('Could not load context.');
+  });
+
+  it('lets a control-plane code win over a registry one', () => {
+    // Not a real collision — the vocabularies are disjoint and a sibling test
+    // asserts it — but the ordering is a decision, so it is pinned rather than
+    // left to whichever lookup happens to be written first.
+    const err = new ApiError(
+      502,
+      JSON.stringify({ errorCode: 'CONTEXT_BINDING_UNVERIFIABLE' }),
+      'registry-a',
+      '/contexts/search',
+      true,
+    );
+    expect(contextErrorMessage(err)).toBe(
+      CONTEXT_ERROR_MESSAGES.get('CONTEXT_BINDING_UNVERIFIABLE'),
+    );
+  });
+
+  it('still falls through to the status arms for an unmapped registry code', () => {
+    // `schema_violation` is a real registry code that this console cannot
+    // reach from a read, so it is deliberately in neither map.
+    const msg = contextErrorMessage(registrySearchError(400, 'schema_violation'));
+    expect(msg).toBe('Could not load context.');
+  });
+
+  it('does not let a registry 401 become "rejected this console\'s credentials"', () => {
+    // The lookup misses, so this lands in `contextErrorFallback`'s 401 arm —
+    // which is service-gated for exactly this reason. Asserted here because
+    // routing registry errors into this function is what made a registry 401
+    // reachable on a context surface for the first time.
+    const msg = contextErrorMessage(registrySearchError(401, 'not_authenticated'));
+    expect(msg).toBe('registry A requires credentials this console does not send.');
+    expect(msg).not.toContain('rejected');
   });
 });
