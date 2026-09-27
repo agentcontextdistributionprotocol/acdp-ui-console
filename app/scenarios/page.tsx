@@ -5,6 +5,7 @@ import { FlaskConical } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ScenarioCard } from '@/components/scenarios/scenario-card';
 import { LaunchModal } from '@/components/scenarios/launch-modal';
@@ -53,7 +54,12 @@ export default function ScenariosPage() {
       />
 
       {isLoading && <LoadingSkeleton rows={6} height={120} />}
-      {error && <ErrorPanel message={String(error)} />}
+      {error && (
+        <ErrorPanel
+          message={operatorErrorMessage(error, 'Could not load the scenario catalogue')}
+          details={errorDiagnostic(error)}
+        />
+      )}
       {!isLoading && !error && filtered.length === 0 && <EmptyState title="No scenarios match this filter" />}
 
       {!isLoading && !error && filtered.length > 0 && (

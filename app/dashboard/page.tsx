@@ -12,6 +12,7 @@ import { ReceiptCoverageBars, DidMethodBars } from '@/components/trust/coverage-
 import dynamic from 'next/dynamic';
 import { LoadingPanel } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { Badge } from '@/components/ui/badge';
 import { useDashboard } from '@/lib/hooks/use-dashboard';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
@@ -91,7 +92,20 @@ export default function DashboardPage() {
         {/* The picker stays on the error path too — otherwise a window whose
             query failed is unrecoverable without a reload. */}
         <SectionTitle icon={LayoutGrid} title="Dashboard" right={windowPicker} />
-        <ErrorPanel message={String(dash.error ?? 'Dashboard data unavailable.')} />
+        {/* The branch above is `error || !data`, so the no-error-no-data case is
+            live and is NOT a failure — React Query can settle with `undefined`
+            (a disabled or reset query). Passing `undefined` into
+            `operatorErrorMessage` would answer it with a load-failure sentence.
+            The existing literal is more specific than anything generic, so it
+            stays, and only the error arm gains a cause clause. */}
+        <ErrorPanel
+          message={
+            dash.error
+              ? operatorErrorMessage(dash.error, 'Could not load the dashboard')
+              : 'Dashboard data unavailable.'
+          }
+          details={errorDiagnostic(dash.error)}
+        />
       </div>
     );
   }

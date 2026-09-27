@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { RunsTable } from '@/components/runs/runs-table';
 import { useRuns } from '@/lib/hooks/use-runs';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
@@ -65,7 +66,12 @@ export default function RunsPage() {
       />
 
       {isLoading && <LoadingSkeleton rows={6} height={44} />}
-      {error && <ErrorPanel message={String(error)} />}
+      {error && (
+        <ErrorPanel
+          message={operatorErrorMessage(error, 'Could not load the run list')}
+          details={errorDiagnostic(error)}
+        />
+      )}
       {data && (
         <>
           <Card>

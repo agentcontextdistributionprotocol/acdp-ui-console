@@ -5,6 +5,7 @@ import { getCpMetrics } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatNumber } from '@/lib/utils/format';
 
@@ -17,7 +18,13 @@ export function MetricsPanel() {
   });
 
   if (isLoading) return <LoadingSkeleton rows={5} height={28} />;
-  if (error) return <ErrorPanel message={String(error)} />;
+  if (error)
+    return (
+      <ErrorPanel
+        message={operatorErrorMessage(error, 'Could not load control-plane metrics')}
+        details={errorDiagnostic(error)}
+      />
+    );
   if (!data || data.length === 0) return <EmptyState title="No metrics available" />;
 
   return (
