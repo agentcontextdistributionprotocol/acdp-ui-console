@@ -20,7 +20,10 @@ import {
   CONTEXT_ERROR_MESSAGES,
   contextErrorFallback,
   contextErrorMessage,
+  errorDiagnostic,
+  operatorErrorMessage,
 } from '@/lib/utils/api-error-messages';
+import type { ProxyService } from '@/lib/types';
 
 /**
  * An `ApiError` built the way `fetchJson` builds one: from a raw body string.
@@ -295,5 +298,301 @@ describe('the lookup is defensive about where a code came from', () => {
     // read as "could not load", which tells the operator nothing to do.
     const msg = contextErrorMessage(apiError(429, { error: { code: 'rate_limited' } }));
     expect(msg).toMatch(/rate limiting/i);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The surface-independent half of the module.
+//
+// `contextErrorMessage` above answers for one domain. `operatorErrorMessage`
+// answers for the other seventeen surfaces that were rendering `String(error)`
+// — i.e. an upstream's raw bytes, or `ApiError: <body>`, as the operator's
+// primary message.
+//
+// Asserted in PAIRS throughout, per this file's own recorded anti-pattern
+// below: a truthiness loop cannot tell a correct message from a different
+// wrong one, so each case asserts the string that SHOULD render AND that the
+// string that should not is absent.
+// ══════════════════════════════════════════════════════════════════════
+describe('operatorErrorMessage — the generic surface copy', () => {
+  const LEAD = 'Could not load the agent inventory';
+
+  /** An `ApiError` from an arbitrary service, not just the control plane. */
+  function svcError(
+    status: number,
+    service: ProxyService,
+    body: unknown = '',
+    fromUpstream = true,
+  ): ApiError {
+    return new ApiError(
+      status,
+      typeof body === 'string' ? body : JSON.stringify(body),
+      service,
+      '/agents',
+      fromUpstream,
+    );
+  }
+
+  it('every return value begins with the lead', () => {
+    const cases: unknown[] = [
+      new TypeError('Failed to fetch'),
+      svcError(401, 'control-plane'),
+      svcError(403, 'registry-a'),
+      svcError(404, 'playground'),
+      svcError(429, 'registry-b'),
+      svcError(500, 'control-plane'),
+      svcError(418, 'playground'),
+      svcError(503, 'registry-a', '', false),
+    ];
+    for (const e of cases) expect(operatorErrorMessage(e, LEAD).startsWith(LEAD)).toBe(true);
+    // …including the codes arm, which the list above cannot reach.
+    const codes = new Map([['rate_limited', 'The registry is rate limiting this console.']]);
+    const coded = operatorErrorMessage(
+      svcError(429, 'registry-a', { error: { code: 'rate_limited' } }),
+      LEAD,
+      { codes },
+    );
+    expect(coded.startsWith(LEAD)).toBe(true);
+  });
+
+  it('a non-ApiError names no service and no status', () => {
+    const msg = operatorErrorMessage(new TypeError('Failed to fetch'), LEAD);
+    expect(msg).toBe(`${LEAD}.`);
+    // The pair. A bare `toBe` would pass if the function returned the lead and
+    // then silently dropped a service name in some other build.
+    for (const forbidden of ['the control plane', 'registry A', 'the playground', '500', 'TypeError'])
+      expect(msg).not.toContain(forbidden);
+  });
+
+  // The whole point of the provenance gate. A status alone cannot tell an
+  // upstream's envelope from one this console minted, and blaming a service
+  // that was never contacted is the over-claim this module exists to remove.
+  it.each([401, 404, 500, 503])(
+    'an unstamped %i blames no upstream and gives the console sentence',
+    (status) => {
+      const msg = operatorErrorMessage(svcError(status, 'registry-a', 'boom', false), LEAD);
+      expect(msg).toContain('This console could not complete the request');
+      for (const forbidden of ['registry A', 'the control plane', 'the playground', 'registry B'])
+        expect(msg).not.toContain(forbidden);
+    },
+  );
+
+  it('names CONTROL_PLANE_API_KEY on a control-plane 401 but not a registry 401', () => {
+    const cp = operatorErrorMessage(svcError(401, 'control-plane'), LEAD);
+    const reg = operatorErrorMessage(svcError(401, 'registry-a'), LEAD);
+    expect(cp).toContain('CONTROL_PLANE_API_KEY');
+    expect(cp).toContain('the control plane');
+    expect(cp).toContain("rejected this console's credentials");
+    // 401 is an authentication failure; "grant admin scope" is the 403 remedy.
+    expect(cp).toContain('check that it is set and current');
+    expect(cp).not.toContain('admin scope');
+    // A registry carries no injected credential, so pointing the operator at
+    // that variable would send them to fix the wrong thing.
+    expect(reg).not.toContain('CONTROL_PLANE_API_KEY');
+    expect(reg).toContain('registry A');
+  });
+
+  // The console sends a registry nothing: `integrations.ts` returns auth
+  // material for `control-plane` alone, and the proxy strips the browser's own
+  // cookie and `authorization`. So a registry 401 cannot be a REJECTION — there
+  // was nothing to reject. Saying otherwise blames a service for refusing
+  // something it was never offered, and implies a fix (repair the console's
+  // registry credential) that does not exist in this product.
+  it.each(['registry-a', 'registry-b', 'playground'] as const)(
+    'does not claim %s rejected credentials it was never sent',
+    (service) => {
+      const msg = operatorErrorMessage(svcError(401, service), LEAD);
+      expect(msg).toContain('requires credentials this console does not send');
+      expect(msg).not.toContain('rejected');
+      expect(msg).not.toContain('CONTROL_PLANE_API_KEY');
+    },
+  );
+
+  it('gives each status arm a distinct string naming the right service', () => {
+    const msgs = [403, 404, 429, 503, 500, 418].map((s) =>
+      operatorErrorMessage(svcError(s, 'registry-b'), LEAD),
+    );
+    // Distinct as a set — 429 and 503 share wording deliberately, so compare
+    // the four that must differ plus the shared pair as one.
+    expect(new Set(msgs).size).toBe(5);
+    for (const m of msgs) expect(m).toContain('registry B');
+    expect(msgs[0]).toContain('not authorized');
+    expect(msgs[1]).toContain('has no record of it');
+    expect(msgs[2]).toBe(msgs[3]);
+    expect(msgs[2]).toContain('unavailable or rate limiting');
+    expect(msgs[4]).toContain('did not answer successfully (500)');
+    expect(msgs[5]).toContain('answered 418');
+  });
+
+  it('opts.notFound replaces the 404 clause and is ignored for every other status', () => {
+    const notFound = 'No run with id r1 exists on this control plane.';
+    expect(operatorErrorMessage(svcError(404, 'control-plane'), LEAD, { notFound })).toContain(
+      notFound,
+    );
+    for (const status of [403, 429, 500, 503, 418])
+      expect(operatorErrorMessage(svcError(status, 'control-plane'), LEAD, { notFound })).not.toContain(
+        notFound,
+      );
+  });
+
+  it('opts.codes wins over the status arms, and an absent code falls through', () => {
+    const codes = new Map([['cursor_expired', 'That page of results expired — search again.']]);
+    const hit = operatorErrorMessage(
+      svcError(400, 'registry-a', { error: { code: 'cursor_expired' } }),
+      LEAD,
+      { codes },
+    );
+    expect(hit).toContain('search again');
+    // A code is a statement about WHAT went wrong; a status only that it did.
+    expect(hit).not.toContain('answered 400');
+
+    const miss = operatorErrorMessage(
+      svcError(400, 'registry-a', { error: { code: 'something_new' } }),
+      LEAD,
+      { codes },
+    );
+    expect(miss).toContain('answered 400');
+    expect(miss).not.toContain('search again');
+  });
+
+  // Codes beat PROVENANCE too, not just the status arms — and this is the arm
+  // that is easy to get backwards. Demo mode is the product default and throws
+  // code-bearing errors that are unstamped by construction (`client.ts` raises
+  // CONTEXT_NOT_FOUND and REGISTRY_NOT_FOUND with `fromUpstream` false, because
+  // no request was made). Check provenance first and every one of those demo
+  // surfaces renders "this console looks misconfigured or signed out" — in the
+  // mode CLAUDE.md says works with zero backends.
+  it('a code wins over the console-fault arm on an UNSTAMPED error', () => {
+    const codes = new Map([['REGISTRY_NOT_FOUND', 'No registry is enrolled under that authority.']]);
+    const msg = operatorErrorMessage(
+      svcError(404, 'control-plane', { errorCode: 'REGISTRY_NOT_FOUND' }, false),
+      LEAD,
+      { codes },
+    );
+    expect(msg).toContain('No registry is enrolled under that authority');
+    expect(msg).not.toContain('This console could not complete the request');
+  });
+
+  // The module's header rule is "no normalisation of the incoming code". A
+  // *fallback* fold — exact match first, case-insensitive scan on a miss —
+  // looks harmless and still merges the two vocabularies whenever only one
+  // spelling is in the map, which is the normal case. The three-pair test below
+  // cannot catch it because it seeds BOTH spellings.
+  it('does not fall back to a case-insensitive match when the exact key is absent', () => {
+    const codes = new Map([['INVALID_SIGNATURE', "The control plane could not verify its own signature."]]);
+    const msg = operatorErrorMessage(
+      svcError(400, 'registry-a', { error: { code: 'invalid_signature' } }),
+      LEAD,
+      { codes },
+    );
+    expect(msg).not.toContain('could not verify its own signature');
+    expect(msg).toContain('answered 400');
+  });
+
+  it('assembles a readable sentence for a code clause — no capital mid-dash', () => {
+    const codes = new Map([['cursor_expired', 'That page of results expired — search again.']]);
+    const msg = operatorErrorMessage(
+      svcError(400, 'registry-a', { error: { code: 'cursor_expired' } }),
+      LEAD,
+      { codes },
+    );
+    // A `codes` value is a full sentence, so it joins with ". " — splicing it
+    // after an em dash gives a capital mid-sentence and a nested dash.
+    expect(msg).toBe(`${LEAD}. That page of results expired — search again.`);
+  });
+
+  // The rule at the top of this module ("no normalisation of the incoming
+  // code") was written when the count of near-collisions was ZERO. It is now
+  // three: the control plane has INVALID_SIGNATURE / INVALID_LOG_PROOF /
+  // INVALID_WITNESS_COSIGNATURE and the registry has the same three words in
+  // lowercase snake_case. Case-folding the lookup would merge them.
+  it.each([
+    ['INVALID_SIGNATURE', 'invalid_signature'],
+    ['INVALID_LOG_PROOF', 'invalid_log_proof'],
+    ['INVALID_WITNESS_COSIGNATURE', 'invalid_witness_cosignature'],
+  ])('does not case-fold %s against %s', (upper, lower) => {
+    const codes = new Map([
+      [upper, 'The control plane could not verify a signature it produced.'],
+      [lower, 'The registry rejected a signature on the submitted document.'],
+    ]);
+    const a = operatorErrorMessage(svcError(400, 'control-plane', { errorCode: upper }), LEAD, {
+      codes,
+    });
+    const b = operatorErrorMessage(svcError(400, 'registry-a', { errorCode: lower }), LEAD, {
+      codes,
+    });
+    expect(a).not.toBe(b);
+    expect(a).toContain('could not verify a signature it produced');
+    expect(b).toContain('rejected a signature on the submitted document');
+  });
+
+  it('shares one console-fault sentence with contextErrorFallback', () => {
+    const e = consoleError(503, 'boom');
+    // Identical string, not merely similar — the two functions must not be
+    // able to drift.
+    expect(operatorErrorMessage(e, LEAD)).toBe(`${LEAD}. ${contextErrorFallback(e)}`);
+  });
+});
+
+describe("contextErrorFallback gains #91's other half", () => {
+  it('a stamped 401 names the key instead of falling through to the generic string', () => {
+    const msg = contextErrorFallback(apiError(401, ''));
+    expect(msg).toContain('CONTROL_PLANE_API_KEY');
+    expect(msg).not.toBe('Could not load context.');
+    // A 401 means the key did not authenticate. Telling the operator to grant
+    // it admin scope prescribes an action that cannot resolve a missing or
+    // rotated key — the very fault this module exists to remove.
+    expect(msg).toContain('check that it is set and current');
+    expect(msg).not.toContain('admin scope');
+  });
+
+  // Both of today's callers fetch from the control plane, so this arm is
+  // correct without a gate — but `/contexts` already talks to registries for
+  // search, and an ungated arm would silently tell an operator that a registry
+  // rejected credentials this console never sends it.
+  it('does not claim a registry rejected credentials, if one ever reaches this function', () => {
+    const regErr = new ApiError(401, '', 'registry-a', '/contexts/x', true);
+    const msg = contextErrorFallback(regErr);
+    expect(msg).toContain('requires credentials this console does not send');
+    expect(msg).not.toContain('rejected');
+    expect(msg).not.toContain('CONTROL_PLANE_API_KEY');
+  });
+
+  it('an unstamped 401 still gets the console sentence, not the key sentence', () => {
+    const msg = contextErrorFallback(consoleError(401));
+    expect(msg).toContain('This console could not complete the request');
+    expect(msg).not.toContain('CONTROL_PLANE_API_KEY');
+  });
+});
+
+describe('errorDiagnostic', () => {
+  it('is undefined for a non-ApiError — nothing worth disclosing', () => {
+    expect(errorDiagnostic(new TypeError('Failed to fetch'))).toBeUndefined();
+    expect(errorDiagnostic('a string')).toBeUndefined();
+    expect(errorDiagnostic(undefined)).toBeUndefined();
+  });
+
+  it('carries status, service and path, plus the body when there is one', () => {
+    const d = errorDiagnostic(apiError(502, '{"error":{"code":"schema_violation"}}'))!;
+    expect(d).toContain('502');
+    expect(d).toContain('control-plane');
+    expect(d).toContain('/contexts/x');
+    expect(d).toContain('schema_violation');
+  });
+
+  it('omits the separator entirely for an empty body rather than dangling one', () => {
+    const d = errorDiagnostic(apiError(500, ''))!;
+    expect(d).toBe('500 from control-plane /contexts/x');
+    expect(d.endsWith('—')).toBe(false);
+  });
+
+  // Truncation was in the first draft and removed: the disclosure bounds the
+  // visual cost with max-height + overflow, and a character cap costs the
+  // operator the tail of a body that may be the part that matters.
+  it('returns a 40 000-character body IN FULL', () => {
+    const body = 'x'.repeat(40_000);
+    const d = errorDiagnostic(apiError(500, body))!;
+    expect(d).toContain(body);
+    expect(d.length).toBeGreaterThan(40_000);
   });
 });
