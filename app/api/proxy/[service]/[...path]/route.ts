@@ -246,6 +246,18 @@ async function forward(
     // `proxy-route.test.ts` asserts both its presence here and its absence on
     // the 403, the redirect 502 above and the unreachable 502 below.
     responseHeaders.set('x-acdp-ui-proxy', service);
+    // Paired with the stamp above, and for the same reason. The stamp says
+    // "something beyond our boundary answered"; a cache between here and the
+    // browser could replay that claim long after the service stopped answering,
+    // so a stale `/healthz` 200 would read as live evidence of health. No route
+    // in the allow-list is safe to replay: the mutations obviously not, and even
+    // the content-bound reads (`/contexts/{ctx_id}`) carry mutable lifecycle and
+    // revocation state, which is exactly what the console fail-closes on.
+    // The two that look static are the ones that most need this: a cached
+    // `/.well-known/jwks.json` defeats key rotation, and a stale
+    // `/.well-known/acdp.json` misreports what a registry supports. If a route
+    // ever is genuinely cacheable, add a carve-out here — do not delete the line.
+    responseHeaders.set('cache-control', 'no-store');
     // The body is re-streamed decoded, so length/encoding framing no longer applies.
     responseHeaders.delete('content-encoding');
     responseHeaders.delete('content-length');
