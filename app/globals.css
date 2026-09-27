@@ -761,6 +761,43 @@ textarea {
 .j-toggle { cursor: pointer; display: inline-flex; align-items: center; gap: 3px; color: var(--text); }
 .j-punc { color: var(--muted); }
 
+/* ── Error panel diagnostic disclosure ──
+   The upstream's raw bytes, demoted out of the operator's primary message.
+   Scoped to a class rather than styling bare `pre`/`details`: these are the
+   first such elements in the app, and a bare element rule would leak into
+   anything added later.
+
+   `max-height` + `overflow: auto` are what bound an untruncated body — the
+   diagnostic is deliberately not character-capped, so the CSS is the only
+   bound. `overflow-wrap: anywhere` stops one 40 000-character line widening
+   the card, which would otherwise re-create the table-overflow defect inside
+   the fix for the error-copy one. */
+.error-detail > summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  user-select: none;
+}
+/* No `:focus-visible` rule here on purpose: the repo-wide one further down
+   already gives every focusable element the same outline, and a local copy
+   would silently keep the old treatment for this component alone the day that
+   one changes. */
+.error-detail > pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+}
+
 /* ── Modal ── */
 .modal-overlay {
   position: fixed;
