@@ -121,8 +121,10 @@ function cameFromUpstream(response: Response, service: ProxyService): boolean {
 
 /**
  * Warned at most once per page load — see `warnOnUnstampedSuccess` below for
- * why the condition is worth detecting at all. Health is polled every 30s
- * across four services and the condition is a deployment-wide property, so one
+ * why the condition is worth detecting at all. Health is polled every 15s
+ * across four services (`connection-status.tsx:13`, `health-checks.tsx:20`;
+ * the 30s figure this comment used to give is `use-dashboard.ts:12`, a
+ * different query) and the condition is a deployment-wide property, so one
  * line is the whole signal and a hundred would bury it. (The sibling warning in
  * `middleware.ts` deliberately goes the other way, per-request: that one lands
  * in a server log an operator may attach to late, this one in a browser console
@@ -177,8 +179,25 @@ function warnOnUnstampedSuccess(response: Response, service: ProxyService, path:
 // functions, often called from React Query's queryFn), so there's no
 // `useRouter()` to reach for — a full navigation via `location.assign` is
 // the correct tool here, not a lint smell.
-function redirectToLoginOn401(status: number): void {
-  if (status !== 401 || typeof window === 'undefined') return;
+//
+// `fromUpstream` is the whole point of the second parameter. Two very
+// different things answer 401 at this boundary:
+//
+//  - middleware.ts:94, when the operator's session cookie is missing or
+//    expired. That 401 is console-minted and carries no stamp, and signing in
+//    again genuinely fixes it. This is the case the redirect exists for.
+//  - a real upstream, relayed through the proxy WITH the stamp — typically a
+//    wrong or rotated CONTROL_PLANE_API_KEY. The operator's own session is
+//    perfectly valid, so bouncing them to /login sends them to re-enter a
+//    passphrase that was never the problem; signing in returns them to the
+//    page, which 401s again. A loop that signing in cannot break.
+//
+// The gate lives inside this function rather than at the call sites (which is
+// what #91 proposed) so the whole redirect policy stays in one place: "which
+// 401s" is part of that policy, not the caller's business, and there are two
+// call sites today that would each have to remember the guard.
+function redirectToLoginOn401(status: number, fromUpstream: boolean): void {
+  if (status !== 401 || fromUpstream || typeof window === 'undefined') return;
   if (window.location.pathname === '/login') return;
   // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   window.location.assign('/login');
@@ -193,8 +212,12 @@ export async function fetchJson<T>(service: ProxyService, path: string, init?: R
 
   if (!response.ok) {
     const message = await response.text().catch(() => '');
-    redirectToLoginOn401(response.status);
-    throw new ApiError(response.status, message, service, path, cameFromUpstream(response, service));
+    // Computed once and shared: the redirect decision and the thrown error
+    // must agree about where this response came from, and a second call could
+    // not disagree but would invite one that does.
+    const fromUpstream = cameFromUpstream(response, service);
+    redirectToLoginOn401(response.status, fromUpstream);
+    throw new ApiError(response.status, message, service, path, fromUpstream);
   }
   warnOnUnstampedSuccess(response, service, path);
   if (response.status === 204) return undefined as unknown as T;
@@ -205,8 +228,9 @@ export async function fetchText(service: ProxyService, path: string): Promise<st
   const response = await fetch(proxyUrl(service, path), { cache: 'no-store' });
   if (!response.ok) {
     const message = await response.text().catch(() => '');
-    redirectToLoginOn401(response.status);
-    throw new ApiError(response.status, message, service, path, cameFromUpstream(response, service));
+    const fromUpstream = cameFromUpstream(response, service);
+    redirectToLoginOn401(response.status, fromUpstream);
+    throw new ApiError(response.status, message, service, path, fromUpstream);
   }
   // Both success paths, not just fetchJson's: fetchText is an independent
   // reader of the same boundary (`/metrics`), and a detector wired into only
@@ -226,6 +250,15 @@ export async function fetchText(service: ProxyService, path: string): Promise<st
 // `redirectToLoginOn401` do the redirect if (and only if) the session really
 // has expired; any other failure (network blip, upstream down) is not this
 // helper's concern, so it's swallowed.
+//
+// "If and only if the session really has expired" is now literally true, and
+// was not before: this probe reaches the control plane, so a rotated
+// CONTROL_PLANE_API_KEY made it answer 401 with the operator's session
+// perfectly valid — and an EventSource error then bounced them to /login.
+// `redirectToLoginOn401` now reads the provenance stamp, so only a
+// console-minted 401 (middleware's) redirects. Both hook tests mock this
+// helper, so nothing there would catch a regression; `fetcher.test.ts` asserts
+// it directly instead.
 export async function confirmSessionOrRedirect(): Promise<void> {
   // Demo mode has no proxy session to confirm and must never touch the
   // proxy. Guarded here — not just by caller discipline — so a future
