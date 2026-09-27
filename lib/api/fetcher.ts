@@ -66,9 +66,9 @@ export class ApiError extends Error {
    * handler throws (an unset `*_BASE_URL` out of `getIntegrationConfig`) — so
    * a console-side 401 ("sign in at /login required") looks identical to an
    * upstream 401 if all you have is the number. The proxy stamps
-   * `x-acdp-ui-proxy` on the pass-through path ONLY
-   * (`app/api/proxy/[service]/[...path]/route.ts`), so its presence is a fact
-   * rather than a guess.
+   * `x-acdp-ui-proxy` with the service it forwarded to, on the pass-through
+   * path ONLY (`app/api/proxy/[service]/[...path]/route.ts`), so a stamp
+   * matching the service this call asked about is a fact rather than a guess.
    *
    * What it cannot tell you: whether the *service* answered or some
    * intermediary between the proxy and the service did (a reverse proxy's own
@@ -98,17 +98,74 @@ export function proxyUrl(service: ProxyService, path: string): string {
 }
 
 /**
- * Did these bytes cross our own boundary?
+ * Did these bytes cross our own boundary — for the service we asked for?
  *
  * The proxy route sets `x-acdp-ui-proxy` immediately before re-streaming an
  * upstream response and on no other path, so every envelope this console mints
  * itself — the route's 400/403/502, `middleware.ts`'s 401, 503 and
  * Origin-mismatch 403, and Next's 500 for an unset `*_BASE_URL` — arrives
  * without it. `proxy-route.test.ts` guards both directions: the stamp present
- * on pass-through, and absent on the route's own 403 and 502 envelopes.
+ * on pass-through, and absent on the route's own 403 and both 502 envelopes.
+ *
+ * The VALUE is compared, not just the presence: the route writes the service
+ * it forwarded to, so `=== service` additionally rules out a response that
+ * crossed the boundary towards a DIFFERENT upstream than the caller asked
+ * about (a same-origin relative redirect landing a `registry-a` call on
+ * `registry-b`'s answer, say). `degraded`, and the version beside it, are
+ * claims about one named service; a stamp from another service is no evidence
+ * for them.
  */
-function cameFromUpstream(response: Response): boolean {
-  return response.headers.get('x-acdp-ui-proxy') !== null;
+function cameFromUpstream(response: Response, service: ProxyService): boolean {
+  return response.headers.get('x-acdp-ui-proxy') === service;
+}
+
+/**
+ * Warned at most once per page load — see `warnOnUnstampedSuccess` below for
+ * why the condition is worth detecting at all. Health is polled every 30s
+ * across four services and the condition is a deployment-wide property, so one
+ * line is the whole signal and a hundred would bury it. (The sibling warning in
+ * `middleware.ts` deliberately goes the other way, per-request: that one lands
+ * in a server log an operator may attach to late, this one in a browser console
+ * they are already looking at.)
+ */
+let warnedUnstampedSuccess = false;
+
+/**
+ * An unstamped 2xx from `/api/proxy/*` is impossible in a correct deployment —
+ * so seeing one is evidence, not noise.
+ *
+ * The failure path reads the stamp because "no console envelope carries a
+ * version" is a fact about today's code rather than an enforced invariant.
+ * "No console path emits a 2xx for `/api/proxy/*`" is equally unenforced, and
+ * reading the stamp here costs one header lookup while detecting two things
+ * nothing else in the repo can see:
+ *
+ *  - an intermediary (CDN, corporate proxy, ingress) stripping unknown `x-*`
+ *    response headers, which silently flips every genuine `degraded` to
+ *    `unreachable` across all four health surfaces;
+ *  - a redirect the BROWSER followed off this boundary — an intermediary in
+ *    front of the console bouncing `/api/proxy/*` elsewhere (or the route's own
+ *    3xx guard regressing), after which the response inspected here is the
+ *    target's and carries no stamp of ours. The route no longer relays a 3xx
+ *    itself, so this arm is about the hop the proxy cannot see, not that one.
+ *
+ * Deliberately a warning and not a throw: this is a detection signal, and a
+ * console that refused to render because a header went missing would trade a
+ * cosmetic wrongness for a total outage. `scripts/smoke-routes.mjs` cannot do
+ * this job — it checks page routes only and holds no session cookie, so it
+ * meets middleware's unstamped 401 by design.
+ */
+function warnOnUnstampedSuccess(response: Response, service: ProxyService, path: string): void {
+  if (warnedUnstampedSuccess || cameFromUpstream(response, service)) return;
+  warnedUnstampedSuccess = true;
+  const stamp = response.headers.get('x-acdp-ui-proxy');
+  console.warn(
+    `[ACDP UI] ${response.status} from /api/proxy/${service}${path} without this console's own provenance stamp ` +
+      `(x-acdp-ui-proxy: ${stamp === null ? 'absent' : `'${stamp}'`}, expected '${service}'). ` +
+      'The proxy stamps every response it relays, so something between it and this browser is rewriting ' +
+      'response headers, or the response never went through it. Health words (degraded vs unreachable) and the ' +
+      '"live" version markers will under-report until that is fixed. Warned once per page load.',
+  );
 }
 
 // The proxy/stream gate (middleware.ts) returns 401 when the operator
@@ -137,8 +194,9 @@ export async function fetchJson<T>(service: ProxyService, path: string, init?: R
   if (!response.ok) {
     const message = await response.text().catch(() => '');
     redirectToLoginOn401(response.status);
-    throw new ApiError(response.status, message, service, path, cameFromUpstream(response));
+    throw new ApiError(response.status, message, service, path, cameFromUpstream(response, service));
   }
+  warnOnUnstampedSuccess(response, service, path);
   if (response.status === 204) return undefined as unknown as T;
   return (await response.json()) as T;
 }
@@ -148,8 +206,12 @@ export async function fetchText(service: ProxyService, path: string): Promise<st
   if (!response.ok) {
     const message = await response.text().catch(() => '');
     redirectToLoginOn401(response.status);
-    throw new ApiError(response.status, message, service, path, cameFromUpstream(response));
+    throw new ApiError(response.status, message, service, path, cameFromUpstream(response, service));
   }
+  // Both success paths, not just fetchJson's: fetchText is an independent
+  // reader of the same boundary (`/metrics`), and a detector wired into only
+  // one of them would go quiet for whichever calls happen to use the other.
+  warnOnUnstampedSuccess(response, service, path);
   return response.text();
 }
 

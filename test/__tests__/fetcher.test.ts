@@ -2,11 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, proxyUrl, fetchJson, fetchText, confirmSessionOrRedirect } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 
+/**
+ * Placeholder for the stamp value, filled in by `mockFetch` from the proxy URL
+ * the call actually went to.
+ *
+ * `cameFromUpstream` compares the stamp's VALUE against the service asked
+ * about, not just its presence, so a fixture cannot hardcode one service (this
+ * one said `control-plane`) and still mean "relayed from upstream" for a call
+ * to any of the other three. `stamp` below is how a test asks for a specific —
+ * including a deliberately WRONG — service instead.
+ */
+const STAMP_FROM_URL = '<service from url>';
+
 function response(
   body: unknown,
-  init: { ok?: boolean; status?: number; fromUpstream?: boolean } = {},
+  init: { ok?: boolean; status?: number; fromUpstream?: boolean; stamp?: string } = {},
 ): Response {
-  const { ok = true, status = 200, fromUpstream = true } = init;
+  const { ok = true, status = 200, fromUpstream = true, stamp = STAMP_FROM_URL } = init;
   return {
     ok,
     status,
@@ -14,14 +26,22 @@ function response(
     // the proxy's `x-acdp-ui-proxy` stamp off it. `fromUpstream: false` models
     // an envelope the console minted itself (middleware's 401/503, the route's
     // own 502) — those never carry the stamp.
-    headers: new Headers(fromUpstream ? { 'x-acdp-ui-proxy': 'control-plane' } : {}),
+    headers: new Headers(fromUpstream ? { 'x-acdp-ui-proxy': stamp } : {}),
     json: async () => body,
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
   } as unknown as Response;
 }
 
-function mockFetch(impl: () => Response) {
-  const fn = vi.fn((_url: string | URL | Request, _init?: RequestInit) => Promise.resolve(impl()));
+function mockFetch(impl: (url: string, init?: RequestInit) => Response) {
+  const fn = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+    const res = impl(String(url), init);
+    // Stand in for the route handler, which stamps the service it forwarded
+    // to — `/api/proxy/<service>/...` — not a fixed one.
+    if (res.headers.get('x-acdp-ui-proxy') === STAMP_FROM_URL) {
+      res.headers.set('x-acdp-ui-proxy', String(url).replace('/api/proxy/', '').split('/')[0]);
+    }
+    return Promise.resolve(res);
+  });
   vi.stubGlobal('fetch', fn);
   return fn;
 }
@@ -107,6 +127,28 @@ describe('ApiError', () => {
       expect(new ApiError(503, 'x', 'registry-a', '/healthz').fromUpstream).toBe(false);
     });
 
+    // The stamp's VALUE, not merely its presence. The route writes the service
+    // it forwarded to, so a stamp naming another service is evidence about
+    // another service — and `degraded`, plus the version printed beside it, are
+    // claims about the one named. Presence-only checking called that "from
+    // upstream" and attributed registry-b's answer to registry-a.
+    it('is false when the stamp names a DIFFERENT service than the one asked about', async () => {
+      mockFetch(() => response('degraded', { ok: false, status: 503, stamp: 'registry-b' }));
+      await expect(fetchJson('registry-a', '/healthz')).rejects.toMatchObject({ fromUpstream: false });
+    });
+
+    it('is true only for the matching service — same fixture, the call that asked for registry-b', async () => {
+      // Pins that the assertion above fails for the RIGHT reason (a mismatch),
+      // not because the fixture is unreadable or the comparison always false.
+      mockFetch(() => response('degraded', { ok: false, status: 503, stamp: 'registry-b' }));
+      await expect(fetchJson('registry-b', '/healthz')).rejects.toMatchObject({ fromUpstream: true });
+    });
+
+    it('is false for a stamp that is a prefix of the service name, not an exact match', async () => {
+      mockFetch(() => response('degraded', { ok: false, status: 503, stamp: 'registry' }));
+      await expect(fetchJson('registry-a', '/healthz')).rejects.toMatchObject({ fromUpstream: false });
+    });
+
     // fetchText is a second, independent throw site. Without these two, the
     // argument could be dropped from it — or hardcoded `true` — and every
     // other test in the repo still passes, because only fetchJson's site is
@@ -117,6 +159,22 @@ describe('ApiError', () => {
     ] as const)('threads the stamp through fetchText too (%s)', async (_label, fromUpstream) => {
       mockFetch(() => response('boom', { ok: false, status: 503, fromUpstream }));
       await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({ fromUpstream });
+    });
+
+    it.each([
+      // The POSITIVE case is the load-bearing one. Every other fetchText
+      // assertion asks for control-plane, so hardcoding
+      // `cameFromUpstream(response, 'control-plane')` inside fetchText would
+      // still yield `false` for the mismatch below — non-discriminating for
+      // exactly the mutation it was written to catch. A registry-a call whose
+      // stamp genuinely says registry-a must come back TRUE, which the
+      // hardcoded value cannot produce. Same standard the plan set for the
+      // argument's existence, applied to its value.
+      ['the stamp names the service asked for', undefined, true],
+      ['the stamp names a different service', 'registry-b', false],
+    ] as const)('threads the SERVICE through fetchText too — %s', async (_label, stamp, fromUpstream) => {
+      mockFetch(() => response('boom', { ok: false, status: 503, ...(stamp ? { stamp } : {}) }));
+      await expect(fetchText('registry-a', '/metrics')).rejects.toMatchObject({ fromUpstream });
     });
   });
 
@@ -212,6 +270,131 @@ describe('fetchText', () => {
   it('throws an ApiError on a non-ok response', async () => {
     mockFetch(() => response('down', { ok: false, status: 503 }));
     await expect(fetchText('control-plane', '/metrics')).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The stamp on the SUCCESS path — detection, never enforcement.
+//
+// An unstamped 2xx from `/api/proxy/*` is impossible in a correctly deployed
+// console: only the route's pass-through can produce a 2xx there, and it
+// always stamps. So one arriving is proof of something the repo could not
+// otherwise see — an intermediary stripping unknown `x-*` response headers
+// (which silently turns every genuine `degraded` into `unreachable` on all
+// four health surfaces), or a redirect the BROWSER followed off this boundary,
+// after which the response it inspects is the target's and carries no stamp of
+// ours. The route refuses to relay a 3xx itself now, so that second arm is
+// about an intermediary in front of the console — or that guard regressing.
+//
+// It must WARN and not throw: this is a signal, and a console that refused to
+// render because a header went missing would trade a cosmetic wrongness for a
+// total outage.
+// ══════════════════════════════════════════════════════════════════════
+describe('an unstamped 2xx is warned about, never thrown on', () => {
+  /**
+   * A fresh module instance per test.
+   *
+   * The warning is deliberately once-per-page-load, which is module state — so
+   * without this the first test to trip it would silence every later one, and
+   * "once" could not be asserted at all.
+   */
+  async function freshFetcher() {
+    vi.resetModules();
+    return import('@/lib/api/fetcher');
+  }
+
+  function spyOnWarn() {
+    return vi.spyOn(console, 'warn').mockImplementation(() => {});
+  }
+
+  it('warns, names the route and says the stamp was absent — and still returns the body', async () => {
+    const warn = spyOnWarn();
+    mockFetch(() => response({ ok: true, service: 'cp', version: '1.4.2' }, { fromUpstream: false }));
+    const { fetchJson: fresh } = await freshFetcher();
+    // The app keeps working: the parsed body comes back exactly as it would
+    // have with the stamp present. This is the assertion that stops the
+    // detector from ever being upgraded into a gate by accident.
+    await expect(fresh('control-plane', '/healthz')).resolves.toMatchObject({ version: '1.4.2' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('/api/proxy/control-plane/healthz');
+    expect(String(warn.mock.calls[0][0])).toContain('absent');
+  });
+
+  it('warns when the stamp names a different service, and quotes what it saw', async () => {
+    const warn = spyOnWarn();
+    mockFetch(() => response({ ok: true }, { stamp: 'registry-b' }));
+    const { fetchJson: fresh } = await freshFetcher();
+    await expect(fresh('registry-a', '/healthz')).resolves.toMatchObject({ ok: true });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("'registry-b'");
+    expect(String(warn.mock.calls[0][0])).toContain("expected 'registry-a'");
+  });
+
+  it('stays silent on a correctly stamped 2xx — the happy path pays nothing', async () => {
+    const warn = spyOnWarn();
+    mockFetch(() => response({ ok: true }));
+    const { fetchJson: fresh } = await freshFetcher();
+    await expect(fresh('control-plane', '/healthz')).resolves.toMatchObject({ ok: true });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once per page load, not once per request', async () => {
+    // Health is polled every 30s across four services. Without the latch this
+    // line would repeat until it buried the rest of the console log, which is
+    // how a real signal gets ignored.
+    const warn = spyOnWarn();
+    mockFetch(() => response({ ok: true }, { fromUpstream: false }));
+    const { fetchJson: fresh } = await freshFetcher();
+    await fresh('control-plane', '/healthz');
+    await fresh('registry-a', '/healthz');
+    await fresh('registry-b', '/healthz');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns for an unstamped 204, which returns before any body is parsed', async () => {
+    // Pins the check ABOVE the 204 early return rather than after it: a
+    // DELETE /webhooks/{id} answering 204 is as much a boundary crossing as a
+    // body-bearing 200, and the `x-*`-stripping deployment this detects would
+    // hit it too.
+    const warn = spyOnWarn();
+    mockFetch(() => response('', { status: 204, fromUpstream: false }));
+    const { fetchJson: fresh } = await freshFetcher();
+    await expect(fresh('control-plane', '/webhooks/wh-1')).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns on fetchText\'s success path too — a second, independent reader', async () => {
+    // Without this, the detector could be wired into fetchJson alone and go
+    // quiet for `/metrics`, the one surface that uses the other function.
+    const warn = spyOnWarn();
+    mockFetch(() => response('# HELP foo\nfoo 1', { fromUpstream: false }));
+    const { fetchText: fresh } = await freshFetcher();
+    await expect(fresh('control-plane', '/metrics')).resolves.toBe('# HELP foo\nfoo 1');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('/api/proxy/control-plane/metrics');
+  });
+
+  it('compares the service at fetchText\'s success site too, not just the presence of a stamp', async () => {
+    // Every other fetchText assertion asks for control-plane, so hardcoding the
+    // service at this call site would pass the whole suite — the same gap the
+    // plan called out for the argument on the failure path.
+    const warn = spyOnWarn();
+    mockFetch(() => response('# HELP foo\nfoo 1', { stamp: 'control-plane' }));
+    const { fetchText: fresh } = await freshFetcher();
+    await expect(fresh('registry-a', '/metrics')).resolves.toBe('# HELP foo\nfoo 1');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("expected 'registry-a'");
+  });
+
+  it('does not warn on a FAILURE response, stamped or not — that path already reads the stamp', async () => {
+    // A console-minted 401/503 arriving unstamped is normal and expected;
+    // warning there would fire on every signed-out page load and mean nothing.
+    const warn = spyOnWarn();
+    mockFetch(() => response('unauthorized', { ok: false, status: 401, fromUpstream: false }));
+    const { fetchJson: fresh } = await freshFetcher();
+    vi.stubGlobal('location', { pathname: '/login', assign: vi.fn() });
+    await expect(fresh('control-plane', '/healthz')).rejects.toMatchObject({ fromUpstream: false });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

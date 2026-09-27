@@ -19,6 +19,19 @@ import { buildSdkMatrixRows } from '@/lib/utils/sdk-matrix';
 import type { HealthResult, ProxyService } from '@/lib/types';
 
 /**
+ * Placeholder for the stamp value, filled in by `mockFetch` from the proxy URL
+ * the call actually went to.
+ *
+ * `cameFromUpstream` compares the stamp's VALUE against the service the call
+ * asked about, not just its presence — so a fixture that hardcoded one service
+ * (this one said `registry-a`) would have modelled "relayed from upstream" for
+ * registry-a and "relayed from the WRONG upstream" for the other three, which
+ * is a different fact entirely. A fixture that deliberately wants another
+ * service's stamp sets a real value here instead.
+ */
+const STAMP_FROM_URL = '<service from url>';
+
+/**
  * A response as re-streamed by the proxy — i.e. one that really came from an
  * upstream service, carrying the `x-acdp-ui-proxy` stamp the route sets on
  * that path and only that path. This is the default because nearly every test
@@ -28,7 +41,7 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return {
     ok,
     status,
-    headers: new Headers({ 'x-acdp-ui-proxy': 'registry-a' }),
+    headers: new Headers({ 'x-acdp-ui-proxy': STAMP_FROM_URL }),
     json: async () => body,
     text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
   } as unknown as Response;
@@ -55,7 +68,15 @@ function consoleResponse(body: unknown, status: number): Response {
 }
 
 function mockFetch(impl: (url: string, init?: RequestInit) => Response) {
-  const fn = vi.fn((url: string | URL | Request, init?: RequestInit) => Promise.resolve(impl(String(url), init)));
+  const fn = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+    const res = impl(String(url), init);
+    // Stand in for the route handler, which stamps the service it forwarded
+    // to — `/api/proxy/<service>/...` — not a fixed one.
+    if (res.headers?.get('x-acdp-ui-proxy') === STAMP_FROM_URL) {
+      res.headers.set('x-acdp-ui-proxy', String(url).replace('/api/proxy/', '').split('/')[0]);
+    }
+    return Promise.resolve(res);
+  });
   vi.stubGlobal('fetch', fn);
   return fn;
 }
@@ -405,16 +426,88 @@ describe('pingHealth (real mode)', () => {
     // that never crossed our boundary. The same `fromUpstream` fact gates both
     // fields; nothing the console mints carries `version` today, but that is a
     // property of today's code, not an invariant.
-    mockFetch(() => consoleResponse({ error: 'Internal Server Error', version: '9.9.9' }, 500));
+    //
+    // A /healthz-shaped body (`status` beside `version`), because the version
+    // extractor now requires that — the point here is the STAMP, so the shape
+    // has to be one that would otherwise pass.
+    const body = { status: 'degraded', error: 'Internal Server Error', version: '9.9.9' };
+    mockFetch(() => consoleResponse(body, 500));
     const minted = await pingHealth('registry-a', false);
     expect(minted.detail).toBe('unreachable');
     expect(minted.version).toBeUndefined();
 
     // Byte-identical body, stamped: now it is the service's own build string.
-    mockFetch(() => upstreamResponse({ error: 'Internal Server Error', version: '9.9.9' }, 500));
+    mockFetch(() => upstreamResponse(body, 500));
     const upstream = await pingHealth('registry-a', false);
     expect(upstream.detail).toBe('degraded');
     expect(upstream.version).toBe('9.9.9');
+  });
+
+  // ── "live" means "off a /healthz envelope" (issue #103 point 4) ──────
+  //
+  // `sdk-matrix.ts` turns any version reaching it into `versionIsLive: true`,
+  // and the legend that marker sits under claims the string was read from the
+  // service's own health endpoint. A bare `{version}` object satisfies neither
+  // upstream envelope (registry-rs sends `status`, the control plane and
+  // playground send `ok`), so accepting it meant accepting "any JSON beyond our
+  // boundary with a version key" — an ingress or gateway answering /healthz
+  // with its own build string, presented as the service's.
+  describe('a version needs a sibling status/ok to count as read from /healthz', () => {
+    it.each([
+      ['the registry envelope (status: string)', { status: 'ok', storage: true, version: '0.1.0' }, '0.1.0'],
+      ['the control-plane/playground envelope (ok: boolean)', { ok: true, service: 'cp', version: '1.4.2' }, '1.4.2'],
+      // Both upstreams keep `version` on the degraded arm, and both keep the
+      // sibling marker there too — so the hardening cannot cost a version on
+      // the arm Phase 7 exists to read.
+      ['a degraded registry body', { status: 'degraded', storage: false, version: '0.1.4' }, '0.1.4'],
+      ['a degraded control-plane body', { ok: false, service: 'cp', version: '1.4.2' }, '1.4.2'],
+    ])('accepts %s', async (_label, body, expected) => {
+      mockFetch(() => jsonResponse(body));
+      expect((await pingHealth('registry-a', false)).version).toBe(expected);
+    });
+
+    it.each([
+      ['a bare version blob — no envelope marker at all', { version: '9.9.9' }],
+      ['a versioned error envelope from something that is not the service', { error: 'Bad Gateway', version: '9.9.9' }],
+      // `ok` must be a real boolean and `status` a real string, matching how
+      // `extractHealthOk` reads the same two fields: a stringly-typed marker is
+      // evidence of a shape nobody upstream actually emits.
+      ['a stringly-typed ok', { ok: 'true', version: '9.9.9' }],
+      ['a numeric status', { status: 200, version: '9.9.9' }],
+    ])('rejects %s', async (_label, body) => {
+      mockFetch(() => jsonResponse(body));
+      expect((await pingHealth('registry-a', false)).version).toBeUndefined();
+    });
+
+    it('rejects it on the FAILURE path too — one extractor, one rule', async () => {
+      // The failure path deliberately reuses the success path's extractor so
+      // the two envelopes cannot diverge in how strictly they are read. A
+      // separate assertion because `failureVersion` is a second call site:
+      // gating only the success path would leave the `✗ down` row — the one
+      // that shows a version next to `✓ live` — reading the looser rule.
+      mockFetch(() => upstreamResponse({ error: 'Service Unavailable', version: '9.9.9' }, 503));
+      const result = await pingHealth('registry-a', false);
+      expect(result.detail).toBe('degraded');
+      expect(result.version).toBeUndefined();
+    });
+  });
+
+  it('will not read another service\'s answer as this one\'s — the stamp\'s value decides', async () => {
+    // The cross-service case from issue #103, end to end rather than at the
+    // fetcher seam: a `/healthz` answer stamped `registry-b` says nothing about
+    // registry-a, so registry-a must read `unreachable` with no version — not
+    // `degraded` at registry-b's build string. A presence-only check called this
+    // "from upstream" and attributed it to whichever service was asked.
+    mockFetch(() => ({
+      ok: false,
+      status: 503,
+      headers: new Headers({ 'x-acdp-ui-proxy': 'registry-b' }),
+      json: async () => ({ status: 'degraded', storage: false, version: '0.1.4' }),
+      text: async () => JSON.stringify({ status: 'degraded', storage: false, version: '0.1.4' }),
+    }) as unknown as Response);
+    const result = await pingHealth('registry-a', false);
+    expect(result.detail).toBe('unreachable');
+    expect(result.version).toBeUndefined();
   });
 
   it('does not throw when the failure is not an ApiError at all', async () => {
