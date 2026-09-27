@@ -1,0 +1,78 @@
+name: bump acdp
+
+# Event-driven bump of this repo's only ACDP family dependency,
+# `@agentcontextdistributionprotocol/acdp-wasm` (package.json `dependencies`).
+#
+# acdp-rs's `acdp-wasm-release.yml` POSTs `repository_dispatch: acdp-released`
+# at this repo on every real `acdp-wasm-v*` publish, with client_payload
+# `{version, ecosystem}`; `bump-consume.yml` reads `client_payload.version`,
+# waits for npm to actually serve it, rewrites package.json + package-lock.json
+# and opens a bump PR. See acdp-ci's DELIVERY-STANDARD.md "Propagation graph".
+#
+# No payload matching is needed here, and this workflow deliberately has no
+# `if:` guard on `client_payload.ecosystem`: acdp-wasm's publish job is the
+# *only* sender that dispatches to this repo — acdp-rs's three other release
+# workflows each mint a token scoped to their own consumer (release-plz →
+# acdp-registry-rs, bindings-release → acdp-control-plane, acdp-py-release →
+# acdp-playground). If a second sender is ever pointed here, that stops being
+# true and this job needs an ecosystem/package guard, because the payload
+# version would then belong to a different version line than acdp-wasm's.
+#
+# On *this* path, auto-merge is not armed on a breaking bump, and for a 0.x
+# package bump-consume.yml counts a *minor* change as breaking — so today, at
+# 0.14.x, a dispatch-driven bump merges unattended only if it is a patch. That
+# is the disposition issue #70 settled on: the real-binary
+# `wasm-fixtures.test.ts` gate (CLAUDE.md declares it the gate for every
+# acdp-wasm bump) is what backs an unattended patch merge.
+#
+# That is NOT a repo-wide guarantee, and this file does not make it one.
+# Dependabot's monthly sweep is a second, independent lane: acdp-wasm falls
+# into `.github/dependabot.yml`'s unrestricted `minor-and-patch` group, and
+# `auto-merge.yml`'s reusable callee arms on semver-patch OR semver-minor —
+# which is how Dependabot classifies 0.14.x -> 0.15.0. So a 0.x minor that
+# this workflow deliberately holds for a human can still merge unattended a
+# month later on green CI alone. That predates this workflow and is unchanged
+# by it, but do not read the paragraph above as covering it; closing the
+# asymmetry means an acdp-wasm carve-out in dependabot.yml, which is its own
+# decision (see issue #70's thread for the risk framing).
+#
+# Prerequisite: the acdp-deps-bot org secrets ACDP_BOT_APP_ID /
+# ACDP_BOT_PRIVATE_KEY must be reachable from this repo.
+
+on:
+  repository_dispatch:
+    types: [acdp-released]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact acdp-wasm version (blank = latest / event payload)'
+        required: false
+        default: ''
+
+# No `permissions:` and no `concurrency:` block here, unlike this repo's other
+# workflows — both are deliberate, and both match every sibling consumer's
+# caller plus bump-consume.yml's own documented caller shape:
+#   - permissions: the called job declares `permissions: {}` and mints its own
+#     GitHub App token, so GITHUB_TOKEN is unused and already empty.
+#   - concurrency: two releases in quick succession are two *different* version
+#     bumps, not superseded runs of one. `cancel-in-progress` would abort a bump
+#     mid-push; bump-consume.yml already de-duplicates on the `deps/acdp-<ver>`
+#     branch instead.
+jobs:
+  bump:
+    uses: agentcontextdistributionprotocol/acdp-ci/.github/workflows/bump-consume.yml@v1
+    with:
+      ecosystem: npm
+      # The npm REGISTRY name. bump-consume.yml resolves and waits on it via
+      # `npm view`, reads the current version from the matching
+      # `node_modules/<package>` key in package-lock.json, and rewrites the
+      # package.json dependency key equal to this string — so it must be the
+      # real scoped name, which is also what this repo declares (family
+      # packages must never sit behind an `npm:` alias — DELIVERY-STANDARD.md
+      # "npm aliases are forbidden for family packages", because Dependabot's
+      # safety-net sweep does not follow alias specifiers).
+      package: '@agentcontextdistributionprotocol/acdp-wasm'
+      version: ${{ github.event.inputs.version }}
+    secrets:
+      ACDP_BOT_APP_ID: '${{ secrets.ACDP_BOT_APP_ID }}'
+      ACDP_BOT_PRIVATE_KEY: '${{ secrets.ACDP_BOT_PRIVATE_KEY }}'
