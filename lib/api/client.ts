@@ -97,9 +97,20 @@ const authToService = (a: RegistryAuthority): ProxyService => AUTHORITY_TO_SERVI
 //
 // All three key the version string identically, so reading that one field
 // tolerates the rest of the shape varying.
+//
+// A sibling `status` (string) or `ok` (boolean) is REQUIRED alongside it, so
+// that "✓ live" means "read off something shaped like a /healthz envelope"
+// rather than "read off any JSON that happened to have a version key beyond
+// our boundary" — which is what the matrix legend already claims it means.
+// Every row in the table above satisfies this on both arms (`status` on the
+// registry, `ok` on the other two), and no upstream ERROR envelope carries a
+// version, so this costs nothing real; it is the one cheap defence against a
+// gateway or ingress answering `/healthz` with version-bearing JSON of its own
+// and having it presented as the service's live build.
 function extractHealthVersion(body: unknown): string | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
-  const version = (body as { version?: unknown }).version;
+  const { version, status, ok } = body as { version?: unknown; status?: unknown; ok?: unknown };
+  if (typeof status !== 'string' && typeof ok !== 'boolean') return undefined;
   return typeof version === 'string' ? version : undefined;
 }
 

@@ -329,8 +329,169 @@ describe('proxy route — body & fetch options', () => {
     const init = fetchMock.mock.calls[0][1];
     expect(init.body).toBe('{"scenario":"s1"}');
     expect(init.method).toBe('POST');
+    // Still 'manual', and now paired with the 3xx rejection below rather than
+    // with a relay. 'follow' would have undici chase the redirect server-side,
+    // which is two different problems depending on where it points (measured on
+    // Node 24.20.0, not assumed): on a SAME-ORIGIN redirect undici keeps
+    // `authorization`, so the upstream would be choosing which of its own paths
+    // this proxy calls with the injected bearer attached — past the
+    // ALLOWED_ROUTES allow-list this whole handler exists to enforce;
+    // CROSS-ORIGIN the bearer is stripped per the fetch spec, but the target's
+    // answer would still come back and be relayed under our own stamp,
+    // attributed to a service that never sent it. 'manual' stops both; the
+    // rejection stops the 3xx itself from reaching the browser, which follows
+    // redirects by default. Neither half works alone, so both are pinned.
     expect(init.redirect).toBe('manual');
     expect(init.cache).toBe('no-store');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// A 3xx is never relayed (issue #103 point 1).
+//
+// `redirect: 'manual'` hands back the real redirect under undici, so relaying
+// it re-streamed the 3xx WITH the provenance stamp attached — while the
+// browser's own `fetch` (`lib/api/fetcher.ts`) follows redirects by default, so
+// the response the console actually inspected was the redirect TARGET's: bytes
+// that never passed through this proxy, carrying no stamp and no injected
+// bearer. The realistic trigger is a `*_BASE_URL` on `http://` behind an
+// ingress that 301s to `https://`, and on a registry (no CORS headers by
+// default) the cross-origin follow fails — so a service that is genuinely UP
+// rendered as `unreachable`, silently.
+// ══════════════════════════════════════════════════════════════════════
+describe('proxy route — an upstream redirect is refused, not relayed', () => {
+  it.each([301, 302, 303, 307, 308])(
+    'turns a %i into an unstamped 502 that names the Location',
+    async (status) => {
+      mockFetch(() =>
+        upstream({
+          status,
+          statusText: 'Moved',
+          headers: new Headers({ location: 'https://registry-a.example.com/healthz' }),
+        }),
+      );
+      vi.stubEnv('REGISTRY_A_BASE_URL', 'http://registry-a.example.com');
+      const res = await GET(
+        new NextRequest('http://localhost/api/proxy/registry-a/healthz'),
+        ctx('registry-a', ['healthz']),
+      );
+      expect(res.status).toBe(502);
+      const body = await res.json();
+      expect(body.error).toBe(
+        `Upstream 'registry-a' answered ${status} — this proxy does not relay or follow 3xx responses`,
+      );
+      // The operator's whole diagnosis is in here: where we asked, where it
+      // pointed, and the fix. A generic "fetch threw" would not have told them
+      // a redirect was involved at all.
+      expect(body.detail).toContain('http://registry-a.example.com/healthz');
+      expect(body.detail).toContain('https://registry-a.example.com/healthz');
+      expect(body.detail).toContain('*_BASE_URL');
+      // The load-bearing half: this envelope is the CONSOLE's, so it must not
+      // carry the stamp. Stamped, it would tell `pingHealth` the registry
+      // answered and reported itself degraded — which is the specific false
+      // claim this whole mechanism exists to prevent.
+      expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+      // Nor may the redirect itself survive in any form the browser could act on.
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it('says so plainly when the redirect carried no Location header', async () => {
+    mockFetch(() => upstream({ status: 302, statusText: 'Found', headers: new Headers() }));
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/control-plane/healthz'),
+      ctx('control-plane', ['healthz']),
+    );
+    expect(res.status).toBe(502);
+    expect((await res.json()).detail).toContain('(no Location header)');
+  });
+
+  it('refuses the whole 3xx range, 304 included', async () => {
+    // Deliberate: no conditional-request header is in FORWARD_HEADERS and both
+    // hops are `cache: 'no-store'`, so a 304 cannot legitimately arrive — and
+    // relaying one would NOT be harmless: a 304 is `!response.ok`, so it would
+    // reach the browser as a stamped ApiError and read as the service reporting
+    // itself degraded. Pinned so a future narrowing to "only redirects with a
+    // Location" is a choice someone makes on purpose.
+    mockFetch(() => upstream({ status: 304, statusText: 'Not Modified' }));
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/playground/healthz'),
+      ctx('playground', ['healthz']),
+    );
+    expect(res.status).toBe(502);
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+    // And it is not described to the operator as a redirect, because it is not one.
+    expect((await res.json()).error).toContain('answered 304');
+  });
+
+  it('refuses an opaque redirect, which carries no status at all', async () => {
+    // Belt-and-braces for a runtime this handler does not have today: undici
+    // returns the real 3xx (so the range check is what fires on Node), but a
+    // browser-semantics `fetch` answers `redirect: 'manual'` with a synthetic
+    // `status: 0` / `type: 'opaqueredirect'` response. The range check alone
+    // would wave that through to `new Response(body, { status: 0 })`, which
+    // throws — reporting an unreachable upstream for a service that answered.
+    mockFetch(
+      () =>
+        ({
+          status: 0,
+          statusText: '',
+          type: 'opaqueredirect',
+          headers: new Headers(),
+          body: null,
+        }) as unknown as Response,
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/registry-a/healthz'),
+      ctx('registry-a', ['healthz']),
+    );
+    expect(res.status).toBe(502);
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+    const body = await res.json();
+    expect(body.error).toContain('an opaque redirect');
+    // Not the catch branch's envelope — that one would name a thrown error
+    // instead of telling the operator a redirect was in the way.
+    expect(body.error).not.toContain('unreachable');
+  });
+
+  it('never relays the redirect body, whatever the upstream put in it', async () => {
+    // An upstream 301 may carry a JSON-shaped courtesy body. Relayed, that
+    // would reach `fetchJson` as the answer to a /healthz call.
+    mockFetch(() =>
+      upstream({
+        status: 301,
+        headers: new Headers({ location: 'https://elsewhere.example.com/healthz', 'x-upstream': 'keep-me' }),
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"status":"ok","version":"9.9.9"}'));
+            controller.close();
+          },
+        }),
+      }),
+    );
+    const res = await GET(
+      new NextRequest('http://localhost/api/proxy/registry-b/healthz'),
+      ctx('registry-b', ['healthz']),
+    );
+    const text = await res.text();
+    expect(text).not.toContain('9.9.9');
+    // Nor any of the upstream's other headers — this is the console's own
+    // envelope, built from scratch rather than copied.
+    expect(res.headers.get('x-upstream')).toBeNull();
+  });
+
+  it('still relays a 2xx and a 4xx/5xx — only the 3xx range is refused', async () => {
+    // The guard is a range check, so the boundary is worth pinning: a 299 or a
+    // 400 must be untouched by it, stamp and all.
+    for (const status of [200, 400, 503] as const) {
+      mockFetch(() => upstream({ status, headers: new Headers({ location: '/somewhere' }) }));
+      const res = await GET(
+        new NextRequest('http://localhost/api/proxy/registry-a/healthz'),
+        ctx('registry-a', ['healthz']),
+      );
+      expect(res.status).toBe(status);
+      expect(res.headers.get('x-acdp-ui-proxy')).toBe('registry-a');
+    }
   });
 });
 
