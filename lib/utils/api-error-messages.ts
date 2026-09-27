@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/api/fetcher';
+import type { ProxyService } from '@/lib/types';
 
 // ══════════════════════════════════════════════════════════════════════
 // Operator-facing copy for a failed context fetch, keyed by upstream error
@@ -101,6 +102,192 @@ export const CONTEXT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
 const GENERIC = 'Could not load context.';
 
 /**
+ * The one sentence for "the bytes never left this console".
+ *
+ * Named rather than written twice: `contextErrorFallback` and the generic
+ * `operatorErrorMessage` below must not be able to disagree about it, and it is
+ * the clause where the over-claim risk lives — a status alone cannot tell an
+ * upstream's envelope from one this console minted, so every surface that
+ * reaches this state has to say the same careful thing.
+ *
+ * Already noun-free in its original form, which is evidence the seam between
+ * "what the operator was trying to do" and "who failed" is in the right place.
+ */
+const CONSOLE_FAULT =
+  'This console could not complete the request — it looks misconfigured or signed out. ' +
+  'Check the deployment configuration, or sign in again.';
+
+/**
+ * `CONTROL_PLANE_API_KEY` is injected server-side by the proxy and never
+ * reaches the browser, so an operator refused by the control plane has no way
+ * to discover that the key exists at all. Naming the variable is the only
+ * actionable thing this console can say.
+ *
+ * **Two sentences, because 401 and 403 have different remedies** and splicing
+ * one onto both prescribes an action that cannot resolve half the cases — the
+ * fault this module exists to remove, committed by the module itself. A 401 is
+ * an authentication failure: the key is missing, wrong, or rotated, and
+ * granting it admin scope fixes nothing. A 403 is an authorisation failure: the
+ * key authenticated fine and lacks the scope. An earlier cut used the
+ * admin-scope wording for both, and closing the gap by rewriting the docstring
+ * rather than the string would have left the inaccuracy in the operator's face.
+ */
+const CP_KEY_PREAMBLE =
+  'The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed ' +
+  'this console to ';
+
+/** For a 401: the key did not authenticate. */
+export const CONTROL_PLANE_KEY_REJECTED = `${CP_KEY_PREAMBLE}check that it is set and current.`;
+
+/**
+ * For a 403: the key authenticated but lacks the scope.
+ *
+ * Exported ahead of a consumer on purpose: three admin-gated surfaces
+ * (`app/security/page.tsx` and two in `components/registries/enrollments.tsx`)
+ * each carry their own hand-written near-copy of this sentence, and the phase
+ * that consolidates them onto this constant is the point of the export.
+ */
+export const ADMIN_KEY_REQUIRED = `${CP_KEY_PREAMBLE}grant it admin scope.`;
+
+/**
+ * How each service is named to an operator.
+ *
+ * A `Record`, not a `Map`, and the contrast with `CONTEXT_ERROR_MESSAGES` above
+ * is the point: that one is keyed by a wire value from an upstream, which is
+ * attacker-influenced and needs prototype-safe lookup. `ProxyService` is a
+ * closed union from our own code, so a `Record` gets exhaustiveness checked at
+ * compile time and a service added later fails `tsc` until it is labelled.
+ */
+const SERVICE_LABEL: Record<ProxyService, string> = {
+  playground: 'the playground',
+  'control-plane': 'the control plane',
+  'registry-a': 'registry A',
+  'registry-b': 'registry B',
+};
+
+export interface ErrorCopyOptions {
+  /** Domain codes, consulted before the status arms. Wire-keyed, so a `Map`. */
+  readonly codes?: ReadonlyMap<string, string>;
+  /** Domain-specific 404 sentence. Without it, 404 falls to the generic arm. */
+  readonly notFound?: string;
+}
+
+/**
+ * What an operator is told when a request failed, for any surface.
+ *
+ * The sentence splits at its natural seam:
+ *
+ *  - the **lead** — what the operator was trying to do — is per-surface
+ *    knowledge and stays at the call site (`'Could not load the agent
+ *    inventory'`). It is a plain string rather than a `{ noun, verb }` pair on
+ *    purpose: a closed verb enum needs extending for every new surface, and the
+ *    assembled sentence becomes invisible at the call site — whereas a lead is
+ *    greppable, which this module's own acceptance criteria depend on.
+ *  - the **cause clause** — who failed and what can be done about it — is
+ *    shared knowledge, and is where every over-claim in this class lives. It
+ *    lives here, gated on provenance and keyed on the error rather than on a
+ *    bare status.
+ *
+ * `unknown`, not `ApiError`: `ApiError` is constructed at exactly two places in
+ * `fetcher.ts`, and everything else propagates raw — a `TypeError` from `fetch`
+ * itself never reaches the `!response.ok` branch, `response.json()` throws a
+ * `SyntaxError` on a malformed 2xx, `parsePrometheus` throws its own. Non-
+ * `ApiError` throws are common, not theoretical.
+ *
+ * **Provenance is checked before 404, unlike `contextErrorFallback`.** That
+ * function puts 404 first for a context-specific reason it documents: demo mode
+ * throws an unstamped 404 for a context it has no body for. Generically, an
+ * unstamped 404 is Next's own answer for a route that does not exist in this
+ * deployment — a deployment fault, not an upstream's not-found. Domains that
+ * want the context-style wording back pass `opts.notFound`. This is the one
+ * place the generalisation is not mechanical.
+ */
+export function operatorErrorMessage(
+  error: unknown,
+  lead: string,
+  opts?: ErrorCopyOptions,
+): string {
+  if (!(error instanceof ApiError)) return `${lead}.`;
+
+  // A code is a statement from the service about WHAT went wrong; a status only
+  // says THAT it did. So codes win — over the status arms AND over the
+  // provenance arm below.
+  //
+  // Beating provenance is the part that is easy to get backwards, and demo mode
+  // is why it matters: it is the product default, and it throws code-bearing
+  // errors that are UNSTAMPED by construction (`client.ts` raises
+  // `CONTEXT_NOT_FOUND` and `REGISTRY_NOT_FOUND` with `fromUpstream` defaulting
+  // to false, because no request was made). Check provenance first and every
+  // such surface renders "this console looks misconfigured or signed out" in
+  // the mode that is supposed to work with zero backends. A code the console
+  // itself minted is still a statement about what went wrong.
+  //
+  // Joined with ". " rather than " — ": a `codes` value is a full sentence, and
+  // splicing one after an em dash yields a capital mid-sentence and a nested
+  // dash ("… inventory — That page expired — search again."). The status arms
+  // below are lowercase continuations, so they keep the dash.
+  if (error.errorCode && opts?.codes) {
+    const mapped = opts.codes.get(error.errorCode);
+    if (mapped) return `${lead}. ${mapped}`;
+  }
+
+  if (!error.fromUpstream) return `${lead}. ${CONSOLE_FAULT}`;
+
+  const { status } = error;
+  const svc = SERVICE_LABEL[error.service];
+
+  if (status === 401) {
+    // Only the control plane carries an injected credential: `integrations.ts`
+    // returns auth material for that service alone, and the proxy injects a
+    // bearer only when that config is present — the browser's own cookie and
+    // `authorization` are stripped by the header allow-list.
+    //
+    // So the two branches are not the same sentence with a hint bolted on, and
+    // an earlier version of this code got that wrong: it told an operator that
+    // `registry A rejected this console's credentials`, which is false in both
+    // halves — nothing was presented, so nothing was rejected — and it implied
+    // a fix (repair the console's registry credential) that does not exist in
+    // this product. That is this module's own documented defect class: blaming
+    // a service for refusing something it was never offered.
+    if (error.service === 'control-plane') {
+      return `${lead} — the control plane rejected this console's credentials. ${CONTROL_PLANE_KEY_REJECTED}`;
+    }
+    return `${lead} — ${svc} requires credentials this console does not send.`;
+  }
+  if (status === 403) return `${lead} — not authorized by ${svc}.`;
+  if (status === 404) return `${lead} — ${opts?.notFound ?? `${svc} has no record of it.`}`;
+  if (status === 429 || status === 503)
+    return `${lead} — ${svc} is unavailable or rate limiting right now. Wait and retry.`;
+  if (status >= 500) return `${lead} — ${svc} did not answer successfully (${status}).`;
+  return `${lead} — ${svc} answered ${status}.`;
+}
+
+/**
+ * The upstream's own bytes, in full, for a collapsed disclosure.
+ *
+ * `undefined` when there is nothing worth showing, so a caller can pass the
+ * result straight into an optional prop.
+ *
+ * **Untruncated, deliberately.** The status/service/path prefix is the
+ * genuinely diagnostic part — an HTML body from a WAF tells you nothing the
+ * status and path do not — but losing the upstream's own message trades one
+ * problem for another, which is the whole objection to `String(error)` being
+ * deleted without a replacement. The visual cost is bounded by the disclosure's
+ * own `max-height` plus `overflow: auto`, not by a character cap, because a cap
+ * costs the operator the tail of a body that may be the part that matters. The
+ * one place a cap earns its keep is a `console.warn` companion, which has no
+ * scroll container.
+ */
+export function errorDiagnostic(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  const head = `${error.status} from ${error.service} ${error.path}`;
+  // `ApiError`'s constructor substitutes a placeholder message for an empty
+  // body, so an empty body here is merely useless rather than noisy — omit the
+  // separator entirely rather than rendering a dangling em dash.
+  return error.body ? `${head} — ${error.body}` : head;
+}
+
+/**
  * The last resort, reached when the response carried no `errorCode` (a non-JSON
  * body) or one this console has never seen — a newer control plane, or a direct
  * registry call. Never blank, and never a claim about trust: a status alone
@@ -128,7 +315,24 @@ export function contextErrorFallback(error: ApiError): string {
   if (!error.fromUpstream) {
     // The bytes never left this console. Say so, rather than inventing an
     // upstream to blame — the operator's fix is here, not over there.
-    return 'This console could not complete the request — it looks misconfigured or signed out. Check the deployment configuration, or sign in again.';
+    return CONSOLE_FAULT;
+  }
+  // #91's other half. Until the redirect learned to read the provenance stamp,
+  // a stamped 401 navigated away before any surface could render it, so this
+  // arm was unreachable and the status fell through to GENERIC. Now that an
+  // upstream 401 stays on the page, it needs to say the one actionable thing:
+  // the key is server-side and invisible, so the operator cannot discover it.
+  //
+  // Gated on the service for the same reason the generic function is, even
+  // though both of today's callers fetch from the control plane: this console
+  // sends a registry no credentials at all, so a registry 401 here must not
+  // become "rejected this console's credentials". `/contexts` already talks to
+  // registries for search, so the day a registry error reaches this function is
+  // not far off, and an ungated arm would reintroduce that claim silently.
+  if (status === 401) {
+    if (error.service === 'control-plane')
+      return `The control plane rejected this console's credentials. ${CONTROL_PLANE_KEY_REJECTED}`;
+    return `${SERVICE_LABEL[error.service]} requires credentials this console does not send.`;
   }
   if (status === 403) return 'Not authorized to read this context.';
   // 429 is the registry answering this console directly; 503 is the control
