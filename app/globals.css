@@ -126,8 +126,12 @@ textarea {
   /* `minmax`, not a fixed `--topbar-h`, because `.topbar-pills` now wraps: a
      failing service appends its state word to its pill, and at phone width two
      of those push the row onto a second line. With a fixed track the second
-     line was clipped by `overflow` and the word was unreadable exactly when it
-     mattered. `.content` is `overflow-y: auto`, so row 2 gives up the height.
+     line does not disappear — nothing in `.shell`, `.topbar` or `.content` sets
+     `overflow`, so per CSS paint order `.content`'s background paints before the
+     topbar's inline text and the wrapped line lands ON TOP of the page content.
+     Overlapping text rather than clipped text; either way unreadable exactly
+     when it matters. `.content` is `overflow-y: auto`, so row 2 gives up the
+     height.
 
      Known cosmetic consequence, accepted: `.workbench-canvas`'s
      `calc(100vh - var(--topbar-h) - 92px)` under-computes by the wrapped

@@ -211,14 +211,11 @@ describe('the KPI row makes no health claim', () => {
     }
   });
 
-  it('does not change KpiCard itself', async () => {
-    // The fix is the removal of one prop at one call site. `KpiCard` still
-    // renders a `delta` when given one — asserted above through `Total Runs` —
-    // so nothing here needed the component to change, and a future wired delta
-    // on some other tile is unaffected.
-    const src = await import('node:fs').then((fs) =>
-      fs.readFileSync('components/dashboard/kpi-card.tsx', 'utf8'),
-    );
-    expect(src).toContain('{delta && (');
-  });
+  // REMOVED: a `expect(src).toContain('{delta && (')` assertion on
+  // `kpi-card.tsx`'s source text. It broke on a harmless reformat while adding
+  // nothing — "the fix is the removal of one prop at one call site" is already
+  // established by the two tests above, which show `Total Runs` still rendering
+  // its delta (so the component was not broken) and the other tiles rendering
+  // none (so the prop really is gone). Asserting on a component's source
+  // spelling to prove a caller changed is the wrong instrument.
 });

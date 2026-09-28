@@ -148,6 +148,22 @@ describe('HealthChecks renders the failure kind, not just "unreachable"', () => 
 
     expect(container.querySelectorAll('.health-latency').length).toBe(0);
   });
+
+  it('shows no latency when a settled probe carried none', async () => {
+    // The OTHER half of that guard, which nothing pinned: deleting
+    // `view.latencyMs !== undefined` left the whole suite green and would render
+    // an empty `<span class="health-latency"> ms</span>` — a unit with no number.
+    // Both settled `pingHealth` paths do set `latencyMs` today, so this is only
+    // reachable from a fixture; it is still the difference between a guard and a
+    // comment. (The `kind !== 'checking'` half is compiler-enforced: the
+    // `checking` arm of `HealthView` has no `latencyMs`, so dropping it is a
+    // type error, not a test failure.)
+    pingHealth.mockResolvedValue({ ok: false, detail: 'unreachable' });
+    const { container } = mount(<HealthChecks />);
+
+    await waitFor(() => expect(container.textContent).toContain('unreachable'));
+    expect(container.querySelectorAll('.health-latency').length).toBe(0);
+  });
 });
 
 describe('ConnectionStatus renders the failure kind as text, not as a tooltip', () => {
@@ -207,11 +223,13 @@ describe('the topbar can physically show the word it now renders', () => {
   // jsdom performs no layout, so there is no behavioural assertion available
   // here — and the alternative to a source assertion is no gate at all on the
   // two declarations that keep the wrapped row visible. The pill words are
-  // useless if the row they sit in is clipped, and it WAS clipped: four labels
-  // plus the refresh button already measure wider than a 400px viewport leaves
-  // once `--sidebar-w` drops to 56px, so appending a word overflows a
-  // `.topbar-pills` with no `flex-wrap`, and a wrapped row is then cut off by a
-  // `.shell` whose first grid track is a fixed `--topbar-h`.
+  // useless if the row they sit in is unreadable, and it WAS: four labels plus
+  // the refresh button already measure wider than a 400px viewport leaves once
+  // `--sidebar-w` drops to 56px, so appending a word overflows a
+  // `.topbar-pills` with no `flex-wrap` — and with a fixed `--topbar-h` track
+  // the wrapped line is not clipped (nothing in the shell sets `overflow`) but
+  // painted over the page content, since `.content`'s background paints before
+  // the topbar's inline text. Overlap, not truncation; unreadable either way.
   //
   // Matched as declarations rather than as exact strings, so reordering or
   // respacing the rule does not turn this red.
@@ -222,7 +240,7 @@ describe('the topbar can physically show the word it now renders', () => {
     expect(rule).toMatch(/flex-wrap:\s*wrap/);
   });
 
-  it('lets the shell grow its topbar row instead of clipping it', () => {
+  it('lets the shell grow its topbar row instead of overlapping the content', () => {
     const rule = css.match(/\.shell\s*\{[^}]*\}/s)?.[0] ?? '';
     expect(rule).toMatch(/grid-template-rows:\s*minmax\(var\(--topbar-h\),\s*auto\)\s*1fr/);
   });

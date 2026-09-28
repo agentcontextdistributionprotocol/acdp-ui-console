@@ -141,8 +141,9 @@ export default function DashboardPage() {
             literal, not better.
 
             The information is not lost. `components/layout/topbar.tsx` renders
-            a per-service pill on every route including this one, and it now
-            says `degraded` or `unreachable` in text rather than in a tooltip.
+            a per-service pill on every route except `/login` — this one
+            included — and it now says `degraded` or `unreachable` in text rather
+            than in a tooltip.
             One health surface that works beats two that disagree. */}
         <KpiCard label="Registries" value={formatNumber(d.byRegistry.length)} accent="var(--warning)" icon={<Database size={28} />} />
       </div>

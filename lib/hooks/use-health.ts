@@ -57,13 +57,24 @@ export type HealthView =
  *
  * ## What does NOT use this
  *
- * `components/config/sdk-matrix.tsx` keeps its own `useQueries`. It probes four
- * services in one render, which `useHealth(service)` cannot express, and it
- * needs the raw `HealthResult` (it reads `version`, which only its table
- * shows). Do not "unify" them by calling this hook four times — that is four
- * independent subscriptions where one batched call does, and `useQueries`
- * exists precisely for that shape. It feeds `buildSdkMatrixRows` instead, which
- * carries `detail` onto the row.
+ * `components/config/sdk-matrix.tsx` keeps its own `useQueries`. It probes the
+ * THREE services in `SDK_MATRIX_ROW_SERVICE` in one render — `registry-a`,
+ * `control-plane`, `playground`; `registry-b` is deliberately excluded there —
+ * which `useHealth(service)` cannot express, and it needs the raw `HealthResult`
+ * (it reads `version`, which only its table shows). Do not "unify" them by
+ * calling this hook three times: that is three independent subscriptions where
+ * one batched call does, and `useQueries` exists precisely for that shape. It
+ * feeds `buildSdkMatrixRows` instead, which carries `detail` onto the row.
+ *
+ * Be straight about the cost, because the hazard named above still applies
+ * there. That file holds a THIRD copy of `['health', service, demoMode]` and its
+ * `refetchInterval` is already 20s against this hook's 15s — so on `/config`,
+ * where both mount, they share one cache entry with two different opinions about
+ * how often to refresh it. Harmless in practice (no surface shows wrong data; at
+ * worst the entry refreshes on the shorter interval), and this change reduced
+ * three copies to two rather than creating one. But "it does not use this hook"
+ * is not the same as "it is unaffected", and the honest statement is that the
+ * duplication survives in one place for a reason that does not make it safe.
  */
 export function useHealth(service: ProxyService): HealthView {
   const demoMode = usePreferencesStore((s) => s.demoMode);
