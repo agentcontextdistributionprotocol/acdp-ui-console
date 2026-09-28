@@ -10,6 +10,7 @@ import { Modal } from '@/components/ui/modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorDetail } from '@/components/ui/error-panel';
+import { TableScroll } from '@/components/ui/table-scroll';
 import {
   listWebhooks,
   createWebhook,
@@ -58,52 +59,55 @@ export function WebhookConfig() {
           <LoadingSkeleton rows={2} height={32} />
         </div>
       ) : data && data.length > 0 ? (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>URL</th>
-              <th>Events</th>
-              <th>Status</th>
-              <th>Updated</th>
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((wh) => (
-              <tr key={wh.id}>
-                <td className="did" style={{ maxWidth: 240 }}>
-                  {wh.url}
-                </td>
-                <td>{wh.events.length === 0 ? 'all' : wh.events.join(', ')}</td>
-                <td>
-                  <Badge variant={wh.active ? 'complete' : 'neutral'}>{wh.active ? '● active' : '○ disabled'}</Badge>
-                </td>
-                <td style={{ color: 'var(--muted)' }}>{timeAgo(wh.updatedAt)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                    <button
-                      className="icon-btn"
-                      aria-label={`Edit webhook ${wh.url}`}
-                      onClick={() => setEditing({ mode: 'edit', webhook: wh })}
-                    >
-                      <Pencil size={13} aria-hidden />
-                    </button>
-                    <button
-                      className="icon-btn"
-                      aria-label={`Delete webhook ${wh.url}`}
-                      onClick={() => {
-                        if (confirm(`Delete webhook ${wh.url}?`)) removeMut.mutate(wh.id);
-                      }}
-                      style={{ color: 'var(--danger)' }}
-                    >
-                      <Trash2 size={13} aria-hidden />
-                    </button>
-                  </div>
-                </td>
+        <TableScroll label="Webhook subscriptions">
+          <table className="data-table">
+            <caption className="sr-only">Webhook subscriptions: URL, events, status, updated and actions</caption>
+            <thead>
+              <tr>
+                <th>URL</th>
+                <th>Events</th>
+                <th>Status</th>
+                <th>Updated</th>
+                <th aria-label="Actions" />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((wh) => (
+                <tr key={wh.id}>
+                  <td className="did" style={{ maxWidth: 240 }}>
+                    {wh.url}
+                  </td>
+                  <td>{wh.events.length === 0 ? 'all' : wh.events.join(', ')}</td>
+                  <td>
+                    <Badge variant={wh.active ? 'complete' : 'neutral'}>{wh.active ? '● active' : '○ disabled'}</Badge>
+                  </td>
+                  <td style={{ color: 'var(--muted)' }}>{timeAgo(wh.updatedAt)}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button
+                        className="icon-btn"
+                        aria-label={`Edit webhook ${wh.url}`}
+                        onClick={() => setEditing({ mode: 'edit', webhook: wh })}
+                      >
+                        <Pencil size={13} aria-hidden />
+                      </button>
+                      <button
+                        className="icon-btn"
+                        aria-label={`Delete webhook ${wh.url}`}
+                        onClick={() => {
+                          if (confirm(`Delete webhook ${wh.url}?`)) removeMut.mutate(wh.id);
+                        }}
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        <Trash2 size={13} aria-hidden />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       ) : (
         <EmptyState
           title="No webhooks configured"

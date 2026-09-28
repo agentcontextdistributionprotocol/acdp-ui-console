@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { EmptyState } from '@/components/ui/empty-state';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { eventTypeColor } from '@/lib/colors';
 import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { shortId, timeAgo } from '@/lib/utils/format';
@@ -22,50 +23,53 @@ export function EventsTable({ events }: { events: CpContextEvent[] }) {
   const router = useRouter();
   if (events.length === 0) return <EmptyState title="No events match these filters" />;
   return (
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th>Agent</th>
-          <th>Ctx ID</th>
-          <th>Registry</th>
-          <th>Run</th>
-          <th>Time</th>
-        </tr>
-      </thead>
-      <tbody>
-        {events.map((ev) => {
-          const color = eventTypeColor(colorKey(ev.eventType));
-          return (
-            <tr key={ev.id} {...(ev.runId ? pressable(() => router.push(`/runs/${ev.runId}`), `Open run ${ev.runId}`) : {})}>
-              <td>
-                <span
-                  className="badge"
-                  style={{ color, background: 'color-mix(in srgb, currentColor 12%, transparent)', borderColor: 'color-mix(in srgb, currentColor 24%, transparent)' }}
-                >
-                  {ev.eventType.replace(/_/g, '.')}
-                </span>
-              </td>
-              <td className="did">{formatAgentDid(ev.agentId) || '—'}</td>
-              <td className="did">
-                {ev.ctxId ? formatCtxId(ev.ctxId) : '—'}
-                {ev.receiptPresent && (
+    <TableScroll label="Context event history">
+      <table className="data-table">
+        <caption className="sr-only">Context event history: type, agent, ctx id, registry, run and time</caption>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Agent</th>
+            <th>Ctx ID</th>
+            <th>Registry</th>
+            <th>Run</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((ev) => {
+            const color = eventTypeColor(colorKey(ev.eventType));
+            return (
+              <tr key={ev.id} {...(ev.runId ? pressable(() => router.push(`/runs/${ev.runId}`), `Open run ${ev.runId}`) : {})}>
+                <td>
                   <span
-                    className="chip ok"
-                    style={{ marginLeft: 6 }}
-                    title={ev.keyFingerprint ? `receipt · key ${ev.keyFingerprint}` : 'registry receipt present'}
+                    className="badge"
+                    style={{ color, background: 'color-mix(in srgb, currentColor 12%, transparent)', borderColor: 'color-mix(in srgb, currentColor 24%, transparent)' }}
                   >
-                    receipt
+                    {ev.eventType.replace(/_/g, '.')}
                   </span>
-                )}
-              </td>
-              <td>{shortAuthority(ev.registryAuthority) || '—'}</td>
-              <td className="did">{ev.runId ? shortId(ev.runId, 8, 4) : '—'}</td>
-              <td style={{ color: 'var(--muted)' }}>{timeAgo(ev.eventTs)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                </td>
+                <td className="did">{formatAgentDid(ev.agentId) || '—'}</td>
+                <td className="did">
+                  {ev.ctxId ? formatCtxId(ev.ctxId) : '—'}
+                  {ev.receiptPresent && (
+                    <span
+                      className="chip ok"
+                      style={{ marginLeft: 6 }}
+                      title={ev.keyFingerprint ? `receipt · key ${ev.keyFingerprint}` : 'registry receipt present'}
+                    >
+                      receipt
+                    </span>
+                  )}
+                </td>
+                <td>{shortAuthority(ev.registryAuthority) || '—'}</td>
+                <td className="did">{ev.runId ? shortId(ev.runId, 8, 4) : '—'}</td>
+                <td style={{ color: 'var(--muted)' }}>{timeAgo(ev.eventTs)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </TableScroll>
   );
 }

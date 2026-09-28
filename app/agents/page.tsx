@@ -10,6 +10,7 @@ import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { listAgents, listCpEvents } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { formatAgentDid, formatCtxId, shortAuthority } from '@/lib/utils/acdp';
@@ -47,30 +48,33 @@ export default function AgentsPage() {
       {data && data.length === 0 && <EmptyState title="No agents observed yet" />}
       {data && data.length > 0 && (
         <Card>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Agent DID</th>
-                <th>Registry</th>
-                <th>Contexts</th>
-                <th>First seen</th>
-                <th>Last active</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((a) => (
-                <tr key={a.agentDid} {...pressable(() => setSelected(a), `View agent ${a.agentDid}`)}>
-                  <td className="did" style={{ maxWidth: 320 }}>
-                    {a.agentDid}
-                  </td>
-                  <td>{shortAuthority(a.registryAuthority)}</td>
-                  <td>{a.contextCount}</td>
-                  <td style={{ color: 'var(--muted)' }}>{timeAgo(a.firstSeen)}</td>
-                  <td style={{ color: 'var(--muted)' }}>{timeAgo(a.lastSeen)}</td>
+          <TableScroll label="Agent inventory">
+            <table className="data-table">
+              <caption className="sr-only">Agent inventory: agent DID, registry, contexts, first seen and last active</caption>
+              <thead>
+                <tr>
+                  <th>Agent DID</th>
+                  <th>Registry</th>
+                  <th>Contexts</th>
+                  <th>First seen</th>
+                  <th>Last active</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.map((a) => (
+                  <tr key={a.agentDid} {...pressable(() => setSelected(a), `View agent ${a.agentDid}`)}>
+                    <td className="did" style={{ maxWidth: 320 }}>
+                      {a.agentDid}
+                    </td>
+                    <td>{shortAuthority(a.registryAuthority)}</td>
+                    <td>{a.contextCount}</td>
+                    <td style={{ color: 'var(--muted)' }}>{timeAgo(a.firstSeen)}</td>
+                    <td style={{ color: 'var(--muted)' }}>{timeAgo(a.lastSeen)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
         </Card>
       )}
 

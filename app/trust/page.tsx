@@ -10,6 +10,7 @@ import { ErrorPanel } from '@/components/ui/error-panel';
 import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ReceiptCoverageBars, DidMethodBars } from '@/components/trust/coverage-bars';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { useTrust } from '@/lib/hooks/use-trust';
 import {
   failClosedEntries,
@@ -152,97 +153,100 @@ export default function TrustPage() {
             // indistinguishability is the whole reason this phase exists.
             <EmptyState title="No trust violations" description="Every audited receipt bound cleanly to its served context." />
           ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Run</th>
-                  <th>Ctx ID</th>
-                  <th>Finding</th>
-                  <th>Detail</th>
-                  <th>When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Both violation mechanisms share this table. A revoked-only
-                    run previously produced NO rows here (the list flat-mapped
-                    `flagged` alone), so even once such a run passed the filter
-                    it would have rendered an empty table — the same false
-                    "nothing to see" in a different shape. */}
-                {violationRuns.flatMap(({ run, trust: rt }) => {
-                  const when = timeAgo(run.completedAt ?? run.startedAt);
-                  const runCell = (
-                    <td className="did">
-                      <Link href={`/runs/${run.runId}`} style={{ color: C.info }}>
-                        {run.runId}
-                      </Link>
-                    </td>
-                  );
-                  return [
-                    ...rt.flagged.map((f) => (
-                      <tr key={`f-${f.eventId}`}>
-                        {runCell}
-                        <td className="did">{f.ctxId ? formatCtxId(f.ctxId) : '—'}</td>
-                        <td>
-                          <span className="chip bad">{f.status}</span>
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            {f.discrepancies.map((d, i) => (
-                              <span key={i} className="did" style={{ fontSize: 10.5, color: C.danger }}>
-                                {d}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td style={{ color: C.muted }}>{when}</td>
-                      </tr>
-                    )),
-                    // Same rule as the run panel: a run that reached this list
-                    // on a counter-only payload must not contribute zero rows.
-                    ...(undetailedFailClosedCount(rt) > 0
-                      ? [
-                          <tr key={`u-${run.runId}`}>
-                            {runCell}
-                            <td className="did">—</td>
-                            <td>
-                              <span className="chip bad">reported without detail</span>
-                            </td>
-                            <td>
-                              <span className="did" style={{ fontSize: 10.5, color: C.danger }}>
-                                {undetailedFailClosedCount(rt)} fail-closed verdict
-                                {undetailedFailClosedCount(rt) === 1 ? '' : 's'} counted with no per-event detail
-                              </span>
-                            </td>
-                            <td style={{ color: C.muted }}>{when}</td>
-                          </tr>,
-                        ]
-                      : []),
-                    ...failClosedEntries(rt.revoked).map((r) => (
-                      <tr key={`r-${r.eventId}`}>
-                        {runCell}
-                        <td className="did">{r.ctxId ? formatCtxId(r.ctxId) : '—'}</td>
-                        <td>
-                          <span className={revocationChipClass(r.status)}>{r.status}</span>
-                        </td>
-                        <td>
-                          <span className="did" style={{ fontSize: 10.5, color: C.danger }}>
-                            {/* `boundary` is a Postgres textual timestamp
-                                ("2026-08-01 00:00:00+00"). `new Date(...)`
-                                parses it directly; do NOT normalise it to
-                                ISO-8601 first — the result is stricter about
-                                the offset and rejects the short "+00" form,
-                                yielding Invalid Date. Same trap documented at
-                                length in components/runs/run-trust-panel.tsx. */}
-                            key revoked · boundary {new Date(r.boundary).toLocaleString()} · {r.trustClass}
-                          </span>
-                        </td>
-                        <td style={{ color: C.muted }}>{when}</td>
-                      </tr>
-                    )),
-                  ];
-                })}
-              </tbody>
-            </table>
+            <TableScroll label="Trust findings">
+              <table className="data-table">
+                <caption className="sr-only">Trust findings: run, ctx id, finding, detail and when</caption>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>Ctx ID</th>
+                    <th>Finding</th>
+                    <th>Detail</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Both violation mechanisms share this table. A revoked-only
+                      run previously produced NO rows here (the list flat-mapped
+                      `flagged` alone), so even once such a run passed the filter
+                      it would have rendered an empty table — the same false
+                      "nothing to see" in a different shape. */}
+                  {violationRuns.flatMap(({ run, trust: rt }) => {
+                    const when = timeAgo(run.completedAt ?? run.startedAt);
+                    const runCell = (
+                      <td className="did">
+                        <Link href={`/runs/${run.runId}`} style={{ color: C.info }}>
+                          {run.runId}
+                        </Link>
+                      </td>
+                    );
+                    return [
+                      ...rt.flagged.map((f) => (
+                        <tr key={`f-${f.eventId}`}>
+                          {runCell}
+                          <td className="did">{f.ctxId ? formatCtxId(f.ctxId) : '—'}</td>
+                          <td>
+                            <span className="chip bad">{f.status}</span>
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {f.discrepancies.map((d, i) => (
+                                <span key={i} className="did" style={{ fontSize: 10.5, color: C.danger }}>
+                                  {d}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                          <td style={{ color: C.muted }}>{when}</td>
+                        </tr>
+                      )),
+                      // Same rule as the run panel: a run that reached this list
+                      // on a counter-only payload must not contribute zero rows.
+                      ...(undetailedFailClosedCount(rt) > 0
+                        ? [
+                            <tr key={`u-${run.runId}`}>
+                              {runCell}
+                              <td className="did">—</td>
+                              <td>
+                                <span className="chip bad">reported without detail</span>
+                              </td>
+                              <td>
+                                <span className="did" style={{ fontSize: 10.5, color: C.danger }}>
+                                  {undetailedFailClosedCount(rt)} fail-closed verdict
+                                  {undetailedFailClosedCount(rt) === 1 ? '' : 's'} counted with no per-event detail
+                                </span>
+                              </td>
+                              <td style={{ color: C.muted }}>{when}</td>
+                            </tr>,
+                          ]
+                        : []),
+                      ...failClosedEntries(rt.revoked).map((r) => (
+                        <tr key={`r-${r.eventId}`}>
+                          {runCell}
+                          <td className="did">{r.ctxId ? formatCtxId(r.ctxId) : '—'}</td>
+                          <td>
+                            <span className={revocationChipClass(r.status)}>{r.status}</span>
+                          </td>
+                          <td>
+                            <span className="did" style={{ fontSize: 10.5, color: C.danger }}>
+                              {/* `boundary` is a Postgres textual timestamp
+                                  ("2026-08-01 00:00:00+00"). `new Date(...)`
+                                  parses it directly; do NOT normalise it to
+                                  ISO-8601 first — the result is stricter about
+                                  the offset and rejects the short "+00" form,
+                                  yielding Invalid Date. Same trap documented at
+                                  length in components/runs/run-trust-panel.tsx. */}
+                              key revoked · boundary {new Date(r.boundary).toLocaleString()} · {r.trustClass}
+                            </span>
+                          </td>
+                          <td style={{ color: C.muted }}>{when}</td>
+                        </tr>
+                      )),
+                    ];
+                  })}
+                </tbody>
+              </table>
+            </TableScroll>
           )}
         </CardBody>
       </Card>
