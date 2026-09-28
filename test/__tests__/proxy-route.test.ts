@@ -216,6 +216,9 @@ describe('proxy route — route allow-list', () => {
       // literal, NOT a variable authority — `log-witness` sits in segment two
       // here and in segment three above.
       { method: 'GET', service: 'control-plane', path: ['registries', 'log-witness', 'alerts'] },
+      // The admin acknowledgement (#84). POST only — the GET on this same path
+      // stays rejected below, so the verb is doing real work here.
+      { method: 'POST', service: 'control-plane', path: ['registries', 'registry-a.example.com', 'log-witness', 'ack'] },
       { method: 'GET', service: 'registry-a', path: ['healthz'] },
       { method: 'GET', service: 'registry-a', path: ['contexts', 'search'] },
       { method: 'GET', service: 'registry-a', path: ['lineages', 'l1'] },
@@ -313,6 +316,43 @@ describe('proxy route — route allow-list', () => {
         method: 'GET',
         path: ['registries', 'enrollments', 'alerts'],
         why: 'and it must not compose with another allow-listed collection name either',
+      },
+    ];
+    for (const { method, path, why } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/control-plane/${path.join('/')}`;
+      const handler = method === 'GET' ? GET : POST;
+      const res = await handler(new NextRequest(url, { method }), ctx('control-plane', path));
+      expect(res.status, `${method} ${path.join('/')} — ${why}`).toBe(403);
+      expect(fetchMock, `${method} ${path.join('/')} — ${why}`).not.toHaveBeenCalled();
+    }
+  });
+
+  // The ack pattern is the file's second middle-variable pattern, so it can
+  // over-reach the same way the read above can — and it is a WRITE, which makes
+  // it the more valuable of the two to get wrong. The GET-on-this-path case is
+  // asserted in the block above rather than repeated here.
+  it('the log-witness ACK pattern admits exactly one shape and nothing adjacent to it', async () => {
+    const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
+      {
+        method: 'POST',
+        path: ['registries', 'a', 'b', 'log-witness', 'ack'],
+        why: 'a DNS authority is one segment; [^/]+ must not span a slash',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness', 'ack', 'extra'],
+        why: 'the $ anchor must admit no tail',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness'],
+        why: 'the read path must not become writable because its ack sibling is',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'log-witness', 'ack'],
+        why: 'the collection level has no ack; this is the alerts route mis-spelled',
       },
     ];
     for (const { method, path, why } of cases) {

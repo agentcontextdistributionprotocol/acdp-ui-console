@@ -48,6 +48,8 @@ import type {
   ListRunsQuery,
   LogWitnessState,
   LogWitnessAlertsResponse,
+  LogWitnessAlertRow,
+  LogWitnessAckResult,
   PlaygroundRunResponse,
   PlaygroundRunStatus,
   PrometheusMetric,
@@ -789,8 +791,10 @@ export async function getRegistryJwks(authority: RegistryAuthority, demoMode: bo
 
 /**
  * Transparency-log witness state for one registry, by DNS authority
- * (RFC-ACDP-0012). Read-only: the sibling admin `POST .../log-witness/ack` is
- * deliberately neither called nor proxied.
+ * (RFC-ACDP-0012). Read-only itself; the sibling admin
+ * `POST .../log-witness/ack` IS now called and proxied, by
+ * `acknowledgeLogWitnessAlert` below (#84). It was neither when this docblock
+ * was written.
  *
  * A **404** is the ordinary "no witness state recorded for this authority"
  * answer — the control plane raises REGISTRY_NOT_FOUND when there is neither a
@@ -859,14 +863,91 @@ export async function listLogWitnessAlerts(
 ): Promise<LogWitnessAlertsResponse> {
   const path = `/registries/log-witness/alerts${includeAcknowledged ? '?includeAcknowledged=true' : ''}`;
   if (demoMode) {
-    const data = includeAcknowledged
-      ? MOCK_LOG_WITNESS_ALERTS
-      : MOCK_LOG_WITNESS_ALERTS.filter((r) => r.acknowledgedAt === null);
+    const all = demoAlertStore();
+    const data = includeAcknowledged ? all : all.filter((r) => r.acknowledgedAt === null);
     // `total` tracks the rows actually returned, which is what upstream does:
     // it counts the filtered result, not the table.
     return delay({ data, total: data.length });
   }
   return fetchJson<LogWitnessAlertsResponse>('control-plane', path);
+}
+
+/**
+ * A mutable copy of the alert worklist for demo mode, so an acknowledgement is
+ * visible instead of being a no-op that leaves the row exactly as it was.
+ * Same shape as `demoEnrollmentStore` above.
+ */
+let demoAlerts: LogWitnessAlertRow[] | null = null;
+function demoAlertStore(): LogWitnessAlertRow[] {
+  if (!demoAlerts) demoAlerts = MOCK_LOG_WITNESS_ALERTS.map((r) => ({ ...r }));
+  return demoAlerts;
+}
+
+/**
+ * Record that an operator saw one authority's transparency-log alert (#84).
+ *
+ * **No request body, deliberately.** Upstream takes no `@Body()` and derives
+ * the acknowledger server-side from the caller's own token — `acknowledgedBy`
+ * is `req.actorId ?? 'admin'`, where `actorId` is a truncated key fingerprint.
+ * There is nothing for a caller to send and nothing a caller could usefully
+ * claim about who they are, so this takes no input beyond the authority and
+ * builds no form for one.
+ *
+ * **Acknowledging does NOT clear the alert.** Upstream stamps `acknowledgedAt`
+ * and leaves `alerted` true; the row drops out of the default listing only
+ * because the default filters on `acknowledgedAt IS NULL`. A subsequent
+ * detection with a DIFFERENT reason resets the stamp and the row resurfaces; a
+ * repeat of the same reason does not. The confirm copy in
+ * `log-witness-alerts.tsx` says all three of those out loud, because an
+ * operator who reads "acknowledge" as "resolve" will stop looking.
+ *
+ * Admin-only, and the console **cannot know that in advance**: no control-plane
+ * endpoint reports the caller's own scope, and `features` carries deployment
+ * flags rather than caller permissions. So the 403 is a designed path, not an
+ * edge case, and the caller handles it after the fact rather than pre-disabling
+ * the control. That 403 is a bare `ForbiddenException` with **no `errorCode`**,
+ * so only the status is usable — `api-error-messages.ts` has nothing to key on.
+ *
+ * The authority is percent-encoded for the same reason `getLogWitness` encodes
+ * it: it arrives from control-plane data, and an unencoded `/` would splice a
+ * new path segment and walk off the allow-listed route.
+ */
+export async function acknowledgeLogWitnessAlert(
+  authority: string,
+  demoMode: boolean,
+): Promise<LogWitnessAckResult> {
+  const path = `/registries/${encodeURIComponent(authority)}/log-witness/ack`;
+  if (demoMode) {
+    const row = demoAlertStore().find((r) => r.authority === authority);
+    if (!row) {
+      // The alert resolved between render and click. Upstream answers 404
+      // REGISTRY_NOT_FOUND, and the UI reads that as "already resolved" rather
+      // than as a failure — so demo has to be able to produce it too.
+      throw new ApiError(
+        404,
+        JSON.stringify({
+          errorCode: 'REGISTRY_NOT_FOUND',
+          message: `no transparency-log alert for '${authority}'`,
+        }),
+        'control-plane',
+        path,
+      );
+    }
+    row.acknowledgedAt = new Date().toISOString();
+    // A truncated key fingerprint, matching the shape upstream derives. NOT a
+    // person's name — the UI labels it "key" for that reason.
+    row.acknowledgedBy = 'demo1234...';
+    return delay({
+      authority: row.authority,
+      // `alerted` stays TRUE. Demo must not teach that ack clears the alert,
+      // because upstream does not.
+      alerted: true,
+      reason: row.reason,
+      acknowledgedAt: row.acknowledgedAt,
+      acknowledgedBy: row.acknowledgedBy,
+    });
+  }
+  return fetchJson<LogWitnessAckResult>('control-plane', path, { method: 'POST' });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

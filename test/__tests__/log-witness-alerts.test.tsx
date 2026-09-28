@@ -17,8 +17,9 @@
 //
 // The hook is mocked per `CLAUDE.md` so each state renders deterministically.
 // ══════════════════════════════════════════════════════════════════════
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, cleanup, within, waitFor, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
 import type { LogWitnessAlertRow } from '@/lib/types';
 
@@ -28,6 +29,14 @@ import type { LogWitnessAlertRow } from '@/lib/types';
 const useLogWitnessAlerts = vi.fn();
 vi.mock('@/lib/hooks/use-security', () => ({
   useLogWitnessAlerts: (...args: unknown[]) => useLogWitnessAlerts(...args),
+}));
+
+// The ack is a WRITE. Mocking the client (rather than `fetch`) is what lets
+// "was a request issued at all?" be asserted directly — the confirm gate is
+// only meaningful if its violation is observable.
+const acknowledgeLogWitnessAlert = vi.fn();
+vi.mock('@/lib/api/client', () => ({
+  acknowledgeLogWitnessAlert: (...args: unknown[]) => acknowledgeLogWitnessAlert(...args),
 }));
 
 import { LogWitnessAlerts } from '@/components/registries/log-witness-alerts';
@@ -48,6 +57,8 @@ function row(over: Partial<LogWitnessAlertRow> = {}): LogWitnessAlertRow {
   };
 }
 
+let queryClient: QueryClient;
+
 function renderWith(state: {
   data?: { data: LogWitnessAlertRow[]; total: number };
   error?: unknown;
@@ -58,7 +69,11 @@ function renderWith(state: {
     error: state.error ?? null,
     data: state.data,
   });
-  return render(<LogWitnessAlerts />);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <LogWitnessAlerts />
+    </QueryClientProvider>,
+  );
 }
 
 function section(): HTMLElement {
@@ -70,6 +85,13 @@ function section(): HTMLElement {
 function rows(rs: LogWitnessAlertRow[]) {
   return { data: rs, total: rs.length };
 }
+
+beforeEach(() => {
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  acknowledgeLogWitnessAlert.mockReset();
+});
 
 afterEach(() => {
   cleanup();
@@ -211,7 +233,9 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
     // exists to remove.
     renderWith({ data: rows([]) });
     const text = section().textContent ?? '';
-    expect(screen.getByText('No alert is currently recorded')).toBeInTheDocument();
+    // The title is a function of the filter too — "at all" is only sayable
+    // because the default listing includes acknowledged rows.
+    expect(screen.getByText('No alert is recorded at all')).toBeInTheDocument();
     expect(text).not.toMatch(/healthy/i);
     expect(text).not.toMatch(/all (logs|registries) (are )?(ok|fine|verified)/i);
     expect(text).not.toMatch(/no (problems|issues)\b/i);
@@ -434,6 +458,10 @@ describe('witness alert worklist — the header row means what the cells hold', 
       'Consecutive environmental failures',
       'Detected',
       'State',
+      // Phase 3's column. The header is `Acknowledge`; the CELL's control is
+      // labelled per row ("Acknowledge <authority>" / "Re-acknowledge …"), so
+      // the two are checked separately.
+      'Acknowledge',
     ]);
   });
 
@@ -495,5 +523,301 @@ describe('witness alert worklist — an unreadable detail is not "no detail"', (
     expect(detailCells).toEqual(['—', 'Detail not readable', 'a readable message']);
     // Never `[object Object]`, which is what `String(detail.error)` would give.
     expect(section().textContent).not.toContain('[object Object]');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// Acknowledging one alert (#84, phase 3 of 3).
+//
+// "Acknowledge" is the most over-read word on this page. Upstream makes it
+// three things it is not — it does not clear the alert, it does not name a
+// person, and it hides an ONGOING detection whose reason has not changed — so
+// the confirm step exists to say all three, and these tests exist to keep it
+// saying them. The gate itself is asserted the only way that falsifies it: by
+// checking no request was issued before confirming.
+// ══════════════════════════════════════════════════════════════════════
+function dialog(): HTMLElement {
+  return screen.getByRole('dialog');
+}
+
+function openConfirm(authority = 'registry-c.playground.local') {
+  // `fireEvent`, matching every other component test in this suite —
+  // `@testing-library/user-event` is not a dependency here.
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: new RegExp(`acknowledge ${authority.replace(/\./g, '\\.')}`, 'i'),
+    }),
+  );
+}
+
+function confirmAck() {
+  fireEvent.click(within(dialog()).getByRole('button', { name: /^acknowledge$/i }));
+}
+
+describe('witness alert worklist — acknowledging is gated on a confirm', () => {
+  it('issues NO request when the row control is clicked', async () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    // The dialog is up…
+    expect(dialog()).toBeInTheDocument();
+    // …and nothing has been sent. This is the whole gate: if the row button
+    // called the mutation directly, the dialog would still render and every
+    // copy assertion below would still pass.
+    expect(acknowledgeLogWitnessAlert).not.toHaveBeenCalled();
+  });
+
+  it('issues the request only after the dialog is confirmed, for that authority', async () => {
+    acknowledgeLogWitnessAlert.mockResolvedValue({ authority: 'x', alerted: true });
+    renderWith({ data: rows([row({ authority: 'registry-c.playground.local' })]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalledTimes(1));
+    // The FULL authority, not the shortened display form — the display form is
+    // lossy and would address a different row upstream.
+    expect(acknowledgeLogWitnessAlert.mock.calls[0][0]).toBe('registry-c.playground.local');
+  });
+
+  it('issues NO request when the dialog is cancelled', async () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    fireEvent.click(within(dialog()).getByRole('button', { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(acknowledgeLogWitnessAlert).not.toHaveBeenCalled();
+  });
+
+  it('confirms the row the operator clicked, not the first row', async () => {
+    acknowledgeLogWitnessAlert.mockResolvedValue({ authority: 'x', alerted: true });
+    renderWith({
+      data: rows([row({ authority: 'first.example.com' }), row({ authority: 'second.example.com' })]),
+    });
+    openConfirm('second.example.com');
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalledTimes(1));
+    expect(acknowledgeLogWitnessAlert.mock.calls[0][0]).toBe('second.example.com');
+  });
+
+  it('names each row control by its authority, so six of them are distinguishable', () => {
+    renderWith({
+      data: rows([row({ authority: 'first.example.com' }), row({ authority: 'second.example.com' })]),
+    });
+    expect(screen.getByRole('button', { name: /acknowledge first\.example\.com/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /acknowledge second\.example\.com/i })).toBeInTheDocument();
+  });
+});
+
+describe('witness alert worklist — the confirm says what an ack is NOT', () => {
+  it('states that the alert is not cleared', async () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const text = dialog().textContent ?? '';
+    expect(text).toMatch(/not clear the alert/i);
+    // And says what DOES clear it, so the fact is actionable rather than just
+    // discouraging.
+    expect(text).toMatch(/until the control plane witnesses a consistent checkpoint/i);
+  });
+
+  it('states that the acknowledger is a key, never a person', async () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const text = dialog().textContent ?? '';
+    expect(text).toMatch(/which key/i);
+    expect(text).toMatch(/not a person/i);
+  });
+
+  it('states the resurfacing rule — a REPEAT of the same reason stays hidden', async () => {
+    // The trap: an operator acks a root mismatch, the log keeps being detected
+    // with the same reason every poll, and the row never comes back. Upstream
+    // resets `acknowledgedAt` only when the REASON changes.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const text = dialog().textContent ?? '';
+    expect(text).toMatch(/different/i);
+    expect(text).toMatch(/same/i);
+    expect(text).toMatch(/stays hidden/i);
+  });
+
+  it('names the authority and its current reason in the dialog', async () => {
+    renderWith({ data: rows([row({ reason: 'tree_size_regression' })]) });
+    openConfirm();
+    const text = dialog().textContent ?? '';
+    expect(text).toContain('registry-c.playground.local');
+    expect(text).toContain('Tree size went backwards');
+  });
+});
+
+describe('witness alert worklist — the ack control does not pretend to know the caller’s scope', () => {
+  it('renders the control on every row, acknowledged or not', () => {
+    renderWith({
+      data: rows([
+        row({ authority: 'open.example.com' }),
+        row({
+          authority: 'acked.example.com',
+          acknowledgedAt: '2026-09-27T09:00:00.000Z',
+          acknowledgedBy: 'ab12cd34...',
+        }),
+      ]),
+    });
+    // No pre-disabling: no control-plane endpoint reports the caller's own
+    // scope, so a disabled button would be a guess — and a wrong guess hides a
+    // control that works.
+    const btns = screen
+      .getAllByRole('button')
+      .filter((b) => /acknowledge/i.test(b.getAttribute('aria-label') ?? ''));
+    expect(btns).toHaveLength(2);
+    expect(btns.every((b) => !b.hasAttribute('disabled'))).toBe(true);
+  });
+
+  it('labels an already-acknowledged row “Re-acknowledge”', () => {
+    renderWith({
+      data: rows([
+        row({ acknowledgedAt: '2026-09-27T09:00:00.000Z', acknowledgedBy: 'ab12cd34...' }),
+      ]),
+    });
+    // Upstream's update is `WHERE alerted = true` — not `WHERE acknowledgedAt
+    // IS NULL` — so re-acknowledging genuinely works and re-stamps. Disabling
+    // it would remove a working action; leaving it saying "Acknowledge" would
+    // read as an action with no effect.
+    const btn = screen.getByRole('button', { name: /re-acknowledge/i });
+    expect(btn).toBeInTheDocument();
+    expect(btn).not.toBeDisabled();
+  });
+
+  it('DISCRIMINATES: an open row says “Acknowledge”, not “Re-acknowledge”', () => {
+    renderWith({ data: rows([row({ acknowledgedAt: null })]) });
+    expect(screen.queryByRole('button', { name: /re-acknowledge/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /acknowledge registry-c/i })).toBeInTheDocument();
+  });
+});
+
+describe('witness alert worklist — the two designed failure paths', () => {
+  it('a 403 is the ONE place the admin-scope copy is correct, and it stays in the dialog', async () => {
+    // Acknowledging IS `actorIsAdmin`-gated upstream, unlike reading the
+    // worklist. The table's own 403 copy must stay generic (asserted above);
+    // this one must not be.
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(403, JSON.stringify({ message: 'admin-only' }), 'control-plane', '/x', true),
+    );
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/refused it/i));
+    expect(dialog().textContent).toMatch(/admin/i);
+    // The dialog stays OPEN so the operator can read why. A dialog that closed
+    // on failure would leave the table looking unchanged with no explanation.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('a 404 is rendered as the alert having RESOLVED, not as a failure', async () => {
+    // `acknowledgeAlert` updates `WHERE alerted = true`, so a 404 means the
+    // condition cleared between render and click. Calling that an error would
+    // send an operator after a registry that just got better.
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(404, JSON.stringify({ errorCode: 'REGISTRY_NOT_FOUND' }), 'control-plane', '/x', true),
+    );
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
+    expect(dialog().textContent).not.toMatch(/could not record/i);
+    // The table is now stale in the operator's favour, so it is refetched.
+    await waitFor(() =>
+      expect(
+        invalidate.mock.calls.some((c) =>
+          JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it('withdraws the confirm action once the alert is gone', async () => {
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(404, JSON.stringify({ errorCode: 'REGISTRY_NOT_FOUND' }), 'control-plane', '/x', true),
+    );
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert/i));
+    // Nothing left to confirm, so the confirm button is gone rather than
+    // sitting there inviting a retry that will 404 again…
+    expect(within(dialog()).queryByRole('button', { name: /^acknowledge$/i })).toBeNull();
+    // …and the remaining control says "Close", not "Cancel": there is no
+    // pending action to cancel.
+    // `/^close$/` — the modal's own header X is named "Close dialog", and a
+    // loose match would pass against that no matter what the footer says.
+    expect(within(dialog()).getByRole('button', { name: /^close$/i })).toBeInTheDocument();
+    expect(within(dialog()).queryByRole('button', { name: /^cancel$/i })).toBeNull();
+  });
+
+  it('any OTHER failure still renders a panel, so a write never fails silently', async () => {
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(500, 'boom', 'control-plane', '/x', true),
+    );
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/could not record the acknowledgement/i));
+    // And it is NOT dressed up as either designed path.
+    expect(dialog().textContent).not.toMatch(/no longer an alert/i);
+    expect(dialog().textContent).not.toMatch(/refused it/i);
+  });
+
+  it('on success it closes the dialog and refetches the worklist', async () => {
+    acknowledgeLogWitnessAlert.mockResolvedValue({ authority: 'x', alerted: true });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(
+      invalidate.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts')),
+    ).toBe(true);
+  });
+});
+
+describe('witness alert worklist — acknowledged rows stay reachable', () => {
+  function lastIncludeAcknowledged() {
+    return useLogWitnessAlerts.mock.calls.at(-1)?.[0];
+  }
+
+  it('asks for the FULL listing by default — the filter narrows, it does not open up', () => {
+    // Deliberately the opposite of what this test asserted when the toggle was
+    // written. Acknowledging does not resolve an alert upstream, so defaulting
+    // to the unacknowledged-only listing would make an ongoing, unchanged
+    // detection vanish from this console the moment someone acked it — the
+    // defect this worklist's first gate round was about. The filtered view is
+    // still one click away for triage; it is just not what the screen asserts
+    // before anyone touches it.
+    renderWith({ data: rows([row()]) });
+    expect(lastIncludeAcknowledged()).toBe(true);
+    expect(screen.getByRole('button', { name: /hide acknowledged/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('toggles the listing it REQUESTS, not just the button label, and back', () => {
+    renderWith({ data: rows([row()]) });
+    const btn = () => screen.getByRole('button', { name: /(show|hide) acknowledged/i });
+    // Starts on the full listing, so the first click FILTERS DOWN.
+    fireEvent.click(btn());
+    expect(lastIncludeAcknowledged()).toBe(false);
+    expect(btn()).toHaveAttribute('aria-pressed', 'false');
+    expect(btn()).toHaveTextContent(/show acknowledged/i);
+    // …and back. Upstream never resurfaces a row whose reason has not changed,
+    // so the way back to an acknowledged-but-still-alerting authority has to
+    // change the REQUEST, not just the label — the filtering is server-side.
+    fireEvent.click(btn());
+    expect(lastIncludeAcknowledged()).toBe(true);
+    expect(btn()).toHaveAttribute('aria-pressed', 'true');
+    expect(btn()).toHaveTextContent(/hide acknowledged/i);
+  });
+
+  it('renders the control even while loading and while erroring, so the view is never stuck', () => {
+    renderWith({ isLoading: true });
+    expect(screen.getByRole('button', { name: /hide acknowledged/i })).toBeInTheDocument();
+    cleanup();
+    renderWith({ error: new ApiError(500, 'boom', 'control-plane', '/x') });
+    expect(screen.getByRole('button', { name: /hide acknowledged/i })).toBeInTheDocument();
   });
 });

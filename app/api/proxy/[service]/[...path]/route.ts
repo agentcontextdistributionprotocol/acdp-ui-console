@@ -77,9 +77,10 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     //
     // `[^/]+` IS right for the authority: it is a DNS name, which contains
     // dots but never slashes — the opposite of the ctx_id case below. Both
-    // patterns are `$`-anchored, which is what keeps the sibling admin route
-    // `:authority/log-witness/ack` out (Phase 19 territory, not proxied here)
-    // and what stops either from growing a tail.
+    // patterns are `$`-anchored, which is what stops either from growing a
+    // tail — including growing into the admin `:authority/log-witness/ack`
+    // sibling, which is allow-listed separately below as a POST and must not
+    // become reachable by GET.
     //
     // Upstream declares `log-witness/alerts` BEFORE `:authority/log-witness`
     // (`registries.controller.ts:51` and `:117`), which is why Nest does not
@@ -95,6 +96,18 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     // its own line above, so neither pattern can admit or deny it.)
     { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },
     { method: 'GET', pattern: /^\/registries\/log-witness\/alerts$/ },
+    // Acknowledging one authority's alert (#84). The file's SECOND
+    // middle-variable pattern, so it carries the same over-reach risk as the
+    // per-authority read above and gets the same treatment: `[^/]+` for a DNS
+    // authority, `$`-anchored, and the route test asserts three adjacent
+    // shapes out (a multi-segment authority, a tail, and GET on this path).
+    //
+    // POST, and the ONLY write this console issues under `/registries/` other
+    // than `enroll`. It carries no body: upstream takes no `@Body()` and
+    // derives the acknowledger server-side from the caller's own token, so
+    // there is nothing for a client to send and nothing for this route to
+    // forward beyond the path itself.
+    { method: 'POST', pattern: /^\/registries\/[^/]+\/log-witness\/ack$/ },
     { method: 'GET', pattern: /^\/metrics$/ },
     { method: 'GET', pattern: /^\/webhooks$/ },
     { method: 'POST', pattern: /^\/webhooks$/ },

@@ -820,6 +820,23 @@ export interface LogWitnessAlertsResponse {
   total: number;
 }
 
+/**
+ * What `POST /registries/:authority/log-witness/ack` answers with (#84).
+ *
+ * `alerted` is on this response and is expected to stay **true** after a
+ * successful acknowledgement: upstream stamps `acknowledgedAt` and does not
+ * clear the alert. It is typed here rather than dropped precisely so that fact
+ * stays visible at the type level — a caller tempted to read the ack as "the
+ * alert is resolved now" has the field in front of it saying otherwise.
+ */
+export interface LogWitnessAckResult {
+  authority: string;
+  alerted: boolean;
+  reason: WitnessAlertReason | null;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+}
+
 // ── Misc ──────────────────────────────────────────────────────────────
 /** The registry authorities the console proxies, in display order. */
 export const REGISTRY_AUTHORITIES = ['a', 'b'] as const;

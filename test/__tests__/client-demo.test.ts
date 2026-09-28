@@ -580,6 +580,110 @@ describe('listLogWitnessAlerts (demo)', () => {
   });
 });
 
+describe('acknowledgeLogWitnessAlert (demo)', () => {
+  // The demo alert store is module-level mutable state, so an ack in one test
+  // would otherwise leak into the listing assertions above (and into any test
+  // appended after this block). Each test here takes a FRESH module instance
+  // rather than depending on declaration order to stay correct.
+  async function freshClient() {
+    vi.resetModules();
+    return import('@/lib/api/client');
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  function forbidFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        throw new Error('demo mode must not touch the network');
+      }),
+    );
+  }
+
+  it('moves the acked row out of the default listing and keeps it under includeAcknowledged', async () => {
+    forbidFetch();
+    const client = await freshClient();
+    const before = await client.listLogWitnessAlerts({ includeAcknowledged: false }, DEMO);
+    const target = before.data[0].authority;
+
+    await client.acknowledgeLogWitnessAlert(target, DEMO);
+
+    const after = await client.listLogWitnessAlerts({ includeAcknowledged: false }, DEMO);
+    expect(after.data.map((r) => r.authority)).not.toContain(target);
+    expect(after.data).toHaveLength(before.data.length - 1);
+
+    // Still there — acknowledged, not deleted. This is the half that catches a
+    // demo branch that "acks" by splicing the row out of the array.
+    const all = await client.listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    const row = all.data.find((r) => r.authority === target);
+    expect(row).toBeDefined();
+    expect(row?.acknowledgedAt).not.toBeNull();
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('leaves `alerted` true and the reason intact — an ack is not a resolution', async () => {
+    forbidFetch();
+    const client = await freshClient();
+    const { data } = await client.listLogWitnessAlerts({ includeAcknowledged: false }, DEMO);
+    const target = data.find((r) => r.reason !== null) ?? data[0];
+
+    const res = await client.acknowledgeLogWitnessAlert(target.authority, DEMO);
+    expect(res.alerted).toBe(true);
+    expect(res.reason).toBe(target.reason);
+
+    const all = await client.listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    const row = all.data.find((r) => r.authority === target.authority);
+    // The reason survives the ack in the STORE too, not just in the response —
+    // the worklist still has to be able to say what was wrong.
+    expect(row?.reason).toBe(target.reason);
+  });
+
+  it('stamps acknowledgedBy with a key fingerprint shape, not a person', async () => {
+    forbidFetch();
+    const client = await freshClient();
+    const { data } = await client.listLogWitnessAlerts({ includeAcknowledged: false }, DEMO);
+    const res = await client.acknowledgeLogWitnessAlert(data[0].authority, DEMO);
+    expect(res.acknowledgedBy).toBeTruthy();
+    // Upstream derives this from `req.actorId` — a truncated key fingerprint.
+    // A demo value that looked like a name would teach the UI to render it as
+    // one, which is the specific claim the component refuses to make.
+    expect(res.acknowledgedBy).toMatch(/\.\.\.$/);
+  });
+
+  it('throws 404 REGISTRY_NOT_FOUND for an authority with no alert row', async () => {
+    forbidFetch();
+    const client = await freshClient();
+    // The alert resolved between render and click, or the authority was never
+    // alerting. Demo has to be able to produce the path the UI renders as
+    // "already resolved", or that branch is only ever exercised by a mock.
+    await expect(
+      client.acknowledgeLogWitnessAlert('never-alerted.example.com', DEMO),
+    ).rejects.toMatchObject({ status: 404, errorCode: 'REGISTRY_NOT_FOUND' });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent in shape — re-acknowledging an acked row succeeds and re-stamps it', async () => {
+    forbidFetch();
+    const client = await freshClient();
+    const all = await client.listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    const acked = all.data.find((r) => r.acknowledgedAt !== null);
+    expect(acked).toBeDefined();
+    const first = acked?.acknowledgedAt;
+
+    const res = await client.acknowledgeLogWitnessAlert(acked!.authority, DEMO);
+    // Upstream has no "already acknowledged" rejection: the update is
+    // unconditional. The UI labels the control "Re-acknowledge" rather than
+    // disabling it, so this path has to work.
+    expect(res.acknowledgedAt).toBeTruthy();
+    expect(res.acknowledgedAt).not.toBe(first);
+  });
+});
+
 // ── Sanity: the run-id constants are wired up ──────────────────────────
 describe('exported run-id constants', () => {
   it('are distinct ids', () => {

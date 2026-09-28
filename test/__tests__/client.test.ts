@@ -13,6 +13,7 @@ import {
   getRegistryJwks,
   getLogWitness,
   listLogWitnessAlerts,
+  acknowledgeLogWitnessAlert,
   listEnrollments,
   enrollRegistry,
   getLineage,
@@ -249,6 +250,69 @@ describe('real-mode proxy paths', () => {
     // all-clear off the back of a missing route.
     mockFetch(() => upstreamResponse({ errorCode: 'NOT_FOUND' }, 404));
     await expect(listLogWitnessAlerts({ includeAcknowledged: false }, false)).rejects.toMatchObject({ status: 404 });
+  });
+
+  // ── Acknowledging one alert (#84) ───────────────────────────────────
+  it('acknowledgeLogWitnessAlert POSTs to the ack path with NO body', async () => {
+    // Upstream takes no `@Body()` and derives the acknowledger from the
+    // caller's own token, so a body would be both ignored and a lie about who
+    // is acking. Asserted on the init, not just the URL.
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'r-a', alerted: true }));
+    await acknowledgeLogWitnessAlert('registry-a.example.com', false);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/proxy/control-plane/registries/registry-a.example.com/log-witness/ack',
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+  });
+
+  it('acknowledgeLogWitnessAlert percent-encodes the authority so it cannot add a path segment', async () => {
+    // Same reasoning as `getLogWitness` above, and it matters more here: this
+    // is a WRITE, so walking off the allow-listed route would issue a POST at
+    // an unintended upstream path with the injected credential attached.
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'x', alerted: true }));
+    await acknowledgeLogWitnessAlert('registry-a.example.com/../enroll', false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toBe(
+      '/api/proxy/control-plane/registries/registry-a.example.com%2F..%2Fenroll/log-witness/ack',
+    );
+    expect(url).not.toContain('/../');
+  });
+
+  it('acknowledgeLogWitnessAlert surfaces a 403 as an ApiError with no errorCode to key on', async () => {
+    // Upstream throws a bare Nest ForbiddenException here — no structured
+    // code — so the UI has only the status. Pinned so a future "improvement"
+    // that invents a code in the client is caught.
+    mockFetch(() => upstreamResponse({ message: 'Forbidden' }, 403));
+    await expect(acknowledgeLogWitnessAlert('registry-a.example.com', false)).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(
+      acknowledgeLogWitnessAlert('registry-a.example.com', false).catch((e) => e.errorCode),
+    ).resolves.toBeUndefined();
+  });
+
+  it('acknowledgeLogWitnessAlert surfaces a 404 as REGISTRY_NOT_FOUND', async () => {
+    // The alert resolved between render and click. The UI renders that as
+    // "already resolved" rather than as a failure, so the code has to survive.
+    mockFetch(() => upstreamResponse({ errorCode: 'REGISTRY_NOT_FOUND' }, 404));
+    await expect(acknowledgeLogWitnessAlert('gone.example.com', false)).rejects.toMatchObject({
+      status: 404,
+      errorCode: 'REGISTRY_NOT_FOUND',
+    });
+  });
+
+  it('acknowledgeLogWitnessAlert relays `alerted` rather than assuming the ack cleared it', async () => {
+    // Upstream stamps `acknowledgedAt` and leaves `alerted` TRUE. A client that
+    // normalised this to false would teach the UI that ack resolves the alert.
+    mockFetch(() =>
+      jsonResponse({ authority: 'r-a', alerted: true, reason: 'root_mismatch', acknowledgedAt: 'T', acknowledgedBy: 'ab12...' }),
+    );
+    const res = await acknowledgeLogWitnessAlert('r-a', false);
+    expect(res.alerted).toBe(true);
+    expect(res.acknowledgedAt).toBe('T');
+    expect(res.acknowledgedBy).toBe('ab12...');
   });
 
   it('listEnrollments → reads { data } from /registries/enrollments', async () => {
