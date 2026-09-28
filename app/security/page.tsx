@@ -3,6 +3,7 @@
 import { ShieldCheck, KeyRound, Ban, ScrollText } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { LogWitnessCard } from '@/components/registries/log-witness-card';
+import { LogWitnessAlerts } from '@/components/registries/log-witness-alerts';
 import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
@@ -23,10 +24,26 @@ import type { RegistryAuthority } from '@/lib/types';
 export default function SecurityPage() {
   return (
     <div className="page">
-      <SectionTitle icon={ShieldCheck} title="Security" sub="Token revocations + registry signing keys" />
+      {/*
+        The sub named two of the four sections. `#98` added the per-registry
+        witness cards without updating it, and #84 adds the worklist above them
+        — so it listed less than half of what the page renders.
+      */}
+      <SectionTitle
+        icon={ShieldCheck}
+        title="Security"
+        sub="Token revocations + registry signing keys + transparency-log witness state and alerts"
+      />
       <RevocationFeed />
       <div style={{ height: 18 }} />
       <SigningKeys />
+      <div style={{ height: 18 }} />
+      {/*
+        Above the per-registry cards, deliberately: the worklist is the only
+        section that surfaces a detection the control plane recorded durably,
+        and it covers authorities that have no card below at all.
+      */}
+      <LogWitnessAlerts />
       <div style={{ height: 18 }} />
       <LogWitness />
     </div>

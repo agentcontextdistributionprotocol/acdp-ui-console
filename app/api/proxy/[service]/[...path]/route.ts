@@ -86,8 +86,11 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     // swallow `log-witness` as an `:authority` there. Our matching is
     // order-independent (`some` at `isAllowedRoute`), so we do not depend on
     // that — but do not "simplify" these two into one pattern on the strength
-    // of it either. The route test asserts four adjacent shapes are rejected
-    // around the per-authority pattern and three around the collection one.
+    // of it either. There is no per-authority `alerts` route upstream, so
+    // widening the collection pattern's middle segment to `[^/]+` would admit
+    // a shape the control plane does not serve; the route test asserts that
+    // case by name, alongside three other widenings, and four adjacent shapes
+    // around the per-authority pattern.
     // (`/registries/enrollments` needs no such guard — it is allow-listed on
     // its own line above, so neither pattern can admit or deny it.)
     { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },

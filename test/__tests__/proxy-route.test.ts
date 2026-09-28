@@ -276,10 +276,17 @@ describe('proxy route — route allow-list', () => {
   });
 
   // The new collection pattern is a fixed three-segment literal, so it has no
-  // variable part to over-reach — but it can still be widened by a careless
-  // edit (dropping the `$`, or replacing `log-witness` with `[^/]+` to "merge"
-  // it with the per-authority pattern above). These are the three shapes that
-  // would admit if it were.
+  // variable part to over-reach — but it can still be WIDENED by a careless
+  // edit. Each case below is a shape some plausible widening would admit:
+  //
+  //   dropping the `$`                      -> a tail
+  //   adding a write verb                   -> POST
+  //   `log-witness` -> `[^/]+` ("merge the  -> /registries/:authority/alerts
+  //     two log-witness patterns into one")
+  //   loosening the segment count           -> the two-segment near-miss
+  //
+  // The third of those is not hypothetical: it survived the first mutation
+  // sweep of this phase, because the other three cases all still 403 under it.
   it('the log-witness ALERTS pattern admits exactly one shape and nothing adjacent to it', async () => {
     const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
       {
@@ -296,6 +303,16 @@ describe('proxy route — route allow-list', () => {
         method: 'GET',
         path: ['registries', 'log-witness'],
         why: 'the two-segment near-miss is not a shorter form of this route',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'registry-a.example.com', 'alerts'],
+        why: 'the middle segment is the LITERAL log-witness; there is no per-authority alerts route',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'enrollments', 'alerts'],
+        why: 'and it must not compose with another allow-listed collection name either',
       },
     ];
     for (const { method, path, why } of cases) {
