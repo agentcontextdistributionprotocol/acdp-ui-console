@@ -359,8 +359,17 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *   `checked-clean`  the flag says the check RAN, and it found nothing. This is
  *                    the state that did not previously exist and is the reason
  *                    the function exists.
- *   `disabled`       the flag says the check is off. Nothing was measured, and
- *                    saying so is different from saying nothing was found.
+ *   `disabled`       the flag says the check is off, so any counters that did
+ *                    arrive are zeros a check never produced — not a finding.
+ *                    NOT "nothing was measured": the console cannot establish
+ *                    that. Upstream gates both the query and the tile on the
+ *                    same config value, so disabling the check nulls the tile
+ *                    regardless of what was classified earlier in the window,
+ *                    and the persisted rows are untouched. This sentence said
+ *                    "Nothing was measured" for one commit after the rendering
+ *                    stopped saying it — the state's own definition is where a
+ *                    future consumer reads it from, so it is the one place that
+ *                    must not lag.
  *   `unknown`        we cannot tell — for one of THREE reasons, carried on the
  *                    arm as `because`, because they license different copy.
  *                    (Enumerated below. This line said "two" for one commit

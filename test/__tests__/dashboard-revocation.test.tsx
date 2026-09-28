@@ -179,14 +179,13 @@ const HEDGE = 'the check is disabled by default';
 /**
  * The explanatory paragraph of the revocation tile, excluding the card header
  * and subtitle. The prose arms render as `<p>`; the `reported` arm renders a
- * `.kpi-grid` and no paragraph at all, which is why this returns '' there
- * rather than throwing.
+ * `.kpi-grid` and no paragraph at all, so calling this on THAT arm THROWS —
+ * deliberately. Returning `''` (what it used to do) silently satisfies every
+ * `not.toMatch` in this file, so a change that removed the paragraph, or
+ * reverted the prose arms to `<div>`, would turn a whole class of assertions
+ * into no-ops while staying green.
  */
 function proseText(): string {
-  // Throws rather than returning `''`. An empty string silently satisfies
-  // every `not.toMatch` in this file, so a change that removed the paragraph
-  // altogether — or reverted the prose arms to `<div>` — would turn a whole
-  // class of assertions into no-ops while staying green.
   const p = revocationCard().querySelector('p');
   if (p === null) {
     throw new Error('no <p> in the revocation card: the prose arms render no paragraph to scope');
@@ -318,8 +317,58 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(noCounters).toMatch(/no cause is offered beyond that/i);
     cleanup();
 
+    // `flag-unreadable`: NOT the "not a value this console can read" sentence —
+    // that is already asserted elsewhere in this file, so pinning it here
+    // duplicated a guard while leaving the arm's actual uncovered tail free to
+    // be deleted. This is that tail.
     renderWith(overview({ keyRevocation: undefined, features: { ...FEATURES, keyRevocationCheck: 'yes' } as never }));
-    expect(proseText()).toMatch(/not a value this console can read/i);
+    expect(proseText()).toMatch(/whether anything was measured is exactly what could not be established/i);
+  });
+
+  it('disabled: pins the CAUSE it gives, not merely the cause it withholds', () => {
+    // The headline new sentence was unpinned in the positive direction:
+    // rewriting the cause entirely left the suite green, because the only
+    // assertions over it were its tail and a negative. A negative assertion
+    // excludes one wrong answer; it does not pin the right one.
+    renderWith(
+      overview({ keyRevocation: CLEAN, features: { ...FEATURES, keyRevocationCheck: false } }),
+    );
+    const text = proseText();
+    expect(text).toMatch(/a zero produced while the check is off is not a finding/i);
+    // And it must NOT claim the control plane withheld the count — on this very
+    // payload the counters are present and the console is holding them.
+    expect(text).not.toMatch(/stops sending|sends none|no figures are sent/i);
+  });
+
+  it('checked-clean: says a later revocation fact DOES amend sealed events', () => {
+    // Round 4's second blocking finding. The arm used to say "enabling it does
+    // not re-classify them", which is false: upstream re-audits known-revoked
+    // fingerprints every pass and amends already-sealed rows in place
+    // (RFC-ACDP-0014 §7). The sentence was true only for events whose key was
+    // never revoked — i.e. false for exactly the events that would break the
+    // clean claim it was caveating. It also contradicted this same card's
+    // subtitle, which presupposes amendment happens.
+    renderWith(
+      overview({
+        keyRevocation: { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 },
+        features: { ...FEATURES, keyRevocationCheck: true },
+      }),
+    );
+    const text = proseText();
+    expect(text).toMatch(/re-audits and amends already-sealed events in place/i);
+    expect(text).toMatch(/does not update the audit timestamp/i);
+    expect(text).not.toMatch(/does not re-classify them/i);
+  });
+
+  it('the array payload reaches no-flags, not a claim that a report arrived', () => {
+    // `typeof [] === 'object'`, so without the explicit array test a `features:
+    // []` passes the object guard and renders "It sent a feature report" — a
+    // claim about something that is not a feature report. The guard was added
+    // with no test; deleting it left the whole suite green.
+    renderWith(overview({ keyRevocation: undefined, features: [] as never }));
+    const text = proseText();
+    expect(text).not.toMatch(/sent a feature report/i);
+    expect(text).toContain(HEDGE);
   });
 
   it('disabled: does NOT claim nothing was measured over this window', () => {
@@ -337,7 +386,11 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     renderWith(
       overview({ keyRevocation: CLEAN, features: { ...FEATURES, keyRevocationCheck: false } }),
     );
-    const text = revocationCard().textContent ?? '';
+    // Read off the PARAGRAPH. The sibling test three lines below already uses
+    // `proseText()`; reading the whole card here is the same scoping mistake
+    // this commit series fixed twice, and it is not vacuous only by luck —
+    // the subtitle happens to contain neither string.
+    const text = proseText();
     expect(text).not.toMatch(/nothing was measured/i);
     expect(text).not.toMatch(/never been checked|has not been checked/i);
     // …and it says so positively: the limit of what this view can tell.

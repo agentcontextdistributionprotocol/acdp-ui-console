@@ -308,8 +308,11 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
         Two facts, stated separately because the console holds them separately: the deployment
         reports the compromise-boundary check as on, and this window&rsquo;s counters are zero. It
         does not follow that every event in the window was checked — classification happens at audit
-        time, so events audited before the check was switched on keep the status they were given
-        then, and enabling it does not re-classify them. A longer window may also show figures.
+        time, so an event audited before the check was switched on was given its status then. Nor
+        does that status stay fixed: when a revocation fact arrives later, the control plane
+        re-audits and amends already-sealed events in place. An amendment does not update the
+        audit timestamp, so it moves these figures only where the amended event already sits inside
+        this window. A longer window may also show figures.
       </p>
     );
   }
@@ -321,8 +324,8 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
           Revocation checking is switched off on this deployment.
         </strong>
         <br />
-        No figures are shown for this window because the control plane stops sending the count
-        while the check is off — which is not the same as having looked and found nothing. It is
+        No figures are shown for this window because a zero produced while the check is off is
+        not a finding — which is not the same as having looked and found nothing. It is
         also not a claim that nothing was classified: classification happens at audit time and is
         not undone by disabling the check, so anything already recorded stays recorded, in this
         window as much as an earlier one. What the console cannot tell you from here is whether the

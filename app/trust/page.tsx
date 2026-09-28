@@ -129,7 +129,18 @@ export default function TrustPage() {
                 // receiptCoverage/didMethods are window-scoped. Saying "window"
                 // would describe a scope this page does not apply.
                 revocationCheckOff
-                ? 'Revocation checking is switched off on this deployment — no figures are sent while it is off'
+                // NOT "no figures are sent while it is off". That is true of the
+                // DASHBOARD overview payload, where `keyRevocation` really is
+                // `null` — it is false here. These figures are run-scoped, from
+                // `summarizeByRun`, which always emits the three counters and
+                // `revoked: []`; with the check off they arrive as zeros. The
+                // suppression is THIS CONSOLE's, not the control plane's, and
+                // `run-trust-panel.tsx` already says so on the identical
+                // predicate ("the control plane emits these counters whether or
+                // not the check ran"). Two surfaces giving contradictory
+                // explanations of one suppression is exactly what
+                // `lib/utils/revocation.ts` exists to prevent.
+                ? 'Revocation checking is switched off on this deployment — the counters still arrive, but a zero from a check that never ran is not a finding'
                 : 'Not reported by this deployment — no run in this view carried a revocation classification'
           }
         />

@@ -313,8 +313,16 @@ describe('/trust — the deployment revocation flag', () => {
     // `revocationReportedRuns === 0`, which is satisfied precisely by runs that
     // WERE audited and found clean — so that wording claimed the opposite of
     // what the payload may hold, with no scope at all to soften it.
-    expect(text).toContain('no figures are sent while it is off');
+    // NOT "no figures are sent while it is off" either — that was a
+    // replacement over-claim. These figures are RUN-scoped: `summarizeByRun`
+    // always emits the three counters and `revoked: []`, so with the check off
+    // they arrive as zeros and the suppression is this console's own. Saying
+    // the control plane withheld them contradicts `run-trust-panel.tsx`, which
+    // renders the correct explanation on the identical predicate.
+    expect(text).toContain('the counters still arrive');
+    expect(text).toContain('a zero from a check that never ran is not a finding');
     expect(text).not.toContain('nothing was measured');
+    expect(text).not.toMatch(/no figures are sent|stops sending/i);
     // And the card subtitle agrees with the KPI hint — two strings, one fact.
     expect(text).toContain('revocation checking off');
   });
