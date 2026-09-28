@@ -481,6 +481,32 @@ export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
 };
 
 // ── Runs ──────────────────────────────────────────────────────────────
+// ORDERED STRICTLY BY `startedAt`, MOST RECENT FIRST. This is a load-bearing
+// invariant, not a tidiness preference (#85): `MOCK_DASHBOARD.recentRuns` is
+// `MOCK_RUNS.slice(0, 5)`, so the dashboard's "Recent Runs" table showed
+// whatever the first five array positions happened to be. Two entries sat at
+// the END of the array out of order, and `iso(n)` is n SECONDS ago (see the
+// helper above), so they were `run-historical-1` at 150s — two and a half
+// MINUTES ago, the second-newest run in the whole dataset — and
+// `run-revoked-1` at 1900s. The five that did make it into "recent" ran back
+// to 3600s. So Recent Runs omitted the second-newest run in favour of one an
+// hour old, and the Runs table read out of time order.
+//
+// Reordered in the literal rather than sorted at runtime. A `.sort()` here
+// would make the fixture's order a property of code rather than something you
+// can read in the file, and `iso()` is computed from `Date.now()` at module
+// load, so a runtime sort would be correct and completely invisible. The whole
+// value of a fixture is that it can be read.
+//
+// `mock-data.test.ts` asserts the adjacent-pair ordering AND that no field
+// value changed in the move — only positions.
+//
+// One consumer really IS order-sensitive and must be kept in mind by anyone
+// editing this array: `app/lineage/page.tsx` opens on `runs[0]` of the list
+// filtered to `contextsCount > 0` — not on a named id, as was assumed when this
+// reorder was planned. The live run stays first here because it is both the most
+// recent and has a context, which is what keeps that page opening where it
+// should. Asserted on the data in the test, not by grepping that page.
 export const MOCK_RUNS: CpRun[] = [
   {
     runId: LIVE_RUN_ID,
@@ -494,6 +520,21 @@ export const MOCK_RUNS: CpRun[] = [
     inputs: { topic: 'Arctic shipping routes' },
     // Still running — the audit sweep hasn't produced a verdict yet.
     trust: null,
+  },
+  {
+    runId: 'run-historical-1',
+    tenantId: 'default',
+    scenarioId: 's24_historical_key',
+    status: 'completed',
+    startedAt: iso(150),
+    completedAt: iso(138),
+    contextsCount: 1,
+    registries: [AUTH_A],
+    inputs: { topic: 'rotated signing key' },
+    // The producer rotated its key after publishing; the pre-rotation context
+    // still verifies against the retired key pinned by the receipt (RFC-ACDP-0010
+    // §9 historically authorized) — cryptographically valid, just not current.
+    trust: { audited: 1, verified: 0, verifiedHistorical: 1, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
   {
     runId: COMPLETED_RUN_ID,
@@ -537,67 +578,6 @@ export const MOCK_RUNS: CpRun[] = [
     inputs: { topic: 'forecast model' },
     // Environmental: the registry was unreachable during the sweep — not a flag.
     trust: { audited: 1, verified: 0, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 1, flagged: [] },
-  },
-  {
-    runId: 'run-fan-3',
-    tenantId: 'default',
-    scenarioId: 's3_fanout',
-    status: 'completed',
-    startedAt: iso(3600),
-    completedAt: iso(3580),
-    contextsCount: 4,
-    registries: [AUTH_A],
-    inputs: { topic: 'market sentiment', consumers: 3 },
-    trust: { audited: 4, verified: 2, verifiedHistorical: 0, structural: 0, noReceipt: 2, errors: 0, flagged: [] },
-  },
-  {
-    runId: 'run-cross-org-1',
-    tenantId: 'default',
-    scenarioId: 's8_cross_org',
-    status: 'completed',
-    startedAt: iso(7200),
-    completedAt: iso(7170),
-    contextsCount: 2,
-    registries: [AUTH_A, AUTH_B],
-    inputs: { topic: 'joint venture terms' },
-    // One context's receipt content_hash diverges from the served body — a real
-    // trust violation surfaced by the audit.
-    trust: {
-      audited: 2,
-      verified: 1,
-      verifiedHistorical: 0,
-      structural: 0,
-      noReceipt: 0,
-      errors: 0,
-      flagged: [
-        {
-          eventId: 'ev-cross-org-2',
-          ctxId: `acdp://${AUTH_B}/f24ba292-b358-4343-a077-2d08c3c018b0`,
-          status: 'discrepancy',
-          discrepancies: [
-            // Fabricated/illustrative truncated hashes for the demo narrative — not derived
-            // from MOCK_CRYPTO or any real fixture, so they don't reference any ctx_id/UUID
-            // rewrite elsewhere in this file and should not be "fixed" to match one.
-            'content_hash_mismatch: receipt sha256:bb22c8a3… ≠ served body sha256:9c11a7f2…',
-          ],
-        },
-      ],
-    },
-  },
-  {
-    runId: 'run-historical-1',
-    tenantId: 'default',
-    scenarioId: 's24_historical_key',
-    status: 'completed',
-    startedAt: iso(150),
-    completedAt: iso(138),
-    contextsCount: 1,
-    registries: [AUTH_A],
-    inputs: { topic: 'rotated signing key' },
-    // The producer rotated its key after publishing; the pre-rotation context
-    // still verifies against the retired key pinned by the receipt (RFC-ACDP-0010
-    // §9 historically authorized) — cryptographically valid, just not current.
-    trust: { audited: 1, verified: 0, verifiedHistorical: 1, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
   {
     runId: 'run-revoked-1',
@@ -668,9 +648,118 @@ export const MOCK_RUNS: CpRun[] = [
       ],
     },
   },
+  {
+    runId: 'run-fan-3',
+    tenantId: 'default',
+    scenarioId: 's3_fanout',
+    status: 'completed',
+    startedAt: iso(3600),
+    completedAt: iso(3580),
+    contextsCount: 4,
+    registries: [AUTH_A],
+    inputs: { topic: 'market sentiment', consumers: 3 },
+    trust: { audited: 4, verified: 2, verifiedHistorical: 0, structural: 0, noReceipt: 2, errors: 0, flagged: [] },
+  },
+  {
+    runId: 'run-cross-org-1',
+    tenantId: 'default',
+    scenarioId: 's8_cross_org',
+    status: 'completed',
+    startedAt: iso(7200),
+    completedAt: iso(7170),
+    contextsCount: 2,
+    registries: [AUTH_A, AUTH_B],
+    inputs: { topic: 'joint venture terms' },
+    // One context's receipt content_hash diverges from the served body — a real
+    // trust violation surfaced by the audit.
+    trust: {
+      audited: 2,
+      verified: 1,
+      verifiedHistorical: 0,
+      structural: 0,
+      noReceipt: 0,
+      errors: 0,
+      flagged: [
+        {
+          eventId: 'ev-cross-org-2',
+          ctxId: `acdp://${AUTH_B}/f24ba292-b358-4343-a077-2d08c3c018b0`,
+          status: 'discrepancy',
+          discrepancies: [
+            // Fabricated/illustrative truncated hashes for the demo narrative — not derived
+            // from MOCK_CRYPTO or any real fixture, so they don't reference any ctx_id/UUID
+            // rewrite elsewhere in this file and should not be "fixed" to match one.
+            'content_hash_mismatch: receipt sha256:bb22c8a3… ≠ served body sha256:9c11a7f2…',
+          ],
+        },
+      ],
+    },
+  },
 ];
 
 // ── Context events (global firehose / history) ────────────────────────
+// ── The attested context's own clock ──────────────────────────────────
+// #85: three events describing the attested context were dated with `iso(...)`
+// — that is, relative to NOW — while the context they describe carries a signed
+// `created_at` of 2026-07-06, derived from its frozen registry receipt. So the
+// feed dated an 81-day-old context to "2 minutes ago", and the contradiction
+// grows by a day every day.
+//
+// These derive from the receipt instead. DERIVED, never hardcoded: writing that
+// date as a literal here would decouple silently the moment the crypto fixtures
+// are regenerated, which is exactly the failure being fixed. `mock-data.test.ts`
+// gates it — over the file with comments STRIPPED, because this very paragraph
+// has to name the date in order to explain the rule, and a whole-file grep would
+// be failed by its own explanation.
+//
+// CONSEQUENCE, DELIBERATE, DO NOT "FIX" BACK: these three render as locale
+// dates rather than "2 minutes ago", because `timeAgo` falls through to
+// `toLocaleDateString()` past 30 days (`lib/utils/format.ts:17-18`) and they
+// really are that old. That is the honest outcome, and it is what makes the
+// events feed agree with the context card instead of contradicting it.
+//
+// A frozen global `now` was considered and rejected: it would break `elapsed()`
+// for the live run (which must read as running NOW) and push all ~70 other
+// `iso()` sites past the same 30-day cliff, rendering the whole demo as bare
+// locale dates.
+const ATTESTED_RECEIPT_TS = MOCK_CRYPTO.attested.registry_receipt.created_at;
+
+/** A fixed offset from a frozen receipt clock, so the narrative cannot drift. */
+function afterReceipt(base: string, seconds: number): string {
+  return new Date(Date.parse(base) + seconds * 1000).toISOString();
+}
+
+// Publish at the receipt moment itself, then hold and restore within the same
+// day. Distinct offsets so publish < retract < republish holds STRICTLY and the
+// guard can assert `<` rather than `<=`.
+//
+// The hold must begin AFTER every signed instant on this context's own crypto
+// fixture, not merely after the publish. `MOCK_CRYPTO.attested` carries four
+// more frozen timestamps that render on the SAME detail card as the lifecycle
+// strip, the latest at receipt+2280 s:
+//
+//   receipt+2160  witness_signatures[1].witnessed_at
+//   receipt+2220  lineage_head_receipt.as_of  <- with head_status: 'active'
+//   receipt+2220  log_checkpoint.timestamp (and witness[0]'s copy of it)
+//   receipt+2280  witness_signatures[0].witnessed_at
+//
+// The first version of this phase used 1800/5400, which put all four INSIDE
+// the retraction window - so `context-detail.tsx` rendered "head status:
+// active, as of 12:34" directly above "retracted 12:27 / republished 13:27".
+// `lib/types.ts` documents `head_status` as the registry's attestation of the
+// head's status AT `as_of`, so the card asserted the context was the live head
+// at an instant its own signed lifecycle says it was held. That is symptom (1)
+// of #85 - one surface contradicting another about the same fact - created by
+// the fix for symptom (2).
+//
+// These offsets move and the receipt does not: `as_of` and the witness
+// signatures are SIGNED and frozen by `scripts/gen-mock-crypto.mjs`, so the
+// narrative is the only side that can give. `mock-data.test.ts` holds the
+// window clear of every frozen instant on the fixture, derived rather than
+// listed, so a regenerated fixture cannot silently re-enter it.
+const ATTESTED_PUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 0);
+const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 3600);
+const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 7200);
+
 export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
   { id: 'ev-2', eventType: 'context_retrieved', eventTs: iso(11), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_B, registryAuthority: AUTH_B, scenarioId: 's5_cross_registry' },
@@ -678,13 +767,22 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
   { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/fee57f10-e884-42f8-b01f-c12eb4fa54e0`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
-  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
+  { id: 'ev-7', eventType: 'context_published', eventTs: ATTESTED_PUBLISHED_TS, runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
   // ── RFC-ACDP-0013 lifecycle events (ACDP 0.3) ─────────────────────────
   // Registry-initiated hold + restore on the attested context (a pair).
-  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
-  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-8', eventType: 'context_retracted', eventTs: ATTESTED_RETRACTED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-9', eventType: 'context_republished', eventTs: ATTESTED_REPUBLISHED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
   // Producer-initiated retraction of the non-head cashflow v1.
-  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
+  //
+  // `iso(210)`, not `iso(3600)`: v1 was PUBLISHED at `iso(272)` (ev-4, by the
+  // completed run), so a retraction an hour earlier retracted a context that
+  // did not exist yet — symptom (2) of #85, in a second place. The order the
+  // narrative claims is publish v1 -> ship v2 -> retract v1, and the three
+  // timestamps now read that way. Mirrored in the context's own
+  // `registry_state.lifecycle_events`; `mock-data.test.ts` holds the two
+  // renderings equal and holds every such event at or after its context's
+  // `created_at`.
+  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(210), runId: null, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
   // Retraction of the fan-out FX derivative (renders retracted in the run DAG).
   { id: 'ev-11', eventType: 'context_retracted', eventTs: iso(3500), runId: 'run-fan-3', ctxId: `acdp://${AUTH_A}/bb20faad-dcc5-46a3-9056-b1d55f610333`, agentId: 'did:web:registry-a.local:agents:c2', contextType: 'analysis', version: 1, registryAuthority: AUTH_A, scenarioId: 's3_fanout' },
 ];
@@ -820,11 +918,35 @@ export function demoDashboardForWindow(window: string): CpDashboardOverview {
 }
 
 // ── Agents ────────────────────────────────────────────────────────────
+// `/agents` renders an agent's `firstSeen`/`lastSeen` on the SAME card as the
+// list of that agent's own events (`app/agents/page.tsx:88-89` beside `:111`),
+// so the two must not disagree. The invariant, held by `mock-data.test.ts`:
+//
+//   firstSeen <= the agent's earliest event   and   lastSeen >= its latest
+//
+// where "its events" is `MOCK_CONTEXT_EVENTS.filter(e => e.agentId === did)`,
+// which is exactly what `listCpEvents({ agentId })` returns. `contextCount` is
+// NOT part of the invariant — it is a registry-wide total (DID_A publishes 12
+// and appears in one demo event), not a count of the feed.
+//
+// Three rows violated it before this phase, two of them because moving an
+// event is what breaks the other end of the pair:
+//
+//   DID_KEY  — was `iso(140)` on both, the pre-move value of ev-7. The card
+//              read "last active 2 min ago" above an only-event dated ~83 days
+//              back. Now the publish itself, since ev-7 is all this ephemeral
+//              did:key agent ever did (ev-8/ev-9 are the registry's).
+//   DID_SOLO — was `iso(240)`, which ev-10's move to `iso(210)` left 30s in
+//              the agent's own past. Now the retraction, its latest action.
+//   DID_B    — was `iso(21)`, 18s before its own ev-3 publish at `iso(3)`.
+//              PRE-EXISTING, not introduced here; fixed because an exception
+//              list on the guard below would be the laundering pattern this
+//              plan exists to remove.
 export const MOCK_AGENTS: KnownAgent[] = [
   { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
-  { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(21) },
-  { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(240) },
-  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: iso(140), lastSeen: iso(140) },
+  { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(3) },
+  { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(210) },
+  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: ATTESTED_PUBLISHED_TS },
 ];
 
 // ── Registries ────────────────────────────────────────────────────────
@@ -929,19 +1051,32 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
   // choice knowingly made against the facts, which is exactly the kind of thing
   // that should be written down rather than discovered later.
   //
-  // Its `profiles` are NOT evidence for that story and should not be read as
-  // such. `acdp-consumer` is a profile a registry is explicitly forbidden to
-  // advertise, and `acdp-federated` is not a spec profile id at all (the real
-  // one is `acdp-registry-federated`) — a real registry refuses to start with
-  // either. They are demo shorthand that predates this plan. Left alone here
-  // because correcting them is a dataset change with its own blast radius, not
-  // because they are right. Tracked as issue #95.
+  // Its `profiles` ARE now evidence-backed, which they were not before (#95).
+  // They used to read `['acdp-consumer', 'acdp-federated']`: the first is a
+  // profile a registry is explicitly FORBIDDEN to advertise (the doc comment on
+  // `REGISTRY_ADVERTISABLE_PROFILES` excludes it by name) and the second is not
+  // a spec profile id at all — the real one is `acdp-registry-federated`. A
+  // real `acdp-registry-rs` refuses to BOOT with either, so the demo depicted a
+  // registry that could not exist.
+  //
+  // The replacement is copied from the playground this demo depicts rather than
+  // chosen: `acdp-playground/config/registry-b.toml:8` configures exactly
+  // `["acdp-registry-core", "acdp-registry-discovery"]`. That makes it
+  // verifiable instead of a taste call, and it preserves the narrative the old
+  // values were there for — B is still the simpler peer, two profiles against
+  // A's six.
+  //
+  // `acdp_version: '0.1.0'` is unaffected and stays: neither of the two
+  // profiles implies a version above it, so nothing in the set contradicts the
+  // string. (`acdp-registry-receipts` would — see `PROFILE_MIN_VERSION` in
+  // `mock-data.test.ts`, which now asserts that class of drift, not just this
+  // instance.)
   b: {
     acdp_version: '0.1.0',
     registry_did: 'did:web:registry-b.playground.local',
     authority: AUTH_B,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
-    profiles: ['acdp-consumer', 'acdp-federated'],
+    profiles: ['acdp-registry-core', 'acdp-registry-discovery'],
     anonymous_public_reads: true,
     limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
   },
@@ -1003,7 +1138,9 @@ export const MOCK_CONTEXTS: FullContext[] = [
           event_id: 'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
           ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`,
           event_type: 'retracted',
-          occurred_at: iso(3600),
+          // Mirrors ev-10. See the note there: an hour BEFORE `created_at`
+          // until #85.
+          occurred_at: iso(210),
           actor: DID_SOLO,
           reason: 'Reconciliation error: intercompany transfers were double-counted. Superseded by the revised v2 snapshot.',
           signature: {
@@ -1035,7 +1172,11 @@ export const MOCK_CONTEXTS: FullContext[] = [
           event_id: 'b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
           ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
           event_type: 'retracted',
-          occurred_at: iso(110),
+          // MIRROR of `ev-8` in MOCK_CONTEXT_EVENTS, and it must stay equal to
+          // it: `context-detail.tsx` renders this pair on the SAME card that
+          // shows `created_at`, so moving only the feed would trade one visible
+          // contradiction for a subtler one.
+          occurred_at: ATTESTED_RETRACTED_TS,
           actor: `did:web:${AUTH_A}`,
           reason: 'Held pending compliance review of the attested claims.',
           signature: {
@@ -1048,7 +1189,8 @@ export const MOCK_CONTEXTS: FullContext[] = [
           event_id: 'c3d4e5f6-7a8b-4c9d-a0e1-2b3c4d5e6f7a',
           ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
           event_type: 'republished',
-          occurred_at: iso(80),
+          // MIRROR of `ev-9` — see the note on the retraction above.
+          occurred_at: ATTESTED_REPUBLISHED_TS,
           actor: `did:web:${AUTH_A}`,
           reason: 'Compliance review cleared; attestation restored.',
           signature: {
@@ -1092,7 +1234,12 @@ const CASHFLOW_V2: FullContext = {
     ctx_id: `acdp://${AUTH_A}/b1ae7711-2a4d-4cb3-9762-3f6980b3a6e1`,
     lineage_id: CASHFLOW_V1.body.lineage_id,
     origin_registry: AUTH_A,
-    created_at: iso(86400),
+    // `iso(240)`, not `iso(86400)`. v2 `supersedes` v1 and the chain is served
+    // oldest -> newest, but a day-old v2 superseded a four-minute-old v1 — the
+    // version chain on /lineage read backwards in time. v1 is published at
+    // `iso(272)` by a run that started at `iso(280)`, so the revision lands
+    // between that and the retraction at `iso(210)`. Part of #85.
+    created_at: iso(240),
     ...MOCK_CRYPTO.cashV2.hashed,
     content_hash: MOCK_CRYPTO.cashV2.content_hash,
     signature: MOCK_CRYPTO.cashV2.signature,

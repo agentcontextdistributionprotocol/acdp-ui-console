@@ -8,13 +8,20 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 /**
  * Tooltip copy for known registry profiles (registries/profiles.md). The
  * 0.3.0 trust profiles get an accent chip so they stand out in the list.
+ *
+ * The seven keys here are exactly `REGISTRY_ADVERTISABLE_PROFILES`
+ * (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`), which
+ * is the set a real registry will start with. Entries for `acdp-consumer` and
+ * `acdp-federated` were removed with #95: the first is a profile a registry is
+ * forbidden to advertise and the second is not a spec id at all, so copy for
+ * either was unreachable text that ratified two invalid ids for whoever read it
+ * next. An id with no entry here still renders — see the fallback below — so
+ * removing them costs nothing if one somehow reappears.
  */
 const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-discovery': { title: 'Search / discovery endpoints (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },
-  'acdp-consumer': { title: 'Consumer deployment profile (RFC-ACDP-0001 §9.1)' },
-  'acdp-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-receipts': {
     title: 'Signed registry receipts at publish time (RFC-ACDP-0010, acdp 0.2.0)',
   },
