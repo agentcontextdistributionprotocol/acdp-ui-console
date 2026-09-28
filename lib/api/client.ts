@@ -16,6 +16,7 @@ import {
   MOCK_LINEAGE,
   MOCK_LINEAGE_CHAINS,
   MOCK_LOG_WITNESS,
+  MOCK_LOG_WITNESS_ALERTS,
   MOCK_METRICS,
   MOCK_METRICS_TEXT,
   MOCK_ENROLLMENTS,
@@ -46,6 +47,7 @@ import type {
   LineageGraph,
   ListRunsQuery,
   LogWitnessState,
+  LogWitnessAlertsResponse,
   PlaygroundRunResponse,
   PlaygroundRunStatus,
   PrometheusMetric,
@@ -816,6 +818,40 @@ export async function getLogWitness(authority: string, demoMode: boolean): Promi
     return delay(state);
   }
   return fetchJson<LogWitnessState>('control-plane', path);
+}
+
+/**
+ * The durable transparency-log alert worklist, across every authority the
+ * control plane witnesses (#84) — not just the two this console proxies.
+ *
+ * Read-only, like `getLogWitness` above. The sibling admin
+ * `POST /registries/:authority/log-witness/ack` is still neither called nor
+ * proxied; acknowledging from the console is Phase 19's work, and the docblock
+ * on `getLogWitness` has to be corrected when it lands.
+ *
+ * `includeAcknowledged` appends a query string ONLY when true. Upstream takes
+ * the literal strings `'true'` and `'1'` as true, so an explicit
+ * `?includeAcknowledged=false` and omitting the parameter are the same request
+ * to it — we send the shorter one, which is one fewer spelling to get wrong.
+ *
+ * There is **no pagination on this endpoint** — no limit, offset or cursor. A
+ * caller must not invent one, and the envelope's `total` is whatever upstream
+ * put there rather than a page count.
+ */
+export async function listLogWitnessAlerts(
+  { includeAcknowledged = false }: { includeAcknowledged?: boolean } = {},
+  demoMode = false,
+): Promise<LogWitnessAlertsResponse> {
+  const path = `/registries/log-witness/alerts${includeAcknowledged ? '?includeAcknowledged=true' : ''}`;
+  if (demoMode) {
+    const data = includeAcknowledged
+      ? MOCK_LOG_WITNESS_ALERTS
+      : MOCK_LOG_WITNESS_ALERTS.filter((r) => r.acknowledgedAt === null);
+    // `total` tracks the rows actually returned, which is what upstream does:
+    // it counts the filtered result, not the table.
+    return delay({ data, total: data.length });
+  }
+  return fetchJson<LogWitnessAlertsResponse>('control-plane', path);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

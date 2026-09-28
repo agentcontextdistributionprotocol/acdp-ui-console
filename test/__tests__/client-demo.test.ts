@@ -20,6 +20,7 @@ import {
   listEnrollments,
   enrollRegistry,
   getLogWitness,
+  listLogWitnessAlerts,
   pingHealth,
   LIVE_RUN_ID,
   COMPLETED_RUN_ID,
@@ -33,6 +34,7 @@ import {
   MOCK_CONTEXT_EVENTS,
   MOCK_LINEAGE,
   MOCK_LOG_WITNESS,
+  MOCK_LOG_WITNESS_ALERTS,
   MOCK_METRICS,
 } from '@/lib/data/mock-data';
 
@@ -514,6 +516,67 @@ describe('getLogWitness (demo)', () => {
     expect(
       Object.values(MOCK_LOG_WITNESS).some((s) => s.alert.reason === 'consistency_failed'),
     ).toBe(true);
+  });
+});
+
+describe('listLogWitnessAlerts (demo)', () => {
+  // Same contract as `getLogWitness` above: a stub that THROWS is what makes
+  // "no network call" falsifiable, rather than a returned value that would
+  // look identical if a fetch had been fired and its result discarded.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function forbidFetch() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        throw new Error('demo mode must not touch the network');
+      }),
+    );
+  }
+
+  it('hides acknowledged rows by default and includes them when asked', async () => {
+    forbidFetch();
+    const acked = MOCK_LOG_WITNESS_ALERTS.filter((r) => r.acknowledgedAt !== null);
+    // The fixture has to make both branches distinguishable, or the assertion
+    // below passes against a filter that does nothing.
+    expect(acked.length).toBeGreaterThanOrEqual(1);
+    expect(acked.length).toBeLessThan(MOCK_LOG_WITNESS_ALERTS.length);
+
+    const def = await listLogWitnessAlerts({}, DEMO);
+    expect(def.data).toHaveLength(MOCK_LOG_WITNESS_ALERTS.length - acked.length);
+    expect(def.data.every((r) => r.acknowledgedAt === null)).toBe(true);
+
+    const all = await listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    expect(all.data).toHaveLength(MOCK_LOG_WITNESS_ALERTS.length);
+    expect(all.data.some((r) => r.acknowledgedAt !== null)).toBe(true);
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports `total` as the rows it actually returned, not the table size', async () => {
+    const def = await listLogWitnessAlerts({}, DEMO);
+    expect(def.total).toBe(def.data.length);
+    const all = await listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    expect(all.total).toBe(all.data.length);
+    // Discriminating: if `total` were the table size in both cases these two
+    // would be equal, and the filtered listing would claim rows it did not
+    // send.
+    expect(def.total).toBeLessThan(all.total);
+  });
+
+  it('leads with the NULL-`at` row, which is not the most recent one', async () => {
+    // Upstream orders newest-first by `at` and Postgres sorts NULLs first, so
+    // the head of the list is an alert with no timestamp at all. The UI must
+    // not read position 0 as "latest"; shipping a fixture where it happens to
+    // be true would let that bug through.
+    const { data } = await listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    expect(data[0].at).toBeNull();
+    const dated = data.filter((r) => r.at !== null);
+    expect(dated.length).toBeGreaterThanOrEqual(2);
+    const times = dated.map((r) => Date.parse(r.at as string));
+    expect(times).toEqual([...times].sort((a, b) => b - a));
   });
 });
 

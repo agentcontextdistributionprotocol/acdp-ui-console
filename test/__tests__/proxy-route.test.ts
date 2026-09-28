@@ -212,6 +212,10 @@ describe('proxy route — route allow-list', () => {
       // A DNS authority: dots, no slashes — so the `[^/]+` in the pattern is
       // the right shape here, unlike the ctx_id case above.
       { method: 'GET', service: 'control-plane', path: ['registries', 'registry-a.example.com', 'log-witness'] },
+      // The collection-level alert worklist (#84). A fixed three-segment
+      // literal, NOT a variable authority — `log-witness` sits in segment two
+      // here and in segment three above.
+      { method: 'GET', service: 'control-plane', path: ['registries', 'log-witness', 'alerts'] },
       { method: 'GET', service: 'registry-a', path: ['healthz'] },
       { method: 'GET', service: 'registry-a', path: ['contexts', 'search'] },
       { method: 'GET', service: 'registry-a', path: ['lineages', 'l1'] },
@@ -233,9 +237,11 @@ describe('proxy route — route allow-list', () => {
   // The `:authority/log-witness` entry is the only pattern in the file with a
   // variable segment in the MIDDLE, so it is the one most able to over-reach.
   // Each case below is a route that sits one character away from it and must
-  // stay out: the admin acknowledgement sibling, the collection-level alerts
-  // route, a multi-segment authority, the wrong method, and an arbitrary
-  // second tail under a legitimate authority.
+  // stay out: the admin acknowledgement sibling, a multi-segment authority,
+  // the wrong method, and an arbitrary second tail under a legitimate
+  // authority. The collection route `/registries/log-witness/alerts` used to
+  // be a fifth case here; #84 allow-lists it, so it moved to the allowed list
+  // above and its own over-reach cases are the test after this one.
   it('the log-witness pattern admits exactly one shape and nothing adjacent to it', async () => {
     const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
       {
@@ -250,11 +256,6 @@ describe('proxy route — route allow-list', () => {
       },
       {
         method: 'GET',
-        path: ['registries', 'log-witness', 'alerts'],
-        why: 'the collection-level alerts route is a different, unproxied feature',
-      },
-      {
-        method: 'GET',
         path: ['registries', 'a', 'b', 'log-witness'],
         why: 'a DNS authority is one segment; [^/]+ must not span a slash',
       },
@@ -262,6 +263,39 @@ describe('proxy route — route allow-list', () => {
         method: 'GET',
         path: ['registries', 'registry-a.example.com', 'enrollments'],
         why: 'the variable segment must not admit an arbitrary tail',
+      },
+    ];
+    for (const { method, path, why } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/control-plane/${path.join('/')}`;
+      const handler = method === 'GET' ? GET : POST;
+      const res = await handler(new NextRequest(url, { method }), ctx('control-plane', path));
+      expect(res.status, `${method} ${path.join('/')} — ${why}`).toBe(403);
+      expect(fetchMock, `${method} ${path.join('/')} — ${why}`).not.toHaveBeenCalled();
+    }
+  });
+
+  // The new collection pattern is a fixed three-segment literal, so it has no
+  // variable part to over-reach — but it can still be widened by a careless
+  // edit (dropping the `$`, or replacing `log-witness` with `[^/]+` to "merge"
+  // it with the per-authority pattern above). These are the three shapes that
+  // would admit if it were.
+  it('the log-witness ALERTS pattern admits exactly one shape and nothing adjacent to it', async () => {
+    const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
+      {
+        method: 'POST',
+        path: ['registries', 'log-witness', 'alerts'],
+        why: 'read-only worklist: acknowledgement is a different route, not proxied here',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'log-witness', 'alerts', 'x'],
+        why: 'the $ anchor must admit no tail',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'log-witness'],
+        why: 'the two-segment near-miss is not a shorter form of this route',
       },
     ];
     for (const { method, path, why } of cases) {

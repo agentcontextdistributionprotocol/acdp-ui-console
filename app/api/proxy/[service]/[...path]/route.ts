@@ -63,17 +63,35 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     { method: 'GET', pattern: /^\/registries$/ },
     { method: 'GET', pattern: /^\/registries\/enrollments$/ },
     { method: 'POST', pattern: /^\/registries\/enroll$/ },
-    // Transparency-log witness state, read-only. `[^/]+` IS right here: the
-    // parameter is a DNS authority, which contains dots but never slashes —
-    // the opposite of the ctx_id case below. The trailing `$` is what keeps
-    // the sibling admin route `:authority/log-witness/ack` out, and the fixed
-    // two-segment shape is what keeps the collection route
-    // `/registries/log-witness/alerts` out. The route test asserts five
-    // adjacent shapes are rejected: those two, a POST to this same path, a
-    // multi-segment authority, and an arbitrary tail under a valid authority.
+    // Transparency-log witness state, read-only, in two shapes that look
+    // alike and are not: per-authority state, and the collection-level alert
+    // worklist. Neither pattern can admit the other's shape, because they
+    // differ in the segment that is fixed:
+    //
+    //   /registries/:authority/log-witness   — `log-witness` is segment THREE
+    //   /registries/log-witness/alerts       — `log-witness` is segment TWO
+    //
+    // so the per-authority pattern only matches a path ENDING in
+    // `/log-witness`, which `.../alerts` does not, and the collection pattern
+    // is a fixed three-segment literal with no variable part at all.
+    //
+    // `[^/]+` IS right for the authority: it is a DNS name, which contains
+    // dots but never slashes — the opposite of the ctx_id case below. Both
+    // patterns are `$`-anchored, which is what keeps the sibling admin route
+    // `:authority/log-witness/ack` out (Phase 19 territory, not proxied here)
+    // and what stops either from growing a tail.
+    //
+    // Upstream declares `log-witness/alerts` BEFORE `:authority/log-witness`
+    // (`registries.controller.ts:51` and `:117`), which is why Nest does not
+    // swallow `log-witness` as an `:authority` there. Our matching is
+    // order-independent (`some` at `isAllowedRoute`), so we do not depend on
+    // that — but do not "simplify" these two into one pattern on the strength
+    // of it either. The route test asserts four adjacent shapes are rejected
+    // around the per-authority pattern and three around the collection one.
     // (`/registries/enrollments` needs no such guard — it is allow-listed on
-    // its own line above, so this pattern can neither admit nor deny it.)
+    // its own line above, so neither pattern can admit or deny it.)
     { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },
+    { method: 'GET', pattern: /^\/registries\/log-witness\/alerts$/ },
     { method: 'GET', pattern: /^\/metrics$/ },
     { method: 'GET', pattern: /^\/webhooks$/ },
     { method: 'POST', pattern: /^\/webhooks$/ },

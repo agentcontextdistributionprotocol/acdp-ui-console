@@ -10,6 +10,7 @@ import {
   listRevocations,
   getRegistryJwks,
   getLogWitness,
+  listLogWitnessAlerts,
   listEnrollments,
   enrollRegistry,
   getLineage,
@@ -169,6 +170,66 @@ describe('real-mode proxy paths', () => {
     // anything reassuring or self-diagnosing.
     mockFetch(() => upstreamResponse({ message: 'nope' }, 403));
     await expect(getLogWitness('registry-a.example.com', false)).rejects.toMatchObject({ status: 403 });
+  });
+
+  // ── The alert worklist (#84) ────────────────────────────────────────
+  //
+  // The endpoint has NO pagination — no limit, offset or cursor — so the only
+  // thing the client varies is one optional flag. Both spellings are asserted
+  // because the default must send no query string at all: upstream reads only
+  // the literal 'true'/'1', so a client that always appended the parameter
+  // would still work today and would quietly encode an assumption about how
+  // upstream parses 'false'.
+  it('listLogWitnessAlerts → /registries/log-witness/alerts with NO query string by default', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
+    await listLogWitnessAlerts({}, false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toBe('/api/proxy/control-plane/registries/log-witness/alerts');
+    expect(url).not.toContain('?');
+  });
+
+  it('listLogWitnessAlerts sends ?includeAcknowledged=true only when asked', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
+    await listLogWitnessAlerts({ includeAcknowledged: true }, false);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/proxy/control-plane/registries/log-witness/alerts?includeAcknowledged=true',
+    );
+  });
+
+  it('listLogWitnessAlerts defaults to the filtered listing when called with no arguments', async () => {
+    // The parameter object itself is optional, so `listLogWitnessAlerts()` has
+    // to be the same request as `listLogWitnessAlerts({})` — otherwise the
+    // default drifts depending on the call shape.
+    const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
+    await listLogWitnessAlerts();
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/registries/log-witness/alerts');
+  });
+
+  it('listLogWitnessAlerts reads the envelope rather than assuming total === data.length', async () => {
+    // With no pagination the two are always equal on the wire, but the client
+    // must relay what upstream sent: deriving `total` here would invent a
+    // guarantee the endpoint has not made.
+    mockFetch(() => jsonResponse({ data: [{ authority: 'r-c' }], total: 7 }));
+    const res = await listLogWitnessAlerts({}, false);
+    expect(res.total).toBe(7);
+    expect(res.data).toHaveLength(1);
+  });
+
+  it('listLogWitnessAlerts surfaces a 403 as an ApiError', async () => {
+    mockFetch(() => upstreamResponse({ errorCode: 'FORBIDDEN', message: 'nope' }, 403));
+    await expect(listLogWitnessAlerts({}, false)).rejects.toMatchObject({
+      status: 403,
+      errorCode: 'FORBIDDEN',
+    });
+  });
+
+  it('listLogWitnessAlerts surfaces a 404 as an ApiError rather than an empty worklist', async () => {
+    // An empty worklist means "witnessed everything, nothing wrong" — the
+    // strongest all-clear this feature can give. A 404 means the endpoint is
+    // not there at all. Collapsing one into the other would render the
+    // all-clear off the back of a missing route.
+    mockFetch(() => upstreamResponse({ errorCode: 'NOT_FOUND' }, 404));
+    await expect(listLogWitnessAlerts({}, false)).rejects.toMatchObject({ status: 404 });
   });
 
   it('listEnrollments → reads { data } from /registries/enrollments', async () => {
