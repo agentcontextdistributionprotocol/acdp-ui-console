@@ -9,7 +9,12 @@ import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useRevocations, useRegistryJwks } from '@/lib/hooks/use-security';
 import { useRegistries } from '@/lib/hooks/use-registries';
-import { ApiError } from '@/lib/api/fetcher';
+import {
+  ADMIN_ROUTE_FORBIDDEN,
+  errorDiagnostic,
+  isUpstreamForbidden,
+  operatorErrorMessage,
+} from '@/lib/utils/api-error-messages';
 import { formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
 import { timeAgo, clockTime, shortId } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
@@ -31,7 +36,7 @@ export default function SecurityPage() {
 function RevocationFeed() {
   const revs = useRevocations();
   const entries = revs.data?.pages.flatMap((p) => p.entries) ?? [];
-  const forbidden = revs.error instanceof ApiError && revs.error.status === 403;
+  const forbidden = isUpstreamForbidden(revs.error);
 
   return (
     <div className="card">
@@ -44,10 +49,30 @@ function RevocationFeed() {
       </div>
       <div className="card-body">
         {revs.isLoading && <LoadingSkeleton rows={4} height={36} />}
+        {/* This page's 403 copy used to be a third, differently-worded
+            near-copy of the sentence `enrollments.tsx` held twice. All three
+            now compose the ONE exported constant with their own subject, so a
+            correction to the shared half can no longer land on two of three
+            surfaces. `/security` adopts the enrollments phrasing, which is the
+            more specific of the two.
+
+            What this page loses in the trade — "This is set as a deployment
+            environment variable, not from the console UI" — is not lost: the
+            shared sentence says "configured server-side" and names the
+            variable, which carries the same fact without asserting a second
+            time that the console has no field for it. */}
         {forbidden && (
-          <ErrorPanel message="The control-plane key configured server-side (CONTROL_PLANE_API_KEY) is not an admin key. This is set as a deployment environment variable, not from the console UI — ask whoever deployed this console to grant it admin scope." />
+          <ErrorPanel
+            message={`The revocation feed is admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`}
+            details={errorDiagnostic(revs.error)}
+          />
         )}
-        {revs.error && !forbidden && <ErrorPanel message={String(revs.error)} />}
+        {revs.error && !forbidden && (
+          <ErrorPanel
+            message={operatorErrorMessage(revs.error, 'Could not load the revocation feed')}
+            details={errorDiagnostic(revs.error)}
+          />
+        )}
         {!revs.isLoading && !revs.error && entries.length === 0 && (
           <EmptyState title="No revocations recorded" />
         )}

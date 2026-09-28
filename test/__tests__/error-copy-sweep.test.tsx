@@ -25,6 +25,8 @@
 // construction and would have to be commented out — which is how such a guard
 // ends up permanently disabled. It lands with the last of them.
 // ══════════════════════════════════════════════════════════════════════
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { Suspense } from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
@@ -623,5 +625,146 @@ describe("/lineage's chain lookup speaks the registry's codes", () => {
       apiError(502, RAW, 'registry-a', '/lineages/lin-1'),
     );
     expect(container.textContent).toContain('registry A did not answer successfully (502)');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// #88's cross-cutting close criterion, landed with the last of its phases.
+//
+// This was deliberately NOT asserted while six sites in `components/` were
+// still outstanding: a repo-wide guard that fails by construction gets
+// commented out, and a commented-out guard is worse than none. It lands now
+// that the last of them (`launch-modal.tsx`) is done.
+//
+// Source-text assertion rather than a render, because the thing under test is
+// a shape a future edit could reintroduce anywhere — including on a surface
+// this file has no test for.
+// ══════════════════════════════════════════════════════════════════════
+describe('no surface stringifies an error into its message', () => {
+  const ERROR_ARG = /\bString\(\s*(?:[A-Za-z_$][\w$]*\.)*(?:err|error|e)\b/;
+
+  /**
+   * Blank out comments, preserving line numbering.
+   *
+   * Necessary, not fastidious: `app/runs/[runId]/page.tsx` and
+   * `components/ui/error-panel.tsx` both QUOTE the removed shape in prose,
+   * explaining the defect they exist to document. A guard that cannot tell code
+   * from a description of code would forbid writing that down — and the fix
+   * would be to delete the explanation, which is the wrong direction.
+   *
+   * **Whole-line `//` FIRST, then block comments.** The other order has a
+   * constructible blind spot that verification found: a line comment containing
+   * an unpaired `/*` opens a pseudo-block that swallows every line up to the
+   * next `*&#47;` anywhere in the file, hiding real offenders in between —
+   *
+   *     // the /* form is handled above
+   *     return <div>{String(error)}</div>;   // ← invisible to the gate
+   *     /* an ordinary block comment further down *&#47;
+   *
+   * Stripping line comments first removes the `/*` before the block pass can
+   * see it. Blanking a `//` that happens to sit inside a block comment is
+   * harmless, since that text is about to be blanked anyway.
+   *
+   * Trailing `//` is deliberately NOT stripped: a guard a trailing comment can
+   * switch off is not a guard.
+   */
+  function stripComments(src: string): string {
+    return src
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  }
+
+  /** Every `.ts`/`.tsx` under a tree, minus the server-side route handlers. */
+  function sources(dir: string): string[] {
+    const out: string[] = [];
+    const walk = (d: string) => {
+      for (const name of readdirSync(d)) {
+        const p = join(d, name);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.tsx?$/.test(name)) out.push(p);
+      }
+    };
+    walk(join(process.cwd(), dir));
+    return out;
+  }
+
+  it('across app/ and components/, outside the three route handlers', () => {
+    // The carve-out is principled, not a convenience. The three handlers under
+    // `app/api/` run on the server and `String(err)` there goes into a response
+    // BODY for a caught exception — the console's own last-resort diagnostic,
+    // with no operator reading it directly and no `ApiError` in scope to
+    // interrogate. Named individually rather than excluded by glob, so a fourth
+    // handler cannot inherit the exemption silently.
+    const EXEMPT = [
+      'app/api/proxy/[service]/[...path]/route.ts',
+      'app/api/stream/events/route.ts',
+      'app/api/stream/runs/[runId]/route.ts',
+    ].map((p) => join(process.cwd(), p));
+
+    const offenders: string[] = [];
+    for (const file of [...sources('app'), ...sources('components')]) {
+      if (EXEMPT.includes(file)) continue;
+      stripComments(readFileSync(file, 'utf8'))
+        .split('\n')
+        .forEach((line, i) => {
+          if (ERROR_ARG.test(line)) offenders.push(`${file}:${i + 1}`);
+        });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('and the pattern it looks for actually matches the shape that was removed', () => {
+    // A guard whose regex matches nothing passes forever. Pinned against the
+    // exact forms that were in the tree, plus the two near-misses that must
+    // NOT trip it.
+    for (const shape of [
+      'message={String(error)}',
+      '{String(toggleMut.error)}',
+      'setError(String(e));',
+      '<ErrorPanel message={String(revs.error)} />',
+      'String( error )',
+    ]) {
+      expect(ERROR_ARG.test(shape)).toBe(true);
+    }
+    for (const ok of [
+      "String(v ?? '')",
+      'String(selected.contextCount)',
+      'String(SCENARIO_COUNT)',
+      'JSON.stringify({ error })',
+    ]) {
+      expect(ERROR_ARG.test(ok)).toBe(false);
+    }
+  });
+
+  it('cannot be switched off by a line comment containing an unpaired /*', () => {
+    // The blind spot verification constructed. With block comments stripped
+    // FIRST, the `/*` inside a line comment opens a pseudo-block that runs to
+    // the next `*/` anywhere in the file and takes the offender with it.
+    const trap = [
+      '// the /* form is handled above',
+      'export function P({ error }) { return <div>{String(error)}</div>; }',
+      '/* an ordinary block comment further down */',
+    ].join('\n');
+    const surviving = stripComments(trap)
+      .split('\n')
+      .filter((l) => ERROR_ARG.test(l));
+    expect(surviving).toHaveLength(1);
+  });
+
+  it('still strips what it is supposed to strip', () => {
+    // The pair. A stripper that blanks nothing would pass the trap test above
+    // and then flag every file that documents the defect.
+    const commented = [
+      '// message={String(error)}  <- the old shape, described',
+      '/* and again: String(err) */',
+      '{/* a JSX comment: String(e) */}',
+    ].join('\n');
+    expect(
+      stripComments(commented)
+        .split('\n')
+        .filter((l) => ERROR_ARG.test(l)),
+    ).toEqual([]);
+    // …and line numbering survives, so an offender's line number is real.
+    expect(stripComments(commented).split('\n')).toHaveLength(3);
   });
 });
