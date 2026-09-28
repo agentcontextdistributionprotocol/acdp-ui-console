@@ -417,14 +417,29 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
 
   return (
     <p style={prose}>
+      {/*
+        ROUND 9. This headline read "Nothing in this window carried a
+        revocation classification." — a claim about the COUNTERS, on the one
+        arm licensed by a `features` absence, which establishes nothing about
+        counters. The route is reached with `keyRevocation` as `null`,
+        `undefined` and `{}`: no counters at all. Its sibling
+        `flag-on-no-counters` refuses, on exactly that payload, to say anything
+        about what was classified — two arms applying different standards to
+        the same absence, and the stricter one was right.
+
+        "The check is disabled by default" survives, because withholding
+        FIGURES is all it was ever licensed to justify. What it cannot license
+        is a statement about what the window contains.
+      */}
       <strong style={{ color: 'var(--text)' }}>
-        Nothing in this window carried a revocation classification.
+        This deployment sent no report about revocation checking.
       </strong>
       <br />
-      No figures are shown rather than zeros: a zero would claim &ldquo;nothing is revoked&rdquo;
-      when it cannot be told apart from never having looked — the check is disabled by default. This
-      is a statement about the selected window, not about the deployment: a different window may
-      well show figures. They appear as soon as anything is classified.
+      Nothing arrived that says whether the compromise-boundary check is running — a backend that
+      predates the feature report, or a payload that was not one. No figures are shown rather than
+      zeros: a zero would claim &ldquo;nothing is revoked&rdquo; when it cannot be told apart from
+      never having looked, and the check is disabled by default. Whether anything in this window was
+      classified is exactly what could not be established.
     </p>
   );
 }

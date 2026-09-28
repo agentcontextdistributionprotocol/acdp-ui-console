@@ -19,6 +19,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import type { CpDashboardOverview } from '@/lib/types';
 import { dashboardRevocationState } from '@/lib/utils/revocation';
 import {
+  ANNOUNCED_TEXT_ATTRS,
   DASHBOARD_CARD,
   DASHBOARD_PROSE,
   DASHBOARD_REPORTED_TILES,
@@ -99,7 +100,7 @@ describe('dashboard — Key Revocation with no feature flags (the pre-#178 backe
     // Half one: the card is still there. A card that vanishes is
     // indistinguishable from a control plane that predates the feature.
     expect(card).toBeInTheDocument();
-    expect(card.textContent).toContain('Nothing in this window carried a revocation classification');
+    expect(card.textContent).toContain(DASHBOARD_PROSE['no-flags'].headline);
     // Half two: no numeric KPI inside it. Asserted structurally rather than by
     // searching for the string "0" — the surrounding prose has carried digits
     // before (it used to cite an upstream issue number), and a substring check
@@ -119,13 +120,13 @@ describe('dashboard — Key Revocation with no feature flags (the pre-#178 backe
     const card = revocationCard();
     const values = [...card.querySelectorAll('.kpi-value')].map((v) => v.textContent);
     expect(values).toEqual(['9', '0', '0']);
-    expect(card.textContent).not.toContain('Nothing in this window carried');
+    expect(card.textContent).not.toContain(DASHBOARD_PROSE['no-flags'].headline);
   });
 
   it('a pre-Phase-14 backend that omits the field lands in the same absent state', () => {
     renderWith(overview({ keyRevocation: undefined }));
     const card = revocationCard();
-    expect(card.textContent).toContain('Nothing in this window carried a revocation classification');
+    expect(card.textContent).toContain(DASHBOARD_PROSE['no-flags'].headline);
     expect(card.querySelectorAll('.kpi-value')).toHaveLength(0);
   });
 
@@ -461,17 +462,24 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
 
     // `no-flags` — the arm this test skipped for two rounds while being
     // extended to each of its neighbours in turn. Both of its explanatory
-    // tails were freely deletable: the window-scoping sentence survived
-    // deletion because the `<strong>` headline lives in the same `<p>` and
-    // supplies "window" on its own, and the closing sentence was covered by
-    // nothing at all. Neither is a claim that turns false when deleted, but
-    // together they are the whole of what distinguishes "this window is
-    // quiet" from "this deployment does not check" — which is #97.
+    // tails were freely deletable, and neither was a claim that turned false
+    // when deleted.
+    //
+    // ROUND 9 replaced both. The old tails ("this is a statement about the
+    // selected window, not about the deployment", "a different window may well
+    // show figures") belonged to a headline that asserted what the window
+    // contained — and that headline was the over-claim: this arm is licensed
+    // by a `features` ABSENCE and is reached with no counters at all. The
+    // tails that matter now are the two that say what could not be
+    // established, which is what distinguishes this arm from `disabled`.
     renderWith(overview({ keyRevocation: CLEAN, features: undefined }));
     const noFlags = proseText();
-    expect(noFlags).toMatch(/a statement about the selected window, not about the deployment/i);
-    expect(noFlags).toMatch(/a different window may well show figures/i);
-    expect(noFlags).toMatch(/they appear as soon as anything is classified/i);
+    expect(noFlags).toMatch(/a backend that predates the feature report, or a payload that was not one/i);
+    expect(noFlags).toMatch(/whether anything in this window was classified is exactly what could not be established/i);
+    // The claim it may NOT make, stated as a negative because this is the
+    // sentence that was there: the arm holds no counters, so it may not report
+    // on them.
+    expect(noFlags).not.toMatch(/carried a revocation classification/i);
   });
 
   it('GUARDS THE GUARD: proseText throws on the arm that renders no paragraph', () => {
@@ -1055,10 +1063,54 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     );
   }
 
-  function expectPinnedCard(expected: string[], label?: string) {
+  /**
+   * Half three: nothing is ANNOUNCED that was not written down.
+   *
+   * ROUND 9. `textContent` cannot see an attribute, and a text-free
+   * `<div title="No key in this deployment has been revoked."
+   * aria-label="Nothing in this deployment is revoked" />` inside this very
+   * card's body passed both halves above and the whole 1028-test suite.
+   * `CLAUDE.md` already treats a hover-only disclosure as no disclosure —
+   * which is an argument for not shipping the tooltip, not for leaving the
+   * channel unread, since `aria-label` on the same node reaches a screen
+   * reader in earnest.
+   *
+   * Set EQUALITY, so a LOST announcement fails too. `KpiCard` mirrors its
+   * `hint` into `title`, so the legitimate set is exactly the captions the
+   * reported arm renders; every other arm announces nothing at all.
+   */
+  function announcedIn(el: HTMLElement): string[] {
+    const found: string[] = [];
+    for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
+      for (const attr of ANNOUNCED_TEXT_ATTRS) {
+        const v = node.getAttribute(attr);
+        if (v !== null && v !== '') found.push(normalize(v));
+      }
+    }
+    return found;
+  }
+
+  function expectNothingAnnounced(card: HTMLElement, allowed: readonly string[], label?: string) {
+    expect(new Set(announcedIn(card)), `${label ?? ''} — announced copy outside the pinned set`).toEqual(
+      new Set(allowed.map(normalize)),
+    );
+    for (const node of [card, ...card.querySelectorAll<HTMLElement>('*')]) {
+      for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-details']) {
+        for (const id of (node.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
+          expect(
+            card.querySelector(`#${CSS.escape(id)}`),
+            `${attr}="${id}" points outside the pinned card`,
+          ).toBeTruthy();
+        }
+      }
+    }
+  }
+
+  function expectPinnedCard(expected: string[], label?: string, announced: readonly string[] = []) {
     const card = revocationCard();
     expectBlocksPinned(card, expected, label);
     expectNothingOutside(card, expected, label);
+    expectNothingAnnounced(card, announced, label);
   }
 
   it('pins every block of every prose arm, and nothing else is in the card', () => {
@@ -1089,7 +1141,13 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
         features: FEATURES,
       }),
     );
-    expectPinnedCard(expectedDashboardCardBlocks({ key: null, counts: ['9', '2', '1'] }));
+    expectPinnedCard(
+      expectedDashboardCardBlocks({ key: null, counts: ['9', '2', '1'] }),
+      'reported arm',
+      // `KpiCard` mirrors each `hint` into a `title`, so the three captions are
+      // also the three tooltips — and nothing else may be.
+      DASHBOARD_REPORTED_TILES.map((t) => t.hint),
+    );
   });
 
   it('pins the reported arm’s ACCENTS, because colour carries meaning on this card', () => {
@@ -1109,6 +1167,48 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     expect(accents).toEqual(DASHBOARD_REPORTED_TILES.map((t) => t.accent));
     // The complement, so "paint everything danger" cannot pass either.
     expect(new Set(accents).size, 'two tiles share an accent').toBe(accents.length);
+  });
+
+  it('GUARDS THE GUARD: the announced half catches copy no textContent pin sees', () => {
+    // The round-9 escape, exactly. A text-free node carrying the claim in two
+    // attributes: invisible to the block list, invisible to the squash
+    // comparison, visible to a screen reader and to a hover.
+    cleanup();
+    renderWith(overview({ keyRevocation: null, features: FEATURES }));
+    const card = revocationCard();
+    const expected = expectedDashboardCardBlocks({ key: 'flag-on-no-counters' });
+    expectBlocksPinned(card, expected);
+    expectNothingOutside(card, expected);
+    expectNothingAnnounced(card, []);
+
+    const ghost = document.createElement('div');
+    ghost.setAttribute('title', 'No key in this deployment has been revoked.');
+    ghost.setAttribute('aria-label', 'Nothing in this deployment is revoked');
+    card.querySelector('.card-body')!.appendChild(ghost);
+
+    // The half that sees it…
+    expect(() => expectNothingAnnounced(card, [])).toThrow();
+    // …and the two that do not, which is why there are three.
+    expect(() => expectBlocksPinned(card, expected)).not.toThrow();
+    expect(() => expectNothingOutside(card, expected)).not.toThrow();
+  });
+
+  it('GUARDS THE GUARD: the announced half catches a LOST announcement too', () => {
+    // Set equality in both directions. The reported arm's three captions are
+    // also its three tooltips; dropping one is a caption that stopped being
+    // announced, which no "none of the forbidden values" check can see.
+    cleanup();
+    renderWith(
+      overview({
+        keyRevocation: { preCompromise: 9, revokedAtOrAfter: 2, revokedTimeUnverifiable: 1 },
+        features: FEATURES,
+      }),
+    );
+    const card = revocationCard();
+    const allowed = DASHBOARD_REPORTED_TILES.map((t) => t.hint);
+    expectNothingAnnounced(card, allowed);
+    (card.querySelector('[title]') as HTMLElement).removeAttribute('title');
+    expect(() => expectNothingAnnounced(card, allowed)).toThrow();
   });
 
   it('GUARDS THE GUARD: the pin REJECTS an appended clause and a stray element', () => {

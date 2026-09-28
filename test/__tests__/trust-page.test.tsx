@@ -11,13 +11,16 @@ import { render, screen, cleanup } from '@testing-library/react';
 import type { CpRun, RunTrustSummary } from '@/lib/types';
 import type { TrustOverview } from '@/lib/hooks/use-trust';
 import {
+  ANNOUNCED_TEXT_ATTRS,
   TRUST_EMPTY,
   TRUST_KPI_CARDS,
   TRUST_KPI_HINT,
   TRUST_SECTION,
   TRUST_VIOLATIONS_SUB,
+  TRUST_VIOLATIONS_COLUMNS,
   TRUST_VIOLATIONS_TITLE,
   expectedTrustViolationsBlocks,
+  expectedTrustViolationsTableBlocks,
   normalize,
   squash,
   trustRevokedHint,
@@ -33,6 +36,9 @@ vi.mock('@/lib/hooks/use-trust', async (orig) => ({
 vi.mock('next/link', () => ({
   default: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
 }));
+
+import { timeAgo } from '@/lib/utils/format';
+import { formatCtxId } from '@/lib/utils/acdp';
 
 import TrustPage from '@/app/trust/page';
 
@@ -687,19 +693,137 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     return el!;
   }
 
+  /**
+   * The violations card's blocks, in document order — in EITHER state.
+   *
+   * ROUND 9's blocking finding, and the shape of it is worth recording. This
+   * asserted `.empty-state` was present and read from it. When the card renders
+   * a TABLE — the state in which it is actually reporting findings — the
+   * assertion failed the test rather than pinning the card, so every caller
+   * simply never rendered that state and the card went unpinned in the one
+   * paint where an all-clear is most damaging. Measured: a `<p>` reading "No
+   * key in this deployment has been revoked" inside the CardBody, above a
+   * listed `revoked_at_or_after` row, passed 1028/1028.
+   *
+   * A guard that refuses to run on half its subject's states is not a narrower
+   * guard. It is an absent one, with a passing test where the gap is.
+   */
   function violationsBlocks(card: HTMLElement): string[] {
     const head = [...card.querySelectorAll<HTMLElement>('.card-header h2, .card-header .card-sub')];
     const empty = card.querySelector<HTMLElement>('.empty-state');
-    expect(empty, 'the violations card is not in an empty state').toBeTruthy();
-    // `EmptyState` renders an icon followed by a `<div>` per string, so its
-    // element children below the icon ARE the title and the description. Read
-    // separately rather than as one joined string, because an appended
-    // sentence has to land in a block that then differs — a join would hide a
-    // third `<div>` inside a longer string.
-    const parts = [...empty!.children].filter(
-      (c): c is HTMLElement => c instanceof HTMLElement && c.tagName !== 'svg'.toUpperCase(),
+    if (empty) {
+      // `EmptyState` renders an icon followed by a `<div>` per string, so its
+      // element children below the icon ARE the title and the description. Read
+      // separately rather than as one joined string, because an appended
+      // sentence has to land in a block that then differs — a join would hide a
+      // third `<div>` inside a longer string.
+      const parts = [...empty.children].filter(
+        (c): c is HTMLElement => c instanceof HTMLElement && c.tagName !== 'svg'.toUpperCase(),
+      );
+      return [...head, ...parts].map((n) => normalize(n.textContent));
+    }
+    const table = card.querySelector<HTMLElement>('table.data-table');
+    expect(
+      table,
+      'the violations card renders neither an empty state nor a table — this guard lost its subject',
+    ).toBeTruthy();
+    // Every header and every cell, in document order. A cell is a block: a
+    // finding rewritten, a column added, a row that should not be there and a
+    // row missing all change this list.
+    const cells = [...table!.querySelectorAll<HTMLElement>('th, td')];
+    return [...head, ...cells].map((n) => normalize(n.textContent));
+  }
+
+  /**
+   * HALF THREE, on both surfaces: nothing is ANNOUNCED that was not written
+   * down.
+   *
+   * `textContent` cannot see an attribute. Round 9 got a deployment-wide
+   * all-clear onto the pinned dashboard card through a text-free
+   * `<div title="…" aria-label="…" />` with both existing halves green.
+   *
+   * Set EQUALITY, not an enumeration of bad values — a LOST announcement is a
+   * defect too, and an enumeration of the bad set is the open-world mistake
+   * this whole file exists to stop making. `KpiCard` mirrors its `hint` into a
+   * `title`, so the legitimate set is exactly the hints the fixture produces.
+   */
+  function announcedIn(el: HTMLElement): string[] {
+    const found: string[] = [];
+    for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
+      for (const attr of ANNOUNCED_TEXT_ATTRS) {
+        const v = node.getAttribute(attr);
+        if (v !== null && v !== '') found.push(normalize(v));
+      }
+    }
+    return found;
+  }
+
+  function expectNothingAnnounced(el: HTMLElement, allowed: readonly string[], label?: string) {
+    expect(new Set(announcedIn(el)), `${label ?? ''} — announced copy outside the pinned set`).toEqual(
+      new Set(allowed.map(normalize)),
     );
-    return [...head, ...parts].map((n) => normalize(n.textContent));
+    // An id reference can carry text in from outside the pinned surface, which
+    // neither of the other halves reads. Required to resolve inside it.
+    for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
+      for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-details']) {
+        for (const id of (node.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
+          expect(
+            el.querySelector(`#${CSS.escape(id)}`),
+            `${attr}="${id}" points outside the pinned surface`,
+          ).toBeTruthy();
+        }
+      }
+    }
+  }
+
+  function kpiGrid(container: HTMLElement): HTMLElement {
+    const grid = container.querySelector<HTMLElement>('.kpi-grid');
+    expect(grid, 'no .kpi-grid — the scope of this guard is gone').toBeTruthy();
+    return grid!;
+  }
+
+  /**
+   * The KPI row's expected blocks, DERIVED from `TRUST_KPI_CARDS`.
+   *
+   * Round 9: the previous version restated all five strings as literals beside
+   * the table, so `TRUST_KPI_CARDS[*].hint` was read by nothing — replacing one
+   * with `'ANYTHING AT ALL'` was green — and the table's whole purpose (one
+   * place the copy lives) was decorative. `figures` and the varying
+   * Revoked-events caption are the two things the table cannot hold.
+   */
+  function expectedKpiBlocks(figures: readonly string[], revokedHint: string): string[] {
+    return TRUST_KPI_CARDS.map((c, i) =>
+      normalize(c.label + figures[i] + (c.hint === null ? '' : c.hint === 'varies' ? revokedHint : c.hint)),
+    );
+  }
+
+  /** Every hint the row renders — which `KpiCard` also mirrors into a `title`. */
+  function expectedKpiAnnounced(revokedHint: string): string[] {
+    return TRUST_KPI_CARDS.filter((c) => c.hint !== null).map((c) =>
+      c.hint === 'varies' ? revokedHint : (c.hint as string),
+    );
+  }
+
+  /** Half one of the KPI pin: the cards are exactly these, in order. */
+  function expectKpiBlocksPinned(container: HTMLElement, expected: string[], label?: string) {
+    expect(kpiBlocks(container), label).toEqual(expected);
+  }
+
+  /**
+   * Half two: there is nothing in the ROW besides those cards.
+   *
+   * A NAMED function with its own guard-the-guard, which is the round-9
+   * correction twice over. The half was missing entirely; written back as an
+   * inline `expect` inside one test, deleting it was still silent. A pin half
+   * that nothing exercises against a failing subject is indistinguishable from
+   * no pin half at all, which is the lesson the violations card taught this
+   * same file one describe below.
+   */
+  function expectNothingOutsideKpiRow(container: HTMLElement, expected: string[], label?: string) {
+    expect(
+      squash(kpiGrid(container).textContent),
+      `${label ?? ''} — text in the KPI row outside its cards`,
+    ).toBe(squash(expected.join('')));
   }
 
   it('pins every KPI card: five labels, five figures, and captions only where there are captions', () => {
@@ -708,14 +832,8 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // was written, and an absence is invisible to every `toContain` on the
     // page.
     const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
-    const blocks = kpiBlocks(container);
-    expect(blocks).toEqual([
-      normalize('Verified' + '0'),
-      normalize('Historical' + '0' + 'Valid, signed by a retired key (§9)'),
-      normalize('Flagged events' + '0'),
-      normalize('Revoked events' + '—' + TRUST_KPI_HINT['on-with-runs']),
-      normalize('No receipt' + '0'),
-    ]);
+    const expected = expectedKpiBlocks(['0', '0', '0', '—', '0'], TRUST_KPI_HINT['on-with-runs']);
+    expectKpiBlocksPinned(container, expected);
     // The card labels and their order, stated against the shared table so the
     // literal list above cannot drift from it.
     expect(TRUST_KPI_CARDS.map((c) => c.label)).toEqual([
@@ -725,6 +843,81 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       'Revoked events',
       'No receipt',
     ]);
+  });
+
+  it('pins that there is NOTHING ELSE in the KPI row', () => {
+    // ROUND 9's second blocking finding. The row had a block list and no
+    // "nothing outside" half, in a commit whose message said it had one:
+    // `<p>Every receipt in this deployment is clean.</p>` inserted into
+    // `.kpi-grid` BETWEEN two `.kpi-card`s survived 1028/1028. The same text
+    // one element deeper — inside a card — was caught. A pin's scope is its
+    // selector, not the sentence describing it.
+    const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
+    const expected = expectedKpiBlocks(['0', '0', '0', '—', '0'], TRUST_KPI_HINT['on-with-runs']);
+    expectNothingOutsideKpiRow(container, expected);
+  });
+
+  it('GUARDS THE GUARD: each KPI half REJECTS what only it can see', () => {
+    // Each half alone, injected into the ACTUAL DOM. Deleting either from the
+    // test above is otherwise silent — measured: removing the squash
+    // comparison left the whole suite green, which is how the half came to be
+    // missing in the first place.
+    const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
+    const expected = expectedKpiBlocks(['0', '0', '0', '—', '0'], TRUST_KPI_HINT['on-with-runs']);
+    expectKpiBlocksPinned(container, expected);
+    expectNothingOutsideKpiRow(container, expected);
+
+    // Between two cards: no block selector reads it, so only half two sees it.
+    const stray = document.createElement('p');
+    stray.textContent = 'Every receipt in this deployment is clean.';
+    kpiGrid(container).appendChild(stray);
+    expect(() => expectNothingOutsideKpiRow(container, expected)).toThrow();
+    expect(() => expectKpiBlocksPinned(container, expected)).not.toThrow();
+    stray.remove();
+
+    // A STRUCTURE change that changes no text: move the first card's figure
+    // out of the card and into the row beside it. The concatenation is
+    // identical, so half two is blind; the block list is not, which is what
+    // "the order and the count are part of the pin" means.
+    const card = kpiGrid(container).querySelector('.kpi-card') as HTMLElement;
+    const value = card.querySelector('.kpi-value') as HTMLElement;
+    card.after(value);
+    expect(() => expectNothingOutsideKpiRow(container, expected)).not.toThrow();
+    expect(() => expectKpiBlocksPinned(container, expected)).toThrow();
+  });
+
+  it('pins each KPI tile’s ACCENT, including the fail-closed one', () => {
+    // ROUND 9's third. `TRUST_KPI_CARDS` declared an `accent` per card and
+    // NOTHING read it: repainting "Revoked events" — the tile that sums
+    // `revoked_at_or_after` and `revoked_time_unverifiable` — from
+    // `var(--danger)` to `var(--success)` was green, as was rewriting every
+    // accent in the table.
+    //
+    // Colour is load-bearing on this surface by `lib/utils/revocation.ts`'s own
+    // account: pre-compromise is historically AUTHORIZED and the dashboard
+    // paints it green for that reason. A fail-closed count in the same green is
+    // the inversion that module exists to prevent, and the dashboard half of
+    // this very commit already pinned it.
+    const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
+    const accents = [...kpiGrid(container).querySelectorAll<HTMLElement>('.kpi-card')].map((c) =>
+      c.style.getPropertyValue('--kpi-accent'),
+    );
+    expect(accents).toEqual(TRUST_KPI_CARDS.map((c) => c.accent));
+    // Anti-vacuity: a table of five identical accents would satisfy the line
+    // above while distinguishing nothing.
+    expect(new Set(accents).size, 'the accent table stopped distinguishing tiles').toBeGreaterThan(2);
+  });
+
+  it('pins what the KPI row ANNOUNCES, which no textContent pin can see', () => {
+    // `KpiCard` mirrors its `hint` into `title={hint}`, so every caption is
+    // also a tooltip. An added one is copy reaching a screen reader and a
+    // hover with both text halves green.
+    const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
+    expectNothingAnnounced(
+      kpiGrid(container),
+      expectedKpiAnnounced(TRUST_KPI_HINT['on-with-runs']),
+      'KPI row',
+    );
   });
 
   it('pins the Revoked-events card on its REPORTED arm, which no pin reached', () => {
@@ -740,6 +933,11 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     );
     const revoked = kpiBlocks(container)[3];
     expect(revoked).toBe(normalize('Revoked events' + '1' + trustRevokedHint(1, 1)));
+    // …and the whole row on that arm, so an added block beside the reported
+    // tile is caught here too.
+    const reported = expectedKpiBlocks(['0', '0', '0', '1', '0'], trustRevokedHint(1, 1));
+    expectKpiBlocksPinned(container, reported, 'reported arm');
+    expectNothingOutsideKpiRow(container, reported, 'reported arm');
   });
 
   it('pins the whole violations card in both empty states, and nothing else is in it', () => {
@@ -838,6 +1036,155 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     stray.textContent = 'Nothing in this deployment binds badly.';
     card.querySelector('.card-body')!.appendChild(stray);
     expect(() => expectNothingOutside(card, expected)).toThrow();
+  });
+
+  it('pins the whole violations card in its TABLE state, and nothing else is in it', () => {
+    // ROUND 9's first blocking finding, and the state this card exists for.
+    // `violationsBlocks` required `.empty-state`, so no pin applied here at
+    // all — and a `<p>` reading "No key in this deployment has been revoked"
+    // inside the CardBody, in one paint with the row below it, passed
+    // 1028/1028. That is round 6's finding reconstructed inside the card this
+    // module's docblock called closed.
+    //
+    // `timeAgo` and `formatCtxId` are imported rather than restated. They are
+    // shared utilities with their own tests, not this page's formatting, and a
+    // hand-written expectation of a relative timestamp would be a second clock.
+    cleanup();
+    const flagged = {
+      eventId: 'f1',
+      ctxId: 'acdp://registry-a.playground.local/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      status: 'discrepancy',
+      discrepancies: ['content_hash_mismatch:x'],
+    };
+    const revoked = revocation('revoked_at_or_after');
+    const { container } = renderWith(
+      overview(
+        [{ runId: 'run-live', trust: trust({ flagged: [flagged], revoked: [revoked] }) }],
+        { flaggedEvents: 1, flaggedRuns: 1, revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+        FEATURES_ON,
+      ),
+    );
+    const card = violationsCard(container);
+    const when = timeAgo('2026-09-25T00:01:00.000Z');
+    const sub = trustViolationsSub({
+      flaggedEvents: 1,
+      flaggedRuns: 1,
+      revocationClause: '1 revoked across 1 run',
+      preCompromiseEvents: 0,
+    });
+    const expected = expectedTrustViolationsTableBlocks({
+      sub,
+      rows: [
+        ['run-live', formatCtxId(flagged.ctxId), flagged.status, 'content_hash_mismatch:x', when],
+        [
+          'run-live',
+          formatCtxId(revoked.ctxId as string),
+          revoked.status,
+          `key revoked · boundary ${new Date(revoked.boundary).toLocaleString()} · ${revoked.trustClass}`,
+          when,
+        ],
+      ],
+    });
+    expectPinnedViolations(card, expected, 'table state');
+    expectNothingAnnounced(card, [], 'violations table');
+    // Anti-vacuity on the column table itself: emptying it would make the
+    // header half of every expectation above disappear silently.
+    expect(TRUST_VIOLATIONS_COLUMNS.length, 'the column table emptied out').toBe(5);
+    expect([...card.querySelectorAll('thead th')].map((t) => normalize(t.textContent))).toEqual([
+      ...TRUST_VIOLATIONS_COLUMNS,
+    ]);
+  });
+
+  it('pins the counter-only row, which reports a count and no events', () => {
+    cleanup();
+    const { container } = renderWith(
+      overview(
+        [{ runId: 'run-counters', trust: trust({ revoked: [], keyRevocationRevokedAtOrAfter: 2 }) }],
+        { revokedEvents: 2, revokedRuns: 1, revocationReportedRuns: 1 },
+        FEATURES_ON,
+      ),
+    );
+    const card = violationsCard(container);
+    const when = timeAgo('2026-09-25T00:01:00.000Z');
+    const expected = expectedTrustViolationsTableBlocks({
+      sub: trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: '2 revoked across 1 run',
+        preCompromiseEvents: 0,
+      }),
+      rows: [
+        [
+          'run-counters',
+          '—',
+          'reported without detail',
+          '2 fail-closed verdicts counted with no per-event detail',
+          when,
+        ],
+      ],
+    });
+    expectPinnedViolations(card, expected, 'counter-only table');
+  });
+
+  it('GUARDS THE GUARD: the TABLE state rejects an all-clear beside the findings', () => {
+    // The exact escape, in the exact state. Each half alone, and injected into
+    // the ACTUAL DOM — appending to the expected list would prove only that
+    // `toEqual` distinguishes two arrays.
+    cleanup();
+    const { container } = renderWith(
+      overview(
+        [{ runId: 'run-live', trust: trust({ revoked: [revocation('revoked_at_or_after')] }) }],
+        { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+        FEATURES_ON,
+      ),
+    );
+    const card = violationsCard(container);
+    const r = revocation('revoked_at_or_after');
+    const when = timeAgo('2026-09-25T00:01:00.000Z');
+    const expected = expectedTrustViolationsTableBlocks({
+      sub: trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: '1 revoked across 1 run',
+        preCompromiseEvents: 0,
+      }),
+      rows: [
+        [
+          'run-live',
+          formatCtxId(r.ctxId as string),
+          r.status,
+          `key revoked · boundary ${new Date(r.boundary).toLocaleString()} · ${r.trustClass}`,
+          when,
+        ],
+      ],
+    });
+    expectPinnedViolations(card, expected, 'before injection');
+
+    // A `<p>` beside the table: no block selector reads it.
+    const stray = document.createElement('p');
+    stray.textContent = 'No key in this deployment has been revoked.';
+    card.querySelector('.card-body')!.appendChild(stray);
+    expect(() => expectNothingOutside(card, expected)).toThrow();
+    stray.remove();
+
+    // A rewritten CELL: caught by the block half, and the "nothing outside"
+    // half is blind to a same-length swap only in the same total text — so a
+    // changed finding is caught by half one specifically.
+    const cell = card.querySelectorAll('tbody td')[2] as HTMLElement;
+    cell.textContent = 'clean';
+    expect(() => expectBlocksPinned(card, expected)).toThrow();
+  });
+
+  it('GUARDS THE GUARD: the table reader fails loudly when it loses its subject', () => {
+    // The round-9 failure was a guard that REFUSED half its subject's states
+    // and read as a narrower guard. This pins that it now refuses neither, and
+    // that a card in neither state is a red test rather than a silent pass.
+    cleanup();
+    const { container } = renderWith(overview([], NONE2, FEATURES_ON));
+    const card = violationsCard(container);
+    expect(card.querySelector('.empty-state'), 'expected the empty state here').toBeTruthy();
+    card.querySelector('.empty-state')!.remove();
+    expect(() => violationsBlocks(card)).toThrow();
   });
 
   it('pins the pre-compromise clause of the subtitle, in both directions', () => {

@@ -203,18 +203,24 @@ export const DASHBOARD_PROSE: Record<ProseKey, ProseEntry> = {
       'because on this route they may be absent or present-and-zero.',
   },
   'no-flags': {
-    headline: 'Nothing in this window carried a revocation classification.',
+    headline: 'This deployment sent no report about revocation checking.',
     body:
-      'No figures are shown rather than zeros: a zero would claim “nothing is revoked” ' +
-      'when it cannot be told apart from never having looked — the check is disabled by ' +
-      'default. This is a statement about the selected window, not about the deployment: a ' +
-      'different window may well show figures. They appear as soon as anything is classified.',
+      'Nothing arrived that says whether the compromise-boundary check is running — a backend ' +
+      'that predates the feature report, or a payload that was not one. No figures are shown ' +
+      'rather than zeros: a zero would claim “nothing is revoked” when it cannot be told ' +
+      'apart from never having looked, and the check is disabled by default. Whether anything in ' +
+      'this window was classified is exactly what could not be established.',
     licensedBy:
       'No usable `features` at all — the pre-#178 backend, or a wire payload that sent null, ' +
       'an array or a scalar. This is the ONE arm where "the check is disabled by default" is a ' +
-      'fair explanation, because nothing has told us otherwise. It is also the one arm whose ' +
-      'headline is a claim about the counters, which is why a partial triple is routed away from ' +
-      'it BEFORE any flag is read.',
+      'fair explanation for withholding FIGURES, because nothing has told us otherwise. It says ' +
+      'nothing about the counters, and round 9 is why that clause is here: the headline used to ' +
+      'read "Nothing in this window carried a revocation classification", which IS a claim about ' +
+      'the counters, on a route reached with `keyRevocation` as null, undefined and `{}` — no ' +
+      'counters at all. The sibling `flag-on-no-counters` arm refuses to say anything about what ' +
+      'was classified on exactly that payload; this arm was applying a different standard to the ' +
+      'same absence. A partial triple is still routed away from here before any flag is read, ' +
+      'because the BODY would otherwise be false of it too.',
   },
 };
 
@@ -344,17 +350,47 @@ export const TRUST_EMPTY = {
 // The same instrument, applied to the whole surface rather than one element:
 // every block of text the Key Revocation card and the `/trust` violations card
 // can render — title, subtitle, KPI label, figure, caption, paragraph, empty
-// state — is enumerated here, and the tests assert the rendered blocks EQUAL
-// that list, in order, with nothing outside it. An appended clause changes a
-// block. A new element adds one. A rewritten caption changes one. There is no
-// channel left that is "near the pin but not in it", which is where all twelve
-// of the mutations above lived.
+// state, COLUMN HEADER AND TABLE CELL — is enumerated here, and the tests
+// assert the rendered blocks EQUAL that list, in order, with nothing outside
+// it. An appended clause changes a block. A new element adds one. A rewritten
+// caption changes one.
+//
+// ROUND 9 CORRECTION, and it is the second time a bullet in this docblock has
+// claimed a closure the code did not have. It said "there is no channel left
+// that is near the pin but not in it". Three were:
+//
+//   - The violations card's TABLE state was pinned by NOTHING. The reader
+//     (`violationsBlocks`) hard-required `.empty-state`, so in the one state
+//     where the card is actually reporting findings, neither half applied. A
+//     `<p>` reading "No key in this deployment has been revoked" inside the
+//     CardBody, in one paint with a live `revoked_at_or_after` row listed
+//     beneath it, passed the whole suite. That is round 6's blocking finding
+//     verbatim, reconstructed inside the card this paragraph called closed.
+//   - The `/trust` KPI row had a block list and NO "nothing outside" half, in
+//     a commit whose message said it had one. A `<p>` between two `.kpi-card`s
+//     inside `.kpi-grid` survived; the same text one element deeper did not.
+//   - `title` and `aria-label` were unread by either half on both surfaces.
+//
+// All three are closed below. The general lesson is the one this module keeps
+// relearning from a different direction: a pin's scope is the SELECTOR, not the
+// sentence describing it, and a reader who trusts the sentence stops looking.
 //
 // The `reported` arm's tile ACCENTS are pinned alongside the text, because
 // colour is load-bearing on that card by this module's own account
 // (`lib/utils/revocation.ts`: pre-compromise is "historically AUTHORIZED —
 // the opposite of a violation", and the tile says so in success green).
 // Painting the fail-closed tile green was green in the suite too.
+//
+// `TRUST_KPI_CARDS` declares an `accent` and a `hint` per card for the same
+// reason — and round 9 found that NOTHING READ EITHER. Repainting `/trust`'s
+// fail-closed "Revoked events" tile `var(--success)` survived, as did
+// rewriting every accent in the table and replacing a hint with the literal
+// string `ANYTHING AT ALL`. The dashboard half of this same commit pinned
+// exactly that inversion; the `/trust` half declared the field and left it
+// unread, which is the standard the same diff applies to itself in
+// `lib/types.ts`: a declaration nothing reads is a claim nothing checks. Both
+// are read now, and the tests derive their expected blocks FROM this table
+// rather than restating the strings as literals beside it.
 //
 // ── What they still do NOT guarantee ──────────────────────────────────
 //
@@ -482,6 +518,20 @@ export function trustRevokedHint(reportingRuns: number, totalRuns: number): stri
 export const TRUST_VIOLATIONS_TITLE = 'Trust violations';
 
 /**
+ * The violations table's column headers, in DOM order.
+ *
+ * Round 9's gate: `violationsBlocks` hard-required `.empty-state`, so when the
+ * card rendered a TABLE — the state in which it is actually reporting findings
+ * — no pin applied to the card at all. Neither half. A `<p>` reading "No key in
+ * this deployment has been revoked" inside the CardBody, in one paint with a
+ * live `revoked_at_or_after` row listed beneath it, passed the whole suite.
+ *
+ * That is round 6's blocking finding reconstructed inside the card this
+ * module's docblock called closed, in the one state where it is most damaging.
+ */
+export const TRUST_VIOLATIONS_COLUMNS = ['Run', 'Ctx ID', 'Finding', 'Detail', 'When'] as const;
+
+/**
  * The violations subtitle, composed exactly as the page composes it.
  *
  * The pre-compromise clause is part of the pin and not an afterthought:
@@ -517,3 +567,50 @@ export function expectedTrustViolationsBlocks(opts: {
     typeof e.description === 'function' ? e.description(opts.runs) : e.description;
   return [TRUST_VIOLATIONS_TITLE, opts.sub, e.title, description].map(normalize);
 }
+
+/**
+ * Every block the violations card renders when it is showing a TABLE.
+ *
+ * `rows` is the cell matrix — five cells per row, in DOM order — supplied by
+ * the caller from the fixture it rendered. Deliberately not derived here: the
+ * point of the pin is that the card's text is a composition of the FIXTURE and
+ * this chrome, and a helper that recomputed the page's own formatting would be
+ * a second implementation of the page rather than a check on it.
+ */
+export function expectedTrustViolationsTableBlocks(opts: {
+  sub: string;
+  rows: readonly (readonly string[])[];
+}): string[] {
+  return [
+    TRUST_VIOLATIONS_TITLE,
+    opts.sub,
+    ...TRUST_VIOLATIONS_COLUMNS,
+    ...opts.rows.flat(),
+  ].map(normalize);
+}
+
+/**
+ * Every attribute either surface is allowed to ANNOUNCE, as a set.
+ *
+ * `textContent` cannot see an attribute, and round 9 got an all-clear onto the
+ * pinned dashboard card through a text-free `<div title="…" aria-label="…" />`
+ * with both pin halves green. `CLAUDE.md` already treats a hover-only
+ * disclosure as no disclosure at all — which is an argument for removing the
+ * tooltip, not for leaving the channel unpinned, since `aria-label` on the same
+ * node reaches a screen reader.
+ *
+ * `aria-hidden` is excluded: it announces nothing by definition. The
+ * id-reference attributes carry no text of their own and are checked
+ * separately — what they point at has to be inside the pinned surface, or its
+ * text is announced from outside everything these lists cover.
+ */
+export const ANNOUNCED_TEXT_ATTRS = [
+  'title',
+  'alt',
+  'placeholder',
+  'aria-label',
+  'aria-description',
+  'aria-roledescription',
+  'aria-valuetext',
+  'aria-placeholder',
+] as const;
