@@ -15,26 +15,40 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
  * asserted in prose: `registry-card-profiles.test.tsx` compares
  * `Object.keys(PROFILE_INFO)` to that set.
  *
- * WHICH IS WHY THIS IS EXPORTED. It is not part of the component's API and
- * nothing renders from it but `RegistryCard` below; it is exported so the guard
- * can enumerate the keys through the LANGUAGE rather than by reading this file
- * as text. Two gate rounds were spent on source-regex readers that each
- * disagreed with TypeScript in a different direction — the first was a
- * substring check for two names, so an eighth key under any other name (or
- * either deleted name re-added in bracket form) passed; the second was
- * line-anchored and literal-only, so a key on an existing entry's line, a
- * computed `[IDENT]:` key, a `...spread` and a post-literal `Object.assign`
- * ALL passed, which was strictly worse. A reader that is not a parser will keep
- * losing to syntax it did not anticipate. Widening one module-private constant
- * to an export is the cheaper trade than a guard that vouches for something it
- * cannot see. Entries for `acdp-consumer` and
- * `acdp-federated` were removed with #95: the first is a profile a registry is
- * forbidden to advertise and the second is not a spec id at all, so copy for
- * either was unreachable text that ratified two invalid ids for whoever read it
- * next. An id with no entry here still renders — see the fallback below — so
- * removing them costs nothing if one somehow reappears.
+ * **This constant is deliberately NOT EXPORTED, and that is a fix, not an
+ * oversight.** Three gate rounds were spent here and each one failed
+ * differently:
+ *
+ *   1. a substring check for two names — an eighth key under any other name,
+ *      or either deleted name re-added in bracket form, passed;
+ *   2. a line-anchored literal-only regex — strictly worse: a key on an
+ *      existing entry's line, a computed `[IDENT]:` key, a `...spread` and a
+ *      post-literal `Object.assign` all passed;
+ *   3. exporting it so the guard could read `Object.keys` through the language
+ *      — which OPENED A ROUTE THAT DID NOT EXIST BEFORE. Any module could then
+ *      `import { PROFILE_INFO }` and assign a key at module scope; because
+ *      Vitest isolates module graphs per test file, the guard kept seeing a
+ *      pristine seven while the shipped app rendered the tooltip copy #95
+ *      deleted, on the id a registry is forbidden to advertise.
+ *
+ * The lesson of (3) is that a guard which reads this OBJECT vouches for the
+ * object, while the claim being made is about WHAT THE COMPONENT RENDERS. So
+ * the guard no longer reads it at all. `registry-card-profiles.test.tsx` now
+ * checks two independent things: it parses this file with the TypeScript
+ * compiler API — a real parser, which FAILS CLOSED on any syntax it cannot
+ * account for, rather than silently seeing nothing — and, separately, it
+ * RENDERS cards and reads the tooltips off the DOM. The first cannot be fooled
+ * by a second lookup object; the second cannot be fooled by anything the
+ * component does at runtime. Neither needs this symbol to be public.
+ *
+ * Entries for `acdp-consumer` and `acdp-federated` were removed with #95: the
+ * first is a profile a registry is forbidden to advertise and the second is not
+ * a spec id at all, so copy for either was unreachable text that ratified two
+ * invalid ids for whoever read it next. An id with no entry here still renders
+ * — see the fallback below — so removing them costs nothing if one somehow
+ * reappears.
  */
-export const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
+const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-discovery': { title: 'Search / discovery endpoints (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },

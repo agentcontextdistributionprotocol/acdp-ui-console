@@ -26,13 +26,18 @@
 // ══════════════════════════════════════════════════════════════════════
 import { describe, expect, it, afterEach } from 'vitest';
 import { render, cleanup, within } from '@testing-library/react';
-import { RegistryCard, PROFILE_INFO } from '@/components/registries/registry-card';
+import { RegistryCard } from '@/components/registries/registry-card';
 import { MOCK_CAPABILITIES } from '@/lib/data/mock-data';
 import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
 } from '../support/advertisable-profiles';
+import {
+  profileCopyTable,
+  prohibitedRuntimeFormsUsed,
+  PROHIBITED_RUNTIME_FORMS,
+} from '../support/profile-copy-table';
 
 afterEach(cleanup);
 
@@ -171,22 +176,59 @@ function chipFor(profileId: string): HTMLElement {
 
 describe('the dead tooltip copy is gone', () => {
   it('has copy for EXACTLY the advertisable seven — no more, no fewer', () => {
-    // Through the LANGUAGE, not through a regex over this file's text. Two
-    // earlier versions read the source and each lost to syntax in a different
-    // direction: the first was a substring check for two names, so an eighth
-    // key under any other name passed; the second was line-anchored and
-    // literal-only, so a key sharing a line with another entry, a computed
-    // `[IDENT]:` key, a `...spread` and an `Object.assign` after the literal
-    // ALL passed — strictly worse than what it replaced. `Object.keys` cannot
-    // lose to syntax, which is why `PROFILE_INFO` is exported.
-    expect(new Set(Object.keys(PROFILE_INFO))).toEqual(new Set(ADVERTISABLE));
+    // Read with the TYPESCRIPT COMPILER, not a regex and not `Object.keys`.
+    //
+    // Three earlier versions of this assertion each failed differently, and the
+    // third failed worst: it imported the object and compared `Object.keys`,
+    // which meant any OTHER module could import the same object and add a key
+    // at module scope — Vitest isolates module graphs per test file, so this
+    // guard went on seeing a pristine seven while the app rendered the deleted
+    // copy. Reading the object vouches for the object; the claim is about what
+    // the component renders copy for. So: parse the file, and collect the keys
+    // of EVERY copy table in it (a literal whose entries carry a `title`), not
+    // just the one constant's. A second lookup object is the realistic way this
+    // regresses, and it is the form `Object.keys` structurally cannot see.
+    //
+    // `copyTableKeys` FAILS CLOSED — it throws on a spread, a computed key, an
+    // accessor, a shorthand or a non-string key rather than skipping it. That
+    // is the property both regex versions got backwards: they saw nothing and
+    // reported success.
+    const { entries, tables } = profileCopyTable();
+    const keys = [...entries.keys()];
+    expect(tables, 'no copy table found — the parser lost its subject').toBeGreaterThan(0);
+    expect(new Set(keys)).toEqual(new Set(ADVERTISABLE));
     // Stated separately so a failure names the direction rather than reporting
     // two unequal sets.
-    for (const id of NOT_ADVERTISABLE) expect(Object.keys(PROFILE_INFO)).not.toContain(id);
+    for (const id of NOT_ADVERTISABLE) expect(keys).not.toContain(id);
     // The valid federation id is untouched — the removal must not have taken it.
-    expect(Object.keys(PROFILE_INFO)).toContain('acdp-registry-federated');
+    expect(keys).toContain('acdp-registry-federated');
     // Anti-vacuity: `Set` equality of two empty sets is also true.
-    expect(Object.keys(PROFILE_INFO)).toHaveLength(ADVERTISABLE.length);
+    expect(keys).toHaveLength(ADVERTISABLE.length);
+  });
+
+  it('pins NOT_ADVERTISABLE itself, so the guard cannot be silenced by emptying it', () => {
+    // `NOT_ADVERTISABLE` is the iteration set for the render probes below.
+    // Emptying it turns those into silent no-ops, and adding to it or dropping
+    // an id changes what this file vouches for — all three were green before
+    // this assertion. The same "second copy that may disagree" shape the rest
+    // of this file exists to remove, in the file doing the removing.
+    expect(NOT_ADVERTISABLE).toEqual(['acdp-consumer', 'acdp-federated']);
+  });
+
+  it('builds its copy table with plain syntax a parser can account for', () => {
+    // The structural companion to the parse above. `Object.defineProperty` with
+    // `enumerable: false`, a `Proxy` `get` trap and `Object.assign` all put a
+    // tooltip on screen without adding a key any static read can see — two of
+    // them defeat `Object.keys` as well. None of them has a reason to exist in
+    // a file whose entire job is a static lookup table, so their ABSENCE is the
+    // guard, and it is a cheap one with an honest failure mode: a false red
+    // that a human resolves by explaining why the file now needs one.
+    // Detected through the AST, not by scanning text — the docblocks in that
+    // file NAME these forms in prose while explaining why they are forbidden, so
+    // a text scan would fire on the explanation rather than on the problem.
+    expect(prohibitedRuntimeFormsUsed()).toEqual([]);
+    // Anti-vacuity: the detector must actually be looking for something.
+    expect(PROHIBITED_RUNTIME_FORMS.length).toBeGreaterThan(0);
   });
 
   it('renders NO tooltip for either id a real registry refuses to boot with', () => {
@@ -201,6 +243,42 @@ describe('the dead tooltip copy is gone', () => {
       expect(chip.getAttribute('title')).toBeNull();
       cleanup();
     }
+  });
+
+  it('discloses a tooltip for the advertisable ids and for NOTHING else on screen', () => {
+    // The behavioural half, and the one that survives anything the component
+    // does at RUNTIME — a `Proxy` get-trap, a non-enumerable key, a second
+    // lookup object, a synthesised title. The parser above reads the file; this
+    // reads the DOM. Between them the two cover each other's blind spot: a
+    // key the parser cannot see still has to render, and a render this probe
+    // does not cover still has to be written into the file.
+    //
+    // Its honest limit is its universe — it can only judge ids it renders. So
+    // the universe is every id the pinned spec knows about, plus the two #95
+    // removed, plus names in the shape a future author would plausibly reach
+    // for. An id outside it would escape this probe but not the parser.
+    const PROBES = [
+      ...ADVERTISABLE,
+      ...NOT_ADVERTISABLE,
+      'acdp-agent-core',
+      'acdp-registry-quantum',
+      'acdp-registry',
+      'acdp-registry-receipts-v2',
+      'registry-core',
+      '',
+    ];
+    const disclosing: string[] = [];
+    for (const id of PROBES) {
+      if (id === '') continue; // an empty id renders no chip to read
+      const chip = chipFor(id);
+      if (chip.getAttribute('title') !== null) disclosing.push(id);
+      cleanup();
+    }
+    expect(new Set(disclosing)).toEqual(new Set(ADVERTISABLE));
+    // Anti-vacuity: a component that had lost every tooltip would also produce
+    // an empty `disclosing`, and set-equality against an empty ADVERTISABLE
+    // would be true.
+    expect(disclosing).toHaveLength(ADVERTISABLE.length);
   });
 
   it('DISCRIMINATES: a real profile rendered the same way DOES get its tooltip', () => {

@@ -18,7 +18,7 @@ import {
 import * as MockData from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
-import { PROFILE_INFO } from '@/components/registries/registry-card';
+import { profileCopyTable } from '../support/profile-copy-table';
 import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
@@ -721,17 +721,19 @@ describe('demo registry profiles are ones a real registry would start with', () 
     // tooltip — "(RFC-ACDP-0010, acdp 0.2.0)" — so the two files are now held to
     // each other and neither can be edited alone.
     //
-    // IMPORTED, not read as source text. An earlier version ran an unanchored,
-    // first-match-wins regex over the RAW file, so a line in the docblock
-    // reading `'acdp-registry-receipts': { title: 'baseline (acdp 0.1.0)' }`
-    // shadowed the real entry and let the table be lowered to match — restoring
-    // exactly the unfalsifiability this test was added to remove. Same root
-    // cause as the key-set guard's two failed rounds: a reader that is not a
-    // parser loses to syntax it did not anticipate. `PROFILE_INFO` is exported
-    // for this.
+    // Read with the TYPESCRIPT COMPILER, not by importing the object and not by
+    // regex. An early version ran an unanchored, first-match-wins regex over the
+    // RAW file, so a docblock line reading `'acdp-registry-receipts': { title:
+    // 'baseline (acdp 0.1.0)' }` shadowed the real entry and let the table be
+    // lowered to match. The version after that imported the object, which
+    // required exporting it — and the export let any module mutate the table at
+    // module scope, invisible to a guard in a different test file because Vitest
+    // isolates module graphs. `profileCopyTable()` needs neither: it parses the
+    // file and fails CLOSED on anything it cannot account for.
+    const { entries: copy } = profileCopyTable();
     for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
-      const entry = PROFILE_INFO[p]?.title;
-      expect(entry, `no PROFILE_INFO entry for ${p}`).toBeDefined();
+      const entry = copy.get(p);
+      expect(entry, `no profile copy entry for ${p}`).toBeDefined();
       // Baseline profiles carry no version marker because they ARE the 0.1.0
       // baseline; anything later says so in the copy. The default is asserted,
       // not assumed — a marker appearing on a baseline profile is drift too.
