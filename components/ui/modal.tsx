@@ -24,6 +24,33 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
+  // `onClose` is read through a ref, and is deliberately NOT a dependency of the
+  // effect below.
+  //
+  // Callers pass an inline arrow, so its identity changes on every render of the
+  // owning component. With it in the dep list, each such render tore this effect
+  // down and re-ran it — and the teardown calls `previouslyFocused?.focus?.()`,
+  // which moves focus OUT of the open dialog, while the re-run moves it to the
+  // dialog's FIRST focusable (the header "Close dialog" button). A keyboard or
+  // screen-reader operator was therefore thrown off whatever control they had
+  // tabbed to every time the dialog re-rendered — measured at four focus moves
+  // across a single confirm click and its error arrival in the witness-ack
+  // dialog, landing on "Close dialog" three times.
+  //
+  // The effect's real dependency is `open`: it installs a keydown listener and a
+  // one-shot focus timer, neither of which needs rebuilding when the close
+  // callback's identity changes. The ref keeps Escape calling the CURRENT
+  // callback without making the subscription depend on it.
+  // Synced in its own effect rather than assigned during render: writing
+  // `ref.current` in a render body is what `react-hooks/refs` refuses, and it
+  // is genuinely unsafe under a re-render that never commits. This effect has
+  // no dependency array, so it runs after every commit — always before any
+  // keydown the handler below could see.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -36,7 +63,7 @@ export function Modal({
 
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -60,7 +87,7 @@ export function Modal({
       window.removeEventListener('keydown', handler);
       previouslyFocused?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

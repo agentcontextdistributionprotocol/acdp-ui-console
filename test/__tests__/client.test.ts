@@ -19,6 +19,7 @@ import {
   getLineage,
   pingHealth,
 } from '@/lib/api/client';
+import { MOCK_LOG_WITNESS_ALERTS } from '@/lib/data/mock-data';
 import { buildSdkMatrixRows } from '@/lib/utils/sdk-matrix';
 import type { HealthResult, ProxyService } from '@/lib/types';
 
@@ -219,10 +220,25 @@ describe('real-mode proxy paths', () => {
     expect(sig, 'no parameter may carry a default').not.toContain('=');
   });
 
-  it('listLogWitnessAlerts sends no query string for the filtered listing', async () => {
-    const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
-    await listLogWitnessAlerts({ includeAcknowledged: false }, false);
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/registries/log-witness/alerts');
+  it('the demo ack writes through a COPY, never into the shared fixture', async () => {
+    // This slot held a duplicate of the "NO query string by default" test four
+    // lines above — same call, same assertions, one fewer of them. It is spent
+    // here on the gap that test was standing next to instead.
+    //
+    // `demoAlertStore()` seeds itself from `MOCK_LOG_WITNESS_ALERTS`. Seeding by
+    // reference instead of `.map((r) => ({ ...r }))` makes the demo ack mutate
+    // the module-level fixture that `lib/data/mock-data.ts` exports to every
+    // other consumer, for the life of the process — a demo session would leave
+    // `acknowledgedAt` stamped on a row every later reader believes is pristine.
+    // The READ-side copy is pinned by its own test; this is the write side, and
+    // it was the one the mutation sweep walked through green.
+    const target = MOCK_LOG_WITNESS_ALERTS[0];
+    expect(target.acknowledgedAt, 'fixture row 0 must start unacknowledged').toBeNull();
+    const res = await acknowledgeLogWitnessAlert(target.authority, true);
+    // The ack really happened — otherwise this passes by doing nothing.
+    expect(res.acknowledgedAt).toEqual(expect.any(String));
+    // …and the fixture did not move.
+    expect(MOCK_LOG_WITNESS_ALERTS[0].acknowledgedAt).toBeNull();
   });
 
   it('listLogWitnessAlerts reads the envelope rather than assuming total === data.length', async () => {

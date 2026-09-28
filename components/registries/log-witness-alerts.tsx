@@ -127,7 +127,8 @@ function AcknowledgedCell({ row }: { row: LogWitnessAlertRow }) {
 const ACK_ALREADY_RESOLVED =
   'There is no longer an alert to acknowledge for this authority. The control plane clears the ' +
   'alert on its own once the condition resolves, so this one most likely cleared between loading ' +
-  'the table and confirming. The worklist has been refreshed.';
+  'the table and confirming. This console has asked for the worklist again; the table behind this ' +
+  'dialog updates when that answer arrives.';
 
 /**
  * The confirm step (#84).
@@ -165,32 +166,47 @@ function AcknowledgeDialog({
       queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
       onClose();
     },
+    // The 404 refetch fires ON ARRIVAL, and this is the third arrangement of it.
+    //
+    // Round 1 had it here and the dialog UNMOUNTED: the parent derived the
+    // dialog's row from the live list, the refetch emptied that list, and the
+    // explanation this path exists to paint was destroyed before it painted.
+    // The operator watched a row vanish from a dishonesty worklist with no
+    // account of why.
+    //
+    // Round 2 moved it into a close handler, which kept the dialog standing and
+    // broke two other things. `ACK_ALREADY_RESOLVED` said the worklist had been
+    // refreshed while no refetch had been requested — a past-perfect claim
+    // painted over a table that still listed the authority as Open. And an
+    // operator who dismissed the dialog BEFORE the response landed got no
+    // refetch at all, because the gate read `resolved` at dismiss time and
+    // `onError` was gone: a resolved alert kept its row on the worklist until
+    // something unrelated invalidated the query.
+    //
+    // Neither was the real defect. The real defect was that the dialog's
+    // IDENTITY depended on the list it was invalidating. The parent now holds
+    // the row it opened on (see `confirming`), so the refetch can no longer
+    // unmount this dialog, and the invalidation belongs back here: where the
+    // fact is true at the moment the copy claims it, and where it does not
+    // depend on the operator still being in the dialog. `useMutation`'s own
+    // `onError` is invoked by the Mutation in `execute()`, not by this
+    // component's observer — unlike the per-call callbacks passed to `mutate()`,
+    // which `MutationObserver#notify` gates on `hasListeners()` — so it runs
+    // even when this dialog has already unmounted.
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 404) {
+        queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
+      }
+    },
   });
 
   const resolved = mut.error instanceof ApiError && mut.error.status === 404;
   const forbidden = isUpstreamForbidden(mut.error);
 
-  // The 404 refetch happens on the way OUT, not on arrival.
-  //
-  // Invalidating inside `onError` destroyed the very explanation it was there
-  // to support. A 404 means upstream already ran `advanceCursor`, so the row is
-  // gone from BOTH listings; the refetch emptied `rows`, the parent's
-  // `rows.find(...)` went null, and this dialog unmounted before painting —
-  // taking ACK_ALREADY_RESOLVED, the relabelled Close and the withdrawn confirm
-  // button with it. The operator watched a row vanish from a dishonesty
-  // worklist with no account of why, which is worse than the stale table this
-  // path exists to correct. Gate round 1 proved it with a rendered probe: the
-  // dialog was present before the refetch and absent after, while the control
-  // 403 case (row stays) kept it.
-  const close = () => {
-    if (resolved) queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
-    onClose();
-  };
-
   return (
     <Modal
       open
-      onClose={close}
+      onClose={onClose}
       // The FULL authority, matching the table beneath it. `shortAuthority`
       // truncates at the first dot, so a confirm dialog for
       // `registry-a.corp.example` would be captioned identically to one for
@@ -198,7 +214,7 @@ function AcknowledgeDialog({
       title={`Acknowledge ${row.authority}`}
       footer={
         <>
-          <Button variant="secondary" onClick={close}>
+          <Button variant="secondary" onClick={onClose}>
             {/* "Close" rather than "Cancel" once the alert turned out to be
                 gone: there is nothing left to cancel, and offering to cancel an
                 action that already cannot happen is a false choice. */}
@@ -213,51 +229,74 @@ function AcknowledgeDialog({
       }
     >
       <div style={{ display: 'grid', gap: 10 }}>
+        {/* Tense is a function of `resolved`, and so is the list below it.
+            "currently alerting" is a present-tense claim about the authority,
+            and on the 404 path the control plane has just told us it is false:
+            the alert cleared. The reason is still worth naming — it is what the
+            operator clicked on, and the row may already be gone from the table
+            behind the dialog — but it has to be named in the past tense. */}
         <p style={{ margin: 0 }}>
-          Recording an acknowledgement for <strong>{row.authority}</strong>, currently alerting:{' '}
-          <strong>{reasonLabel(row.reason)}</strong>.
-        </p>
-        {/* The three facts, as facts. Not a confirmation prompt. */}
-        <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
-          <li>
-            It records <strong>which key</strong> saw this alert, and when. The control plane
-            derives that from the credential this console sends — it is not a person&rsquo;s name,
-            and you cannot acknowledge on someone else&rsquo;s behalf.
-          </li>
-          <li>
-            It does <strong>not clear the alert</strong> and does not touch the retained head. The
-            authority stays alerted until the control plane witnesses a consistent checkpoint again.
-          </li>
-          {/* A function of the VIEW, because the sentence is about what the
-              operator will see next and that is not a property of the ack.
-              A single sentence shipped here saying the row "leaves this
-              worklist by default … stays hidden until you use Show
-              acknowledged above" — written when the default listing WAS
-              unacknowledged-only. After the default flipped, all three of its
-              claims were false on the screen it was rendered over: the row
-              does not leave, nothing is hidden, and the control it names is
-              labelled "Hide acknowledged". The one control on this page that
-              writes was telling the operator a still-alerting authority would
-              disappear, and sending them to press a button that is not
-              there. */}
-          {showAcknowledged ? (
-            <li>
-              The row <strong>stays</strong> in this worklist — this view lists acknowledged alerts
-              too, and the <em>State</em> column will read <em>Acknowledged</em>. A later detection
-              with a <strong>different</strong> reason resets that marker; a repeat of the{' '}
-              <strong>same</strong> reason does <strong>not</strong>, so an unchanged, ongoing
-              detection will not announce itself again.
-            </li>
+          {resolved ? (
+            <>
+              No acknowledgement was recorded for <strong>{row.authority}</strong>. It was alerting{' '}
+              <strong>{reasonLabel(row.reason)}</strong> when this dialog opened.
+            </>
           ) : (
-            <li>
-              The row leaves <strong>this view</strong>, which is filtered to unacknowledged
-              alerts — it does not leave the worklist. A later detection with a{' '}
-              <strong>different</strong> reason brings it back here; a repeat of the{' '}
-              <strong>same</strong> reason does <strong>not</strong> — so an unchanged, ongoing
-              detection stays hidden from this view until you use <em>Show acknowledged</em> above.
-            </li>
+            <>
+              Recording an acknowledgement for <strong>{row.authority}</strong>, currently alerting:{' '}
+              <strong>{reasonLabel(row.reason)}</strong>.
+            </>
           )}
-        </ul>
+        </p>
+        {/* The three facts, as facts. Not a confirmation prompt.
+            WITHDRAWN once the alert turns out to be gone, for the same reason
+            the confirm button is withdrawn and Cancel becomes Close: all three
+            describe what confirming DOES, and by then confirming cannot happen.
+            Leaving "It records which key saw this alert, and when" on screen
+            beside "there is no longer an alert to acknowledge" tells an operator
+            something was recorded when nothing was. */}
+        {!resolved && (
+          <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
+            <li>
+              It records <strong>which key</strong> saw this alert, and when. The control plane
+              derives that from the credential this console sends — it is not a person&rsquo;s name,
+              and you cannot acknowledge on someone else&rsquo;s behalf.
+            </li>
+            <li>
+              It does <strong>not clear the alert</strong> and does not touch the retained head. The
+              authority stays alerted until the control plane witnesses a consistent checkpoint again.
+            </li>
+            {/* A function of the VIEW, because the sentence is about what the
+                operator will see next and that is not a property of the ack.
+                A single sentence shipped here saying the row "leaves this
+                worklist by default … stays hidden until you use Show
+                acknowledged above" — written when the default listing WAS
+                unacknowledged-only. After the default flipped, all three of its
+                claims were false on the screen it was rendered over: the row
+                does not leave, nothing is hidden, and the control it names is
+                labelled "Hide acknowledged". The one control on this page that
+                writes was telling the operator a still-alerting authority would
+                disappear, and sending them to press a button that is not
+                there. */}
+            {showAcknowledged ? (
+              <li>
+                The row <strong>stays</strong> in this worklist — this view lists acknowledged alerts
+                too, and the <em>State</em> column will read <em>Acknowledged</em>. A later detection
+                with a <strong>different</strong> reason resets that marker; a repeat of the{' '}
+                <strong>same</strong> reason does <strong>not</strong>, so an unchanged, ongoing
+                detection will not announce itself again.
+              </li>
+            ) : (
+              <li>
+                The row leaves <strong>this view</strong>, which is filtered to unacknowledged
+                alerts — it does not leave the worklist. A later detection with a{' '}
+                <strong>different</strong> reason brings it back here; a repeat of the{' '}
+                <strong>same</strong> reason does <strong>not</strong> — so an unchanged, ongoing
+                detection stays hidden from this view until you use <em>Show acknowledged</em> above.
+              </li>
+            )}
+          </ul>
+        )}
         {resolved && <ErrorPanel message={ACK_ALREADY_RESOLVED} />}
         {forbidden && (
           <ErrorPanel
@@ -338,11 +377,30 @@ export function LogWitnessAlerts() {
   const [showAcknowledged, setShowAcknowledged] = useState(true);
   const alerts = useLogWitnessAlerts(showAcknowledged);
   const rows = alerts.data?.data ?? [];
-  // The authority under confirmation, NOT the row object: the list refetches
-  // while the dialog is open, and holding a stale row would confirm against
-  // a reason the table no longer shows.
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const confirmRow = rows.find((r) => r.authority === confirming) ?? null;
+  // The row the dialog OPENED on, with the live row preferred while there is
+  // one. Two requirements pull in opposite directions here, and each was
+  // shipped alone before this shape existed.
+  //
+  // Holding only the authority and re-deriving the row from `rows` keeps the
+  // dialog's reason current when the list refetches underneath it — a frozen
+  // row would caption the dialog with a reason the table no longer shows. But
+  // it also made the dialog's EXISTENCE depend on the list: a 404 means
+  // upstream already cleared the alert, so the refetch that the 404 triggers
+  // removes the row, `rows.find(...)` goes null, and the dialog unmounts before
+  // it can say why.
+  //
+  // Holding only the row object fixes the unmount and gives back the stale
+  // reason.
+  //
+  // So: the snapshot supplies IDENTITY — the dialog stays mounted for as long
+  // as the operator keeps it open, whatever the list does — and the lookup
+  // supplies CONTENT, so the reason, the state and the ack stamp track the live
+  // row while there is one. The ack itself is keyed on the authority alone
+  // (upstream takes no body), so a snapshot can never send a stale field.
+  const [confirming, setConfirming] = useState<LogWitnessAlertRow | null>(null);
+  const confirmRow = confirming
+    ? (rows.find((r) => r.authority === confirming.authority) ?? confirming)
+    : null;
 
   return (
     <div className="card">
@@ -484,7 +542,7 @@ export function LogWitnessAlerts() {
                     <td>
                       <Button
                         variant="secondary"
-                        onClick={() => setConfirming(row.authority)}
+                        onClick={() => setConfirming(row)}
                         // Named per row, because six buttons all reading
                         // "Acknowledge" are six identical stops in a screen
                         // reader's control list with no way to tell which

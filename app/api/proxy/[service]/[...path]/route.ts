@@ -96,11 +96,14 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     // its own line above, so neither pattern can admit or deny it.)
     { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },
     { method: 'GET', pattern: /^\/registries\/log-witness\/alerts$/ },
-    // Acknowledging one authority's alert (#84). The file's SECOND
-    // middle-variable pattern, so it carries the same over-reach risk as the
-    // per-authority read above and gets the same treatment: `[^/]+` for a DNS
-    // authority, `$`-anchored, and the route test asserts three adjacent
-    // shapes out (a multi-segment authority, a tail, and GET on this path).
+    // Acknowledging one authority's alert (#84). One of five patterns in this
+    // file with a variable segment in the MIDDLE (`/lineages/[^/]+/current`,
+    // `/runs/[^/]+/lineage`, `/runs/[^/]+/events`, the per-authority read
+    // above, and this), so it carries the same over-reach risk and gets the
+    // same treatment: `[^/]+` for a DNS authority, `$`-anchored, and the route
+    // test asserts the adjacent shapes out — a multi-segment authority, a
+    // tail, GET on this path, and each of the two literal segments widened to
+    // `[^/]+` in turn.
     //
     // POST, and the ONLY write this console issues under `/registries/` other
     // than `enroll`. It carries no body: upstream takes no `@Body()` and

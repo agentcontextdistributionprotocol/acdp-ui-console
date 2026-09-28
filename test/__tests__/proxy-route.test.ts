@@ -237,8 +237,16 @@ describe('proxy route — route allow-list', () => {
     }
   });
 
-  // The `:authority/log-witness` entry is the only pattern in the file with a
-  // variable segment in the MIDDLE, so it is the one most able to over-reach.
+  // The `:authority/log-witness` entry is one of five patterns in the file with
+  // a variable segment in the MIDDLE — the others are `/lineages/[^/]+/current`,
+  // `/runs/[^/]+/lineage`, `/runs/[^/]+/events` and the `ack` sibling below —
+  // and a middle variable is the shape most able to over-reach, because the
+  // segments on BOTH sides of it have to be pinned for the pattern to mean what
+  // it says. (This comment claimed to be about "the only" such pattern for
+  // several revisions. It was never true; the miscount is recorded here rather
+  // than quietly corrected, because a guard's comment overstating its own
+  // uniqueness is what persuades the next reader that the other four need no
+  // equivalent cases.)
   // Each case below is a route that sits one character away from it and must
   // stay out: the admin acknowledgement sibling, a multi-segment authority,
   // the wrong method, and an arbitrary second tail under a legitimate

@@ -886,43 +886,156 @@ describe('witness alert worklist — the two designed failure paths', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  const ack404 = () =>
+    new ApiError(404, JSON.stringify({ errorCode: 'REGISTRY_NOT_FOUND' }), 'control-plane', '/x', true);
+  const isAlertsKey = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'));
+
   it('a 404 is rendered as the alert having RESOLVED, not as a failure', async () => {
     // `acknowledgeAlert` updates `WHERE alerted = true`, so a 404 means the
     // condition cleared between render and click. Calling that an error would
     // send an operator after a registry that just got better.
-    acknowledgeLogWitnessAlert.mockRejectedValue(
-      new ApiError(404, JSON.stringify({ errorCode: 'REGISTRY_NOT_FOUND' }), 'control-plane', '/x', true),
-    );
-    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
     renderWith({ data: rows([row()]) });
     openConfirm();
     confirmAck();
     await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
     expect(dialog().textContent).not.toMatch(/could not record/i);
+  });
 
-    // THE REFETCH HAPPENS ON CLOSE, NOT ON ARRIVAL, and this test asserted the
-    // opposite for a commit. Invalidating inside `onError` destroyed the
-    // explanation it was there to support: a 404 means upstream already ran
-    // `advanceCursor`, so the row is gone from both listings, the refetch
-    // emptied `rows`, the parent's `rows.find(...)` went null, and this dialog
-    // unmounted before the operator could read any of it. The three assertions
-    // in this block passed only because the hook is mocked with a constant —
-    // they described a state unreachable in production on the one path that
-    // produces it.
-    const isAlertsKey = () =>
-      invalidate.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'));
-    expect(isAlertsKey()).toBe(false);
-    // …and the dialog is still standing, which is the point.
+  // ── The refetch's placement, which has now been wrong in both directions ──
+  //
+  // Round 1 invalidated on ARRIVAL and the dialog unmounted: the parent derived
+  // the dialog's row from the live list, so the refetch that emptied the list
+  // destroyed the explanation the refetch existed to accompany.
+  //
+  // Round 2 moved the invalidation to the close handler. That kept the dialog
+  // standing and broke two other things: the panel claimed the worklist "has
+  // been refreshed" when no refetch had been requested, and an operator who
+  // dismissed before the response landed got no refetch at all.
+  //
+  // The fix was neither placement but the row's IDENTITY — the parent now holds
+  // the row it opened on. These four tests pin all three facts that arrangement
+  // has to deliver at once, because each previous arrangement satisfied some of
+  // them.
+
+  it('the 404 refetch fires ON ARRIVAL, while the explanation is on screen', async () => {
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
+    // Both at once: the refetch has been asked for AND the dialog is standing.
+    // Round 1 had the first without the second; round 2 the second without the
+    // first. Asserting them in one paint is what makes them a single claim.
+    expect(isAlertsKey(invalidate)).toBe(true);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(isAlertsKey()).toBe(true));
+  it('the dialog SURVIVES the refetch removing its row from the list', async () => {
+    // The assertion round 1's version could not make, because the hook is
+    // mocked with a constant: the list never actually changed, so "the dialog
+    // is still here" was true of a component whose row could not go away.
+    //
+    // Here the refetch is simulated for real — the hook starts returning an
+    // EMPTY worklist, which is what upstream serves after `advanceCursor` — and
+    // the dialog must still be standing with its explanation intact. A parent
+    // that re-derives the dialog's row from `rows` renders nothing at all here.
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+    const { rerender } = renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
+
+    useLogWitnessAlerts.mockReturnValue({ isLoading: false, error: null, data: rows([]) });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <LogWitnessAlerts />
+      </QueryClientProvider>,
+    );
+
+    // The row really did leave the table behind the dialog. Scoped to the
+    // TABLE, not the document: the dialog names the authority too, and a
+    // document-wide query would be satisfied by the dialog having unmounted —
+    // the exact opposite of what this test is for.
+    expect(section().querySelector('tbody')).toBeNull();
+    expect(screen.getByText(EMPTY_TITLE_ALL)).toBeInTheDocument();
+    // …and the dialog is still there, still saying why.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i);
+    // Including the reason it opened on, which the list no longer carries.
+    expect(dialog().textContent).toMatch(/root mismatch/i);
+  });
+
+  it('the dialog TRACKS the live row while there still is one', async () => {
+    // The other half of the snapshot, and the half that was unpinned: freezing
+    // the dialog on the row it opened with — never preferring the live one —
+    // passed every other test in this file.
+    //
+    // It matters because a detection with a DIFFERENT reason overwrites the row
+    // upstream (the table's primary key is `(tenantId, registryAuthority)`, so
+    // an authority holds at most one alert at a time). A dialog frozen at open
+    // time would then caption the one control on this page that writes with a
+    // reason the table beneath it no longer shows, and the operator would
+    // confirm against the wrong fact.
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+    const { rerender } = renderWith({ data: rows([row()]) });
+    openConfirm();
+    expect(dialog().textContent).toMatch(/root mismatch/i);
+
+    // The same authority, re-detected with a different reason.
+    useLogWitnessAlerts.mockReturnValue({
+      isLoading: false,
+      error: null,
+      data: rows([row({ reason: 'log_id_changed' })]),
+    });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <LogWitnessAlerts />
+      </QueryClientProvider>,
+    );
+
+    expect(dialog().textContent).toMatch(/log id changed/i);
+    expect(dialog().textContent).not.toMatch(/root mismatch/i);
+  });
+
+  it('the 404 refetch still happens if the operator dismisses first', async () => {
+    // The in-flight dismissal. Round 2 gated the invalidation on `resolved`
+    // read at dismiss time, so closing before the response landed produced no
+    // refetch at all — and `onError` was gone, so nothing else caught it. The
+    // worklist then kept listing an authority whose alert had resolved until
+    // something unrelated invalidated the query (`staleTime` 20s,
+    // `refetchOnWindowFocus` off), sending an operator after a registry that
+    // had just recovered.
+    //
+    // `useMutation`'s own `onError` is invoked by the Mutation rather than by
+    // the component's observer, so it runs after this dialog unmounts. That is
+    // the property being pinned.
+    let reject: (e: unknown) => void = () => {};
+    acknowledgeLogWitnessAlert.mockImplementation(
+      () => new Promise((_res, rej) => { reject = rej; }),
+    );
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalled());
+
+    // Dismiss while the request is still outstanding.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(isAlertsKey(invalidate)).toBe(false);
+
+    // …and only now does the 404 arrive.
+    reject(ack404());
+    await waitFor(() => expect(isAlertsKey(invalidate)).toBe(true));
   });
 
   it('DISCRIMINATES: a 403 does NOT refetch, on close or otherwise', async () => {
-    // The sibling that keeps the assertion above from passing on a component
-    // that simply never refetches. A 403 changed nothing upstream, so the read
-    // would only repeat itself.
+    // The sibling that keeps the assertions above from passing on a component
+    // that simply refetches on every error. A 403 changed nothing upstream, so
+    // the read would only repeat itself.
     acknowledgeLogWitnessAlert.mockRejectedValue(
       new ApiError(403, JSON.stringify({ message: 'admin-only' }), 'control-plane', '/x', true),
     );
@@ -932,9 +1045,78 @@ describe('witness alert worklist — the two designed failure paths', () => {
     confirmAck();
     await waitFor(() => expect(dialog().textContent).toMatch(/refused it/i));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(
-      invalidate.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts')),
-    ).toBe(false);
+    expect(isAlertsKey(invalidate)).toBe(false);
+  });
+
+  it('the resolved panel does not claim a refresh that has already landed', async () => {
+    // The sentence round 2 left behind read "The worklist has been refreshed."
+    // — past perfect, painted at the exact render where the refetch had not
+    // been requested at all. It survived deletion, inversion and replacement by
+    // a fabrication about the table's contents with all 1084 tests green,
+    // because nothing asserted on it.
+    //
+    // The refetch IS requested now, so a past-tense claim about the request is
+    // fair; a past-tense claim about the ANSWER is not, since the refetch can
+    // still fail. This pins the distinction rather than the wording.
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
+    const text = dialog().textContent ?? '';
+    // It says a request went out…
+    expect(text).toMatch(/asked for the worklist again/i);
+    // …and does not report the result of one that has not come back.
+    for (const claim of [
+      /worklist has been refreshed/i,
+      /has been (reloaded|updated|re-?fetched)/i,
+      /the row has (already )?(been )?(removed|gone)/i,
+      /is no longer (listed|shown|in the table)/i,
+    ]) {
+      expect(text, `reports a refetch result it does not have (\`${claim}\`)`).not.toMatch(claim);
+    }
+  });
+
+  it('the resolved panel drops the present tense and the three facts', async () => {
+    // Both are claims about an action that by then cannot happen. "currently
+    // alerting: Root mismatch" is a present-tense claim the control plane has
+    // just contradicted, and "It records which key saw this alert, and when"
+    // beside "there is no longer an alert to acknowledge" tells an operator
+    // something was recorded when nothing was.
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const before = dialog().textContent ?? '';
+    expect(before).toMatch(/currently alerting/i);
+    expect(before).toMatch(/it records \*{0,2}which key/i);
+
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
+    const after = dialog().textContent ?? '';
+    expect(after).not.toMatch(/currently alerting/i);
+    expect(after).not.toMatch(/which key/i);
+    expect(after).not.toMatch(/does not clear the alert/i);
+    // The reason is still named, in the past — it is what the operator clicked
+    // on, and the row may already be gone from the table behind the dialog.
+    expect(after).toMatch(/was alerting/i);
+    expect(after).toMatch(/root mismatch/i);
+  });
+
+  it('DISCRIMINATES: a 403 keeps both, because the alert is still there', async () => {
+    // The half that stops the test above from passing on a dialog that empties
+    // itself on any error. A 403 says the caller lacks scope; the authority is
+    // still alerting and confirming is still the action on the table.
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(403, JSON.stringify({ message: 'admin-only' }), 'control-plane', '/x', true),
+    );
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/refused it/i));
+    const text = dialog().textContent ?? '';
+    expect(text).toMatch(/currently alerting/i);
+    expect(text).toMatch(/which key/i);
+    expect(text).not.toMatch(/was alerting/i);
   });
 
   it('an UNSTAMPED 403 on the ack does NOT get the admin-scope copy either', async () => {
