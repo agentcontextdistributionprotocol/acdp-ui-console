@@ -152,3 +152,70 @@ describe('dashboard — the window is selectable', () => {
     expect(screen.getByLabelText('Dashboard time window')).toBeInTheDocument();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// The KPI row, and the health claim that used to sit under it (#100).
+//
+// `<KpiCard label="Registries" … delta="● all healthy" />` was a LITERAL. It had
+// no input, so it was true of every dataset, every deployment and every outage —
+// including the one #100 describes, a control plane whose database is gone,
+// where this page's own data comes from the service that is down.
+//
+// Wiring it to a probe was rejected rather than deferred. The figure above the
+// caption is `byRegistry.length`, an event count, so health is not what the tile
+// is about; and demo mode — the default — returns `{ ok: true }` from
+// `pingHealth` unconditionally, so a wired delta would render the identical
+// sentence forever with a probe's authority behind it.
+//
+// Paired assertions, per this file's convention: the absence test cannot pass by
+// the page failing to render, because its sibling demands the surviving delta
+// and the tile's own figure.
+// ══════════════════════════════════════════════════════════════════════
+describe('the KPI row makes no health claim', () => {
+  it('renders no "all healthy" caption anywhere on the page', () => {
+    renderWith(overview());
+    expect(screen.queryByText(/all healthy/i)).toBeNull();
+    // Not just the exact literal — any restored variant of the claim, but
+    // scoped to the KPI ROW rather than the page. A page-wide `/healthy/i`
+    // would trip on any future legitimate use of the word anywhere on
+    // `/dashboard`, which is a guard that eventually gets deleted rather than
+    // understood.
+    const row = screen.getByText('Registries').closest('.kpi-grid') as HTMLElement;
+    expect(row.textContent).not.toMatch(/healthy/i);
+  });
+
+  it('still renders the Registries tile and its count', () => {
+    // The sibling. Deleting the tile, or the page throwing, would satisfy the
+    // assertion above; this is what makes it mean something.
+    renderWith(overview({ byRegistry: [
+      { registry_authority: 'registry-a.playground.local', event_count: 9 },
+      { registry_authority: 'registry-b.playground.local', event_count: 4 },
+    ] }));
+    const tile = screen.getByText('Registries').closest('.kpi-card') as HTMLElement;
+    expect(tile).toBeTruthy();
+    expect(tile.textContent).toContain('2');
+    expect(tile.querySelector('.kpi-delta')).toBeNull();
+  });
+
+  it('leaves the one other delta on that row intact', () => {
+    // Only `Total Runs` has a delta — `window 24h`, `deltaTone="muted"`.
+    // `Contexts Published` and `Active Agents` never had one, so "the other
+    // three still render theirs" would have been an assertion about two cards
+    // that have nothing to render.
+    renderWith(overview({ window: '24h' }));
+    const runs = screen.getByText('Total Runs').closest('.kpi-card') as HTMLElement;
+    expect(runs.querySelector('.kpi-delta')?.textContent).toBe('window 24h');
+    for (const label of ['Contexts Published', 'Active Agents']) {
+      const tile = screen.getByText(label).closest('.kpi-card') as HTMLElement;
+      expect(tile.querySelector('.kpi-delta')).toBeNull();
+    }
+  });
+
+  // REMOVED: a `expect(src).toContain('{delta && (')` assertion on
+  // `kpi-card.tsx`'s source text. It broke on a harmless reformat while adding
+  // nothing — "the fix is the removal of one prop at one call site" is already
+  // established by the two tests above, which show `Total Runs` still rendering
+  // its delta (so the component was not broken) and the other tiles rendering
+  // none (so the prop really is gone). Asserting on a component's source
+  // spelling to prove a caller changed is the wrong instrument.
+});

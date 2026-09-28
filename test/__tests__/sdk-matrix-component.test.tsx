@@ -184,3 +184,105 @@ describe('SdkMatrix version column', () => {
     expect(row.textContent).toContain('0.1.4+gdeadbee');
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// The failure WORD in the badge, and the legend that defines it (#100).
+//
+// `buildSdkMatrixRows` carrying `detail` is tested next door; what cannot be
+// seen from there is whether the word reaches the cell, and whether an operator
+// who reads it can find out what it means. The legend is the disclosure
+// mechanism this component already settled on for `✓ live` — #100 names that as
+// the worked example to copy — so the same test shape applies: the word in the
+// cell, the definition in the legend, and no tooltip anywhere.
+// ══════════════════════════════════════════════════════════════════════
+describe('a down row says WHICH kind of down', () => {
+  it('renders ✗ degraded for a service that answered badly', async () => {
+    renderMatrix({ 'registry-a': { ok: false, detail: 'degraded', latencyMs: 8 } });
+    const row = rowFor(REGISTRY_ROW);
+    await waitFor(() => expect(within(row).getByText(/degraded/i)).toBeTruthy());
+    // The collapsed word is gone from this row, which is the half that would
+    // still pass if `detail` were merely appended rather than substituted.
+    expect(within(row).queryByText(/✗ down/)).toBeNull();
+  });
+
+  it('renders ✗ unreachable for a service that never answered', async () => {
+    renderMatrix({ 'registry-a': { ok: false, detail: 'unreachable', latencyMs: 30 } });
+    const row = rowFor(REGISTRY_ROW);
+    await waitFor(() => expect(within(row).getByText(/unreachable/i)).toBeTruthy());
+    expect(within(row).queryByText(/degraded/i)).toBeNull();
+  });
+
+  it('distinguishes two simultaneously-failing services from each other', async () => {
+    // The assertion that makes the pair load-bearing rather than decorative: if
+    // the badge ignored `detail`, these two rows would read identically.
+    renderMatrix({
+      'registry-a': { ok: false, detail: 'degraded', latencyMs: 8 },
+      'control-plane': { ok: false, detail: 'unreachable', latencyMs: 30 },
+    });
+    const reg = rowFor(REGISTRY_ROW);
+    const cp = rowFor('Control Plane (NestJS)');
+    await waitFor(() => expect(within(reg).getByText(/degraded/i)).toBeTruthy());
+    expect(within(cp).getByText(/unreachable/i)).toBeTruthy();
+    expect(within(reg).queryByText(/unreachable/i)).toBeNull();
+    expect(within(cp).queryByText(/degraded/i)).toBeNull();
+  });
+
+  it('falls back to the old word when the probe reported no detail', async () => {
+    // `pingHealth` always sets `detail`, so this is the fixture-shaped input
+    // only — but `✗ down` is what the badge said for every failure before this
+    // phase, and it is still the right thing to say when there is no word to
+    // substitute.
+    renderMatrix({ 'registry-a': { ok: false } });
+    const row = rowFor(REGISTRY_ROW);
+    await waitFor(() => expect(within(row).getByText(/down/i)).toBeTruthy());
+  });
+
+  it('defines both words in the legend, not in a tooltip', async () => {
+    const { container } = renderMatrix({ 'registry-a': { ok: false, detail: 'degraded' } });
+    await waitFor(() => expect(within(rowFor(REGISTRY_ROW)).getByText(/degraded/i)).toBeTruthy());
+
+    // The legend is the last <p> in the card and carries both definitions. A
+    // word rendered in a cell with no definition anywhere is a new piece of
+    // jargon, which is what the `✓ live` legend exists to avoid.
+    const legend = container.querySelector('p')!.textContent ?? '';
+    expect(legend).toMatch(/degraded/);
+    expect(legend).toMatch(/unreachable/);
+
+    // ANCHORED PER CLAUSE, not with a floating `.*` across the whole paragraph.
+    // The first version of this test matched `/degraded.*answered/s` and
+    // `/unreachable.*nothing beyond this console answered/s` over one paragraph
+    // containing both words — which is satisfied by almost any arrangement of
+    // them. Verified by mutation: SWAPPING the two definitions passed, and so
+    // did replacing the pair with "both mean the console could not get a
+    // healthy answer; treat them as the same thing". The one sentence whose
+    // entire job is to separate the two words could be replaced by one that
+    // collapses them, on a green suite.
+    //
+    // So each clause is isolated first and asserted on its own. A sentence is
+    // the clause from its `<code>` word up to the next full stop.
+    const clause = (word: string) => {
+      const from = legend.indexOf(word);
+      expect(from, `the legend never mentions ${word}`).toBeGreaterThan(-1);
+      const end = legend.indexOf('.', from);
+      return legend.slice(from, end === -1 ? undefined : end);
+    };
+
+    // `degraded` is the arm where something DID answer...
+    expect(clause('degraded')).toMatch(/answered/);
+    expect(clause('degraded')).not.toMatch(/nothing/);
+    // ...and `unreachable` is the arm where nothing did.
+    expect(clause('unreachable')).toMatch(/nothing/);
+
+    // The over-claim guard. `failureKind`'s own docblock
+    // (`lib/api/client.ts`) states that `degraded` "does NOT claim the service
+    // diagnosed itself; only that the bytes came from out there" — an upstream
+    // 404 from a build with no `/healthz`, or an edge proxy's 502 for a dead
+    // app, both land here. A legend saying the SERVICE answered, or that it is
+    // therefore running, asserts more than the field can support, which is the
+    // exact defect #100 exists to remove.
+    expect(clause('degraded')).not.toMatch(/the service answered/);
+    expect(clause('degraded')).not.toMatch(/it is running/);
+
+    expect(container.querySelectorAll('[title]')).toHaveLength(0);
+  });
+});

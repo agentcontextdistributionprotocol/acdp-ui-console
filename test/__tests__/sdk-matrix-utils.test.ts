@@ -213,3 +213,90 @@ describe('buildSdkMatrixRows', () => {
     expect(rows.map((r) => r.component)).toEqual(MOCK_SDK_MATRIX.map((r) => r.component));
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// `detail` — why a `down` row is down (#100).
+//
+// `status` collapsed both failure kinds into `down`, so the table said the same
+// word for "the control plane answered in 4 ms and told us its database is
+// gone" and "nothing on that port answered at all". Those are different things
+// to go and do.
+//
+// `detail` is a QUALIFIER on `down`, deliberately not a fifth
+// `SdkMatrixRowStatus`: the badge, the colour and the ordering are identical for
+// both, so widening the status union would have grown a fourth arm in the
+// rendering switch for something that is not a fourth state. That decision is
+// what the "leaves it undefined for every other status" cases below protect —
+// they are the ones that would fail if someone later moved the words into
+// `status`.
+// ══════════════════════════════════════════════════════════════════════
+describe('buildSdkMatrixRows carries the failure kind onto a down row', () => {
+  it.each([
+    ['degraded', 'degraded'],
+    ['unreachable', 'unreachable'],
+  ] as const)('a %s service reports detail %s', (detail, expected) => {
+    const health = new Map<ProxyService, HealthResult | undefined>([['registry-a', { ok: false, detail }]]);
+    const row = buildSdkMatrixRows(false, health).find((r) => r.component === REGISTRY_ROW);
+    expect(row?.status).toBe('down');
+    expect(row?.detail).toBe(expected);
+  });
+
+  it('leaves detail undefined on a down row whose probe reported none', () => {
+    // A `HealthResult` from before the field existed — unreachable through
+    // `pingHealth`, which sets `detail` on every failure path, so this is a
+    // fixture-shaped input only.
+    //
+    // NOT defaulted to a word here, and that is the decision this test holds.
+    // The badge renders `✗ {row.detail ?? 'down'}`, so the fallback lives in
+    // the surface that owns the word `down`; defaulting here too would make
+    // that `??` dead code, which is how a fallback quietly stops being tested.
+    const health = new Map<ProxyService, HealthResult | undefined>([['registry-a', { ok: false }]]);
+    const row = buildSdkMatrixRows(false, health).find((r) => r.component === REGISTRY_ROW);
+    expect(row?.status).toBe('down');
+    expect(row?.detail).toBeUndefined();
+  });
+
+  it('leaves detail undefined on an ok row', () => {
+    const health = new Map<ProxyService, HealthResult | undefined>([['registry-a', { ok: true }]]);
+    const row = buildSdkMatrixRows(false, health).find((r) => r.component === REGISTRY_ROW);
+    expect(row?.status).toBe('ok');
+    expect(row?.detail).toBeUndefined();
+  });
+
+  it('leaves detail undefined on an ok row that improbably carries one', () => {
+    // `HealthResult.detail` is documented as absent when `ok` is true, but that
+    // is a convention, not an invariant the type enforces — a hand-built
+    // fixture or a future probe arm could set both. `degraded` printed on a row
+    // badged `● ok` would be the table contradicting itself in one cell, so the
+    // gate is on `down`, not on the field being present.
+    const health = new Map<ProxyService, HealthResult | undefined>([
+      ['registry-a', { ok: true, detail: 'degraded' }],
+    ]);
+    const row = buildSdkMatrixRows(false, health).find((r) => r.component === REGISTRY_ROW);
+    expect(row?.status).toBe('ok');
+    expect(row?.detail).toBeUndefined();
+  });
+
+  it('leaves detail undefined on an unknown row', () => {
+    // No probe result at all. `unknown` means "we have not heard yet", and a
+    // failure word on it would be the same over-claim `useHealth` refuses.
+    const row = buildSdkMatrixRows(false, new Map()).find((r) => r.component === REGISTRY_ROW);
+    expect(row?.status).toBe('unknown');
+    expect(row?.detail).toBeUndefined();
+  });
+
+  it('leaves detail undefined on every reference row', () => {
+    const rows = buildSdkMatrixRows(false, new Map());
+    for (const component of REFERENCE_ONLY) {
+      const row = rows.find((r) => r.component === component);
+      expect(row?.status).toBe('reference');
+      expect(row?.detail).toBeUndefined();
+    }
+  });
+
+  it('leaves detail undefined on every demo row', () => {
+    // Demo fakes the probe, so every service-backed row is `ok` and there is no
+    // failure to qualify.
+    for (const row of buildSdkMatrixRows(true, new Map())) expect(row.detail).toBeUndefined();
+  });
+});

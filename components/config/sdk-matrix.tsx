@@ -89,7 +89,12 @@ export function SdkMatrix() {
                 ) : row.status === 'ok' ? (
                   <Badge variant="complete">● ok</Badge>
                 ) : (
-                  <Badge variant="failed">✗ down</Badge>
+                  // `row.detail` rather than a flat `down`: the two words
+                  // separate "something answered and said it is unwell" from
+                  // "nothing answered", which are different things to go and
+                  // do. `?? 'down'` keeps the old word for a row whose probe
+                  // predates `detail`. The legend below defines both.
+                  <Badge variant="failed">✗ {row.detail ?? 'down'}</Badge>
                 )}
               </td>
             </tr>
@@ -103,6 +108,16 @@ export function SdkMatrix() {
         <LiveMarker style={{ marginRight: 6 }} />
         marks a version read from that service&rsquo;s own <code>/healthz</code> on the last check.
         Unmarked versions are reference data from this console, not confirmed against anything running.
+        {/* The second sentence, in the legend and not in a tooltip, for the
+            reason the paragraph above this table already records at length:
+            the meaning is identical for every row that shows either word, so a
+            legend states it once, in the reading order, with no interaction and
+            no hover. #100 names the `✓ live` legend as the worked example to
+            copy, and this is the copy. */}{' '}
+        A failed row says which kind of failure it was. <code>degraded</code> means something beyond
+        this console answered and the answer was not a healthy one — the service itself, or anything
+        in front of it. <code>unreachable</code> means nothing beyond this console answered at all,
+        which includes this console refusing its own request.
       </p>
     </Card>
   );
