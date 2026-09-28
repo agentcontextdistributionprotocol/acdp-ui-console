@@ -18,9 +18,15 @@
 //      container is focusable, and it carries a name a browser will honour.
 //   2. The NAMES — each caption enumerates the table's ACTUAL `<th>` set, both
 //      directions: no header left out, and no column named that does not exist.
-//      The first version of this change failed that second direction at six of
-//      eleven sites, because the captions were written from the plan instead of
-//      from the rendered header row.
+//      The first version of this change failed at TEN of eleven sites — only
+//      `components/config/sdk-matrix.tsx` was right — because the captions were
+//      written from the plan instead of from the rendered header row. (An
+//      earlier revision of this comment said SIX. That number was inherited
+//      from a review's phrasing rather than recomputed, which is the same
+//      not-re-derived mistake as the focusable count below, in the very file
+//      whose subject is captions nobody checked against their tables.
+//      Recomputed with this gate's own normalizer: ten fail set equality, ten
+//      name a column that does not exist, ten omit one that does.)
 //   3. The CSS TEXT — the rules that make the structure do anything, read off
 //      `app/globals.css`, in the `readFileSync` style `use-verdicts.test.ts`
 //      already uses for the same reason.
@@ -30,8 +36,11 @@
 // revocation feed, and both tables in `run-trust-panel.tsx` — so
 // `overflow-x: auto` on its own would have produced a scroll region no keyboard
 // user could reach, which is WCAG 2.1.1. (An earlier version of this comment
-// said FIVE and named agents, recent runs and events: all three spread
-// `pressable()` onto their rows, which sets `role="button"` and `tabIndex: 0`.
+// said FIVE and named agents, recent runs and events: the first two spread
+// `pressable()` onto every row, which sets `role="button"` and `tabIndex: 0`,
+// and the events table does so on any row carrying a `runId` — conditional, so
+// an all-`null` page falls back to this container, which is one more argument
+// for the unconditional `tabIndex`.
 // It also named a "security JWKS table", which does not exist. The corrected
 // count is smaller; the conclusion is not weakened, because four tables with no
 // other way in is still four.) That is why `tabIndex` lives on the shared
@@ -97,14 +106,20 @@ describe('the TableScroll component contract', () => {
     // one; `getByRole` pins the element to a role that CAN be named.
     //
     // This asserts the positive case is reachable by role. The negative — that a
-    // roleless div is NOT — is demonstrated by the control render below, which
-    // is the same markup minus the role.
-    const { container: bare } = render(
+    // roleless div is NOT — is the control render immediately below.
+    //
+    // The control is the same markup MINUS the role. `queryAllByRole('group')`
+    // rather than a `[role="group"]` attribute selector, which could only ever
+    // be null on markup that was written without the attribute — a fact about
+    // this test's own JSX, not about the DOM. Asking testing-library for the
+    // ROLE puts the question to the accessibility tree, where a roleless div is
+    // `generic` and therefore not a group.
+    render(
       <div className="table-scroll" aria-label="Widget inventory" tabIndex={0}>
         <table />
       </div>,
     );
-    expect(bare.querySelector('[role="group"]')).toBeNull();
+    expect(screen.queryAllByRole('group')).toHaveLength(0);
     cleanup();
 
     render(
@@ -232,12 +247,34 @@ function walk(dir: string): string[] {
   });
 }
 
-const TABLE_MARK = 'className="data-table';
+/**
+ * A `.data-table` in ANY of the shapes this repo writes classNames in — not
+ * just the double-quoted literal the eleven current sites happen to use.
+ *
+ * The first version of this gate matched the fixed string `className="data-table`
+ * under prose claiming it covered "every `.data-table`". It did not. A NEW file
+ * with a wholly unwrapped table written as `className={cn('data-table', x)}`, as
+ * a template literal, or with single quotes killed ZERO tests and passed `tsc`
+ * and `eslint` clean. Not hypothetical: dozens of sites under `app/` and
+ * `components/` already compose classNames with an expression, and
+ * `lib/utils/cn.ts` exists for exactly that.
+ *
+ * The trailing `(?![\w-])` is not `\b`, and the difference is load-bearing:
+ * `\b` matches between `table` and the `-` of `data-table-header`, so a file
+ * whose only mention is that class would be discovered, then fail the "wraps
+ * each of its tables" check for having no tables at all. Caught by mutation —
+ * a false positive that blocks a legitimate file is still a broken gate.
+ */
+const TABLE_MARK = /className=(?:["'{][^>]{0,200}?)?\bdata-table(?![\w-])/;
+
+/** The same shape, anchored to a `<table>` open tag, for the per-table checks. */
+const TABLE_OPEN = /<table\s+className=(?:["'{][^>]{0,200}?)?\bdata-table(?![\w-])/g;
+
 const SOURCES = new Map<string, string>(
   ['app', 'components']
     .flatMap((root) => walk(join(process.cwd(), root)))
     .map((abs) => [relative(process.cwd(), abs), readFileSync(abs, 'utf8')] as const)
-    .filter(([, raw]) => raw.includes(TABLE_MARK))
+    .filter(([, raw]) => TABLE_MARK.test(raw))
     // Whitespace-collapsed, so a `<TableScroll>` open tag broken over several
     // lines still matches — the wrapping is a formatting choice and this gate
     // must not turn red for one.
@@ -284,7 +321,7 @@ type ParsedTable = { file: string; caption: string; headers: string[] };
 function parseTables(file: string, src: string): ParsedTable[] {
   // From the wrapper's table open tag to the end of its header row. Lazy, so
   // two tables in one file (run-trust-panel) parse as two.
-  const blocks = [...src.matchAll(/<table className="data-table[\s\S]*?<\/thead>/g)].map((m) => m[0]);
+  const blocks = [...src.matchAll(new RegExp(`${TABLE_OPEN.source}[\\s\\S]*?</thead>`, 'g'))].map((m) => m[0]);
   return blocks.map((block) => {
     const caption = /<caption className="sr-only">([^<]*)<\/caption>/.exec(block)?.[1]?.trim() ?? '';
     const headers = headerNames(block);
@@ -304,6 +341,12 @@ describe('every data-table in the repo is wrapped', () => {
     // A lower bound, not an equality: a legitimately-wrapped twelfth table must
     // not turn this red. The per-table checks below are what an unwrapped one
     // fails, and they now run on files that did not exist when this was written.
+    //
+    // It is a floor in one direction only, and that is a real cost: DELETING a
+    // table file legitimately would false-fail here until the number is lowered.
+    // Accepted, because the alternative — no floor — lets a broken walker
+    // silently empty every `it.each` below, and a deletion arrives with a human
+    // who can read this comment while a broken walker does not.
     expect(FILES.length).toBeGreaterThanOrEqual(10);
     expect(TABLES.length).toBeGreaterThanOrEqual(11);
     // And the walker really reaches both roots, so a discovery bug that returns
@@ -314,7 +357,7 @@ describe('every data-table in the repo is wrapped', () => {
 
   it.each(FILES)('%s wraps each of its tables', (file) => {
     const src = SOURCES.get(file)!;
-    const opens = [...src.matchAll(/<table className="data-table/g)];
+    const opens = [...src.matchAll(TABLE_OPEN)];
     expect(opens.length).toBeGreaterThan(0);
     for (const open of opens) {
       // Walk BACKWARDS from the table to the nearest tag open. `<TableScroll[^>]*>`
@@ -322,6 +365,10 @@ describe('every data-table in the repo is wrapped', () => {
       // asks the question that actually matters — what is the immediately
       // enclosing element — and cannot be satisfied by a `TableScroll` that sits
       // elsewhere in the file.
+      // Known limitation, loud rather than silent: a JSX comment between the
+      // wrapper and the table leaves `before` ending in `}`, which fails here
+      // with the message below rather than passing wrongly. Move the comment
+      // above the wrapper.
       const before = src.slice(0, open.index).trimEnd();
       expect(before.endsWith('>'), `${file}: table is not the first child of anything`).toBe(true);
       const openedAt = before.lastIndexOf('<');
@@ -358,11 +405,20 @@ describe('every data-table in the repo is wrapped', () => {
 //
 // The gate above proves a caption EXISTS. That is not the property worth having:
 // the first version of this change had all eleven captions present, non-empty
-// and over three characters, and SIX of them described columns the table does
-// not have — including `app/security/page.tsx`, whose table is the revocation
-// feed and whose caption called it "Registry signing keys". A caption is read
-// instead of the header row by exactly the users who cannot see the header row,
-// so a wrong one is worse than none.
+// and over three characters, and TEN of the eleven described columns the table
+// does not have — including `app/security/page.tsx`, whose table is the
+// revocation feed and whose caption called it "Registry signing keys". A caption
+// is read instead of the header row by exactly the users who cannot see the
+// header row, so a wrong one is worse than none.
+//
+// THE CAPTION FORMAT IS PART OF THE CONTRACT, deliberately. A caption must read
+// "<name>: <col>, <col> and <col>": a free-prose caption — "the most recent runs
+// across every scenario" — cannot be checked against anything, and an
+// uncheckable caption is how ten of eleven came to be wrong and stay wrong. The
+// cost is real and accepted: a future table cannot write a purely descriptive
+// caption, and caption copy is now coupled to header copy. That coupling IS the
+// feature. The name before the colon is free text and is where a table says
+// what it is for.
 //
 // Both directions are asserted, because they fail independently: a caption can
 // omit a real column (incomplete) or name an absent one (false).
@@ -384,6 +440,41 @@ describe('each caption enumerates its table’s real columns', () => {
       );
     },
   );
+
+  it('holds the wrapper LABEL to the caption too — it is the name announced first', () => {
+    // The gap this closes: every check above is about the `<caption>`, and the
+    // `aria-label` on the group is what a screen reader announces FIRST, on
+    // entry, before any of it. Re-labelling the security wrapper "Registry
+    // signing keys" while leaving its caption correct — half of the original
+    // defect, and the louder half — killed zero tests.
+    //
+    // Equality with the caption's name part, not with its column list: the two
+    // strings answer the same question ("what is this table?") and there is no
+    // reason for them to disagree. Where the label and the name genuinely want
+    // different words, LABEL_ALIASES records the pair explicitly, so a
+    // deliberate difference is a line in this file rather than an absence of
+    // checking.
+    const LABEL_ALIASES: Record<string, string> = {
+      // The feed is of revocations; the rows are the revoked credentials. Both
+      // accurate, and the row-level noun is the better caption while the
+      // surface-level noun is the better name on entry.
+      'Revocation feed': 'Revoked credentials',
+    };
+    let checked = 0;
+    for (const [file, src] of SOURCES) {
+      const labels = [...src.matchAll(/<TableScroll label="([^"]*)"/g)].map((m) => m[1]);
+      const captions = [...src.matchAll(/<caption className="sr-only">([^<]*)</g)].map((m) => m[1]);
+      expect(labels.length, `${file}: label/caption counts differ`).toBe(captions.length);
+      for (const [i, label] of labels.entries()) {
+        const name = captions[i].split(': ')[0].trim();
+        expect(LABEL_ALIASES[label] ?? label, `${file}: wrapper label "${label}" vs caption name "${name}"`).toBe(
+          name,
+        );
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(11);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════

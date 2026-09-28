@@ -675,21 +675,6 @@ textarea {
    the global rule's `border-radius`, and at higher specificity it won, so the
    eleven new scroll containers rendered a square focus ring where everything
    else in the console gets a rounded one. */
-/* For the `<caption>` on each table: named to a screen reader, absent to the
-   eye. The `clip-path` + 1px box form rather than `display: none` or
-   `visibility: hidden`, both of which remove the element from the accessibility
-   tree and so would defeat the point. */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
-}
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -935,6 +920,28 @@ textarea {
 }
 
 /* ── Accessibility ── */
+/* Named to a screen reader, absent to the eye. Introduced for the `<caption>`
+   on each data table (#93), but it is not table-specific and lives HERE rather
+   than beside the tables for that reason — the next person who needs a
+   visually-hidden element should find it under Accessibility, not by knowing
+   which feature happened to add it.
+
+   The `clip-path` + 1px box form, NOT `display: none` or `visibility: hidden`:
+   both of those remove the element from the accessibility tree, which would
+   defeat the entire point. `white-space: nowrap` stops a long caption being
+   reflowed into a 1px column, which some engines announce with spurious breaks. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 :focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;

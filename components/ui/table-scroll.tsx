@@ -13,11 +13,14 @@ import type { CSSProperties, ReactNode } from 'react';
  * FOUR of the eleven tables are in that state: the SDK matrix, the security
  * revocation feed, and both tables in `run-trust-panel.tsx`. (An earlier
  * version of this docblock said FIVE and listed agents, recent runs and events
- * among them — all three spread `pressable()` from `lib/utils/a11y.ts` onto
- * their rows, which sets `role="button"` and `tabIndex: 0`, so every one of
- * them has a focusable descendant. It also named a "security JWKS table",
- * which does not exist: `JwksCard` renders no `.data-table`. The corrected
- * count is smaller and the conclusion is unchanged.)
+ * among them — the first two spread `pressable()` from `lib/utils/a11y.ts` onto
+ * every row, which sets `role="button"` and `tabIndex: 0`, and the events table
+ * does the same on any row that HAS a `runId`. It also named a "security JWKS
+ * table", which does not exist: `JwksCard` renders no `.data-table`. The
+ * corrected count is smaller and the conclusion is unchanged — and note the
+ * events table's focusables are conditional, so a page of events that all
+ * carry `runId: null` falls back to this container as its only way in, which
+ * is the fifth argument for making `tabIndex` unconditional here.)
  *
  * `tabIndex={0}` is therefore load-bearing for those four and harmless for the
  * rest — and putting it on a shared component is what stops the eleventh call
