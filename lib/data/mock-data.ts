@@ -748,7 +748,16 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-8', eventType: 'context_retracted', eventTs: ATTESTED_RETRACTED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
   { id: 'ev-9', eventType: 'context_republished', eventTs: ATTESTED_REPUBLISHED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
   // Producer-initiated retraction of the non-head cashflow v1.
-  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
+  //
+  // `iso(210)`, not `iso(3600)`: v1 was PUBLISHED at `iso(272)` (ev-4, by the
+  // completed run), so a retraction an hour earlier retracted a context that
+  // did not exist yet — symptom (2) of #85, in a second place. The order the
+  // narrative claims is publish v1 -> ship v2 -> retract v1, and the three
+  // timestamps now read that way. Mirrored in the context's own
+  // `registry_state.lifecycle_events`; `mock-data.test.ts` holds the two
+  // renderings equal and holds every such event at or after its context's
+  // `created_at`.
+  { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(210), runId: null, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
   // Retraction of the fan-out FX derivative (renders retracted in the run DAG).
   { id: 'ev-11', eventType: 'context_retracted', eventTs: iso(3500), runId: 'run-fan-3', ctxId: `acdp://${AUTH_A}/bb20faad-dcc5-46a3-9056-b1d55f610333`, agentId: 'did:web:registry-a.local:agents:c2', contextType: 'analysis', version: 1, registryAuthority: AUTH_A, scenarioId: 's3_fanout' },
 ];
@@ -1080,7 +1089,9 @@ export const MOCK_CONTEXTS: FullContext[] = [
           event_id: 'a1b2c3d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
           ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`,
           event_type: 'retracted',
-          occurred_at: iso(3600),
+          // Mirrors ev-10. See the note there: an hour BEFORE `created_at`
+          // until #85.
+          occurred_at: iso(210),
           actor: DID_SOLO,
           reason: 'Reconciliation error: intercompany transfers were double-counted. Superseded by the revised v2 snapshot.',
           signature: {
@@ -1174,7 +1185,12 @@ const CASHFLOW_V2: FullContext = {
     ctx_id: `acdp://${AUTH_A}/b1ae7711-2a4d-4cb3-9762-3f6980b3a6e1`,
     lineage_id: CASHFLOW_V1.body.lineage_id,
     origin_registry: AUTH_A,
-    created_at: iso(86400),
+    // `iso(240)`, not `iso(86400)`. v2 `supersedes` v1 and the chain is served
+    // oldest -> newest, but a day-old v2 superseded a four-minute-old v1 — the
+    // version chain on /lineage read backwards in time. v1 is published at
+    // `iso(272)` by a run that started at `iso(280)`, so the revision lands
+    // between that and the retraction at `iso(210)`. Part of #85.
+    created_at: iso(240),
     ...MOCK_CRYPTO.cashV2.hashed,
     content_hash: MOCK_CRYPTO.cashV2.content_hash,
     signature: MOCK_CRYPTO.cashV2.signature,

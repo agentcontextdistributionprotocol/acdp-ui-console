@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -794,22 +795,64 @@ function secondsAgo(ts: string | null | undefined): number | null {
   return Math.round((Date.now() - Date.parse(ts)) / 1000);
 }
 
+/** `sha256(JSON.stringify(null))`, i.e. the digest meaning "this run has no such field". */
+const ABSENT = '74234e98afe7';
+
+/** Short digest of a nested field, so deep objects are pinned without transcribing them. */
+function digest(v: unknown): string {
+  return createHash('sha256').update(JSON.stringify(v ?? null)).digest('hex').slice(0, 12);
+}
+
 /**
- * Every run's identity-and-timing fields as they were BEFORE the reorder,
- * keyed by id. Pinned as a fixture so the reorder is provably position-only:
- * any edit to a value — a status, a count, a timestamp — fails here even though
- * the ids and the ordering both still check out.
+ * Every run's ENTIRE content as it was BEFORE the reorder, keyed by id, so the
+ * reorder is provably position-only: an edit to any field of any run fails here
+ * even though the ids and the ordering both still check out.
  *
- * Absolute timestamps cannot be pinned (they are recomputed from `Date.now()`
- * at import), so the offsets are, which is exactly what `iso(n)` expresses.
+ * THIS PINS ALL EIGHT RUNS AND ALL TEN FIELDS, and the first version did not —
+ * it listed three runs and five fields, which left `tenantId`, `registries`,
+ * `inputs`, `trust` and `result` unpinned on every run and the other five runs
+ * unpinned entirely. Demonstrated, not theorised: editing `run-fan-3`'s
+ * `startedAt`, `status` or `contextsCount` left the whole suite green, and
+ * `contextsCount` is what feeds the `/lineage` default this phase went to
+ * trouble to protect.
+ *
+ * The deep fields are pinned by DIGEST rather than transcribed. A literal copy
+ * of `run-revoked-1.trust` is forty lines of fixture in a test that is not about
+ * revocation, and a reader checking it would be diffing two copies of the same
+ * thing; the digest is complete, and the failure message prints the live JSON so
+ * a real mismatch is still readable.
+ *
+ * TIMES ARE PINNED RELATIVE TO THE FIRST RUN, EXACTLY, with no tolerance.
+ * `iso(a) - iso(b)` is exactly `(b - a)` seconds whatever `Date.now()` was, so
+ * every gap in the dataset is an exact integer. Only the anchor itself is
+ * wall-clock-relative, so only the anchor gets a tolerance — one assertion
+ * instead of sixteen. The previous version's ±30s applied to every timestamp and
+ * exceeded the live run's own `iso(24)`, so that run's `startedAt` could have
+ * more than doubled undetected.
  */
 const RUNS_BEFORE_REORDER: Record<
   string,
-  { scenarioId: string; status: string; startedSecondsAgo: number; completedSecondsAgo: number | null; contextsCount: number }
+  {
+    scenarioId: string;
+    status: string;
+    startedAfterAnchor: number;
+    completedAfterAnchor: number | null;
+    contextsCount: number;
+    tenantId: string;
+    registries: string;
+    inputs: string;
+    trust: string;
+    result: string;
+  }
 > = {
-  [LIVE_RUN_ID]: { scenarioId: 's5_cross_registry', status: 'running', startedSecondsAgo: 24, completedSecondsAgo: null, contextsCount: 1 },
-  'run-historical-1': { scenarioId: 's24_historical_key', status: 'completed', startedSecondsAgo: 150, completedSecondsAgo: 138, contextsCount: 1 },
-  'run-revoked-1': { scenarioId: 's32_key_revocation', status: 'completed', startedSecondsAgo: 1900, completedSecondsAgo: 1850, contextsCount: 3 },
+  [LIVE_RUN_ID]: { scenarioId: 's5_cross_registry', status: 'running', startedAfterAnchor: 0, completedAfterAnchor: null, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local,registry-b.playground.local', inputs: '12322baff342', trust: ABSENT, result: ABSENT },
+  'run-historical-1': { scenarioId: 's24_historical_key', status: 'completed', startedAfterAnchor: 126, completedAfterAnchor: 114, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '2ff7435f503c', trust: 'd20bb0a63bf5', result: ABSENT },
+  'run-a1b2c3d4': { scenarioId: 's1_single_publish', status: 'completed', startedAfterAnchor: 256, completedAfterAnchor: 247, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: 'a002ce23cc3b', trust: 'e396627b2727', result: ABSENT },
+  'run-c4d5e6f7': { scenarioId: 's10_tenant_isolation', status: 'completed', startedAfterAnchor: 696, completedAfterAnchor: 686, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '9915c01592d2', trust: 'b476f4c4514c', result: '7b28676d3dc2' },
+  'run-9d8e7f6a': { scenarioId: 's15_supersession_lineage', status: 'failed', startedAfterAnchor: 1296, completedAfterAnchor: 1286, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '02cb67ee5095', trust: '49faf1d6eead', result: ABSENT },
+  'run-revoked-1': { scenarioId: 's32_key_revocation', status: 'completed', startedAfterAnchor: 1876, completedAfterAnchor: 1826, contextsCount: 3, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '3d66fa1d6152', trust: '56312ec9329b', result: ABSENT },
+  'run-fan-3': { scenarioId: 's3_fanout', status: 'completed', startedAfterAnchor: 3576, completedAfterAnchor: 3556, contextsCount: 4, tenantId: 'default', registries: 'registry-a.playground.local', inputs: 'b2e094463307', trust: 'd50f5a52bf87', result: ABSENT },
+  'run-cross-org-1': { scenarioId: 's8_cross_org', status: 'completed', startedAfterAnchor: 7176, completedAfterAnchor: 7146, contextsCount: 2, tenantId: 'default', registries: 'registry-a.playground.local,registry-b.playground.local', inputs: '473789a75cae', trust: '36ce9993ab88', result: ABSENT },
 };
 
 describe('MOCK_RUNS reads in time order', () => {
@@ -842,23 +885,51 @@ describe('MOCK_RUNS reads in time order', () => {
     expect(MOCK_DASHBOARD.recentRuns[0].runId).toBe(LIVE_RUN_ID);
   });
 
+  it('pins every run, so the fixture cannot describe a subset of it', () => {
+    // The guard on the guard. With three of eight runs pinned, five runs could
+    // be edited freely and the fixture still looked authoritative.
+    expect(Object.keys(RUNS_BEFORE_REORDER).sort()).toEqual([...MOCK_RUNS].map((r) => r.runId).sort());
+  });
+
   it('moved positions and nothing else', () => {
-    // The assertion a set-of-ids check cannot make. A few seconds of tolerance
-    // because `iso()` is evaluated at module import and `Date.now()` here is
-    // not — the gap is the suite's own start-up time.
+    // The assertion a set-of-ids check cannot make: it passes just as happily
+    // when a `status` or a `startedAt` was edited during the move.
+    const anchor = Date.parse(MOCK_RUNS.find((r) => r.runId === LIVE_RUN_ID)!.startedAt);
+    const afterAnchor = (ts: string | null | undefined) =>
+      ts ? Math.round((anchor - Date.parse(ts)) / 1000) : null;
+
     for (const [runId, before] of Object.entries(RUNS_BEFORE_REORDER)) {
       const run = MOCK_RUNS.find((r) => r.runId === runId);
       expect(run, `${runId} is missing`).toBeDefined();
-      expect(run!.scenarioId).toBe(before.scenarioId);
-      expect(run!.status).toBe(before.status);
-      expect(run!.contextsCount).toBe(before.contextsCount);
-      expect(Math.abs(secondsAgo(run!.startedAt)! - before.startedSecondsAgo)).toBeLessThanOrEqual(30);
-      if (before.completedSecondsAgo === null) {
-        expect(run!.completedAt ?? null).toBeNull();
-      } else {
-        expect(Math.abs(secondsAgo(run!.completedAt)! - before.completedSecondsAgo)).toBeLessThanOrEqual(30);
-      }
+      const actual = {
+        scenarioId: run!.scenarioId,
+        status: run!.status,
+        startedAfterAnchor: afterAnchor(run!.startedAt),
+        completedAfterAnchor: afterAnchor(run!.completedAt),
+        contextsCount: run!.contextsCount,
+        tenantId: run!.tenantId,
+        registries: run!.registries.join(','),
+        inputs: digest(run!.inputs),
+        trust: digest(run!.trust),
+        result: digest((run as unknown as { result?: unknown }).result),
+      };
+      // One `toEqual` over the whole row rather than ten assertions: the failure
+      // message then shows every differing field at once, and a field added to
+      // `CpRun` later cannot be silently omitted from the comparison.
+      expect(
+        actual,
+        `${runId} changed. trust=${JSON.stringify(run!.trust)} inputs=${JSON.stringify(run!.inputs)} result=${JSON.stringify((run as unknown as { result?: unknown }).result)}`,
+      ).toEqual(before);
     }
+  });
+
+  it('anchors the whole dataset near NOW, which is the one thing offsets cannot pin', () => {
+    // Every gap above is exact and `Date.now()`-independent, so a uniform shift
+    // of all eight timestamps would pass them all. This is the assertion that
+    // catches it — and the only one that needs a tolerance, for the gap between
+    // module import (where `iso()` evaluates) and here.
+    expect(secondsAgo(MOCK_RUNS.find((r) => r.runId === LIVE_RUN_ID)!.startedAt)!).toBeGreaterThanOrEqual(24);
+    expect(secondsAgo(MOCK_RUNS.find((r) => r.runId === LIVE_RUN_ID)!.startedAt)!).toBeLessThanOrEqual(39);
   });
 
   it('keeps all eight runs', () => {
@@ -901,44 +972,102 @@ describe('MOCK_RUNS reads in time order', () => {
 // every one of these events is within 24 hours of the receipt clock — and it is
 // the one that fails on a revert.
 //
-// The pairs are DERIVED from the data rather than listed, so a fourth
-// receipt-bearing context added later is covered without anyone remembering to
-// extend a list.
+// The receipt-bearing set is DERIVED from `MOCK_CRYPTO` — every entry carrying a
+// `registry_receipt` — not listed. The first version of this block hardcoded the
+// attested context's ctx_id while its comment claimed the pairs were derived,
+// which was false twice over: it also hardcoded the authority. A third
+// receipt-bearing fixture added later is now covered without anyone remembering
+// to extend anything, and the one documented exception is subtracted by name so
+// that the exception is visible rather than implied.
 // ══════════════════════════════════════════════════════════════════════
 
-const ATTESTED_CTX = `acdp://registry-a.playground.local/5dcdb05d-bfbc-4088-936b-da19eec25319`;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-describe('the attested context and the events describing it share a clock', () => {
-  const receiptTs = Date.parse(MockCrypto.MOCK_CRYPTO.attested.registry_receipt.created_at);
-  const attested = MOCK_CONTEXTS.find((c) => c.body.ctx_id === ATTESTED_CTX)!;
+/**
+ * Every fixture context that carries a registry receipt, derived. A receipt
+ * names its own `ctx_id` and `created_at` (RFC-ACDP-0010 §8), so the pairing
+ * comes out of the data with nothing to keep in sync.
+ */
+type ReceiptBearing = { name: string; ctxId: string; receiptTs: number };
+const RECEIPT_BEARING: ReceiptBearing[] = Object.entries(MockCrypto.MOCK_CRYPTO)
+  .map(([name, entry]) => {
+    // A cast rather than a type predicate: `MOCK_CRYPTO`'s entries are a
+    // heterogeneous union whose members do not all declare the key, and `in`
+    // does not narrow across that. The shape is asserted at runtime below
+    // (`receiptTs` finite, ctx_id resolves to a real fixture), which is the
+    // check that would actually catch a change here.
+    const receipt = (entry as { registry_receipt?: { ctx_id: string; created_at: string } }).registry_receipt;
+    return receipt ? { name, ctxId: receipt.ctx_id, receiptTs: Date.parse(receipt.created_at) } : null;
+  })
+  .filter((r): r is ReceiptBearing => r !== null);
 
-  it('has an attested context whose created_at IS the receipt clock', () => {
-    // The premise everything below rests on. If this derivation were ever
-    // replaced by a literal the receipt cross-check would break, and these
-    // tests would be measuring against the wrong thing while still passing.
-    expect(attested).toBeDefined();
-    expect(Date.parse(attested.body.created_at)).toBe(receiptTs);
+/**
+ * `arcticSource` is the live run's own first node, and its wall-clock events are
+ * a documented structural exception — see the `ev-1`/`ev-2` block below, which
+ * proves the exception is still needed rather than assuming it. Everything else
+ * with a receipt is held to the receipt clock.
+ */
+const CLOCK_EXCEPTIONS = ['arcticSource'];
+const ON_RECEIPT_CLOCK = RECEIPT_BEARING.filter((r) => !CLOCK_EXCEPTIONS.includes(r.name));
+
+/**
+ * Every fixture context that has a `created_at` at all, deduplicated by ctx_id.
+ * `MOCK_CONTEXTS` is not the whole set — `CASHFLOW_V2` exists only inside
+ * `MOCK_LINEAGE_CHAINS`, and it was one of the three timestamps #85's second
+ * half had to move, so a guard reading only `MOCK_CONTEXTS` would have missed it.
+ */
+const ALL_FIXTURE_CONTEXTS = [...new Map(
+  [...MOCK_CONTEXTS, ...Object.values(MOCK_LINEAGE_CHAINS).flat()].map((c) => [c.body.ctx_id, c]),
+).values()];
+
+describe('the receipt-bearing contexts and the events describing them share a clock', () => {
+  it('derives more than one receipt-bearing context, and fences exactly one', () => {
+    // Without this the loops below could go quiet: a rename in `mock-crypto.ts`
+    // that broke the `registry_receipt` shape would empty the derived list and
+    // every assertion keyed off it would pass by describing nothing.
+    expect(RECEIPT_BEARING.length).toBeGreaterThanOrEqual(2);
+    expect(ON_RECEIPT_CLOCK.length).toBeGreaterThanOrEqual(1);
+    expect(RECEIPT_BEARING.length - ON_RECEIPT_CLOCK.length).toBe(1);
+    for (const r of RECEIPT_BEARING) expect(Number.isFinite(r.receiptTs)).toBe(true);
   });
 
-  it('dates every event about it within a day of that clock', () => {
-    // THE GATING ASSERTION. Fails on `iso(140)` / `iso(110)` / `iso(80)`,
-    // which are ~81 days away from the receipt.
-    const referencing = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ATTESTED_CTX);
-    expect(referencing.length).toBe(3);
+  it.each(ON_RECEIPT_CLOCK)('$name: created_at IS its receipt clock', ({ ctxId, receiptTs }) => {
+    // The premise everything below rests on, now asserted per context rather
+    // than once for a hardcoded one. If a derivation were ever replaced by a
+    // literal, `verifyReceipt`'s cross-check (RFC-ACDP-0010 §8 step 3) would
+    // break while these tests kept measuring against the wrong thing.
+    const ctx = MOCK_CONTEXTS.find((c) => c.body.ctx_id === ctxId);
+    expect(ctx, `no fixture context for ${ctxId}`).toBeDefined();
+    expect(Date.parse(ctx!.body.created_at)).toBe(receiptTs);
+  });
+
+  it.each(ON_RECEIPT_CLOCK)('$name: every event about it is within a day of that clock', ({ ctxId, receiptTs }) => {
+    // THE GATING ASSERTION. Fails on `iso(140)` / `iso(110)` / `iso(80)`, which
+    // are ~81 days away from the receipt.
+    const referencing = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ctxId);
+    expect(referencing.length).toBeGreaterThan(0);
     for (const e of referencing) {
       const drift = Math.abs(Date.parse(e.eventTs) - receiptTs);
       expect(drift, `${e.id} is ${Math.round(drift / DAY_MS)} days from the receipt clock`).toBeLessThanOrEqual(DAY_MS);
     }
   });
+});
 
-  it('never dates an event about it BEFORE it existed', () => {
-    // The lower bound. Not the gate — it already held — but a context
-    // retrieved before it was created is incoherent in the other direction and
-    // costs one line to rule out.
-    for (const e of MOCK_CONTEXT_EVENTS.filter((ev) => ev.ctxId === ATTESTED_CTX)) {
-      expect(Date.parse(e.eventTs)).toBeGreaterThanOrEqual(receiptTs);
-    }
+const ATTESTED_CTX = ON_RECEIPT_CLOCK[0].ctxId;
+
+describe('the attested context and the events describing it share a clock', () => {
+  const receiptTs = ON_RECEIPT_CLOCK[0].receiptTs;
+  const attested = MOCK_CONTEXTS.find((c) => c.body.ctx_id === ATTESTED_CTX)!;
+
+  it('is the fixture with the three-event lifecycle the phase moved', () => {
+    // The 24h bound and the created_at derivation are asserted for EVERY
+    // receipt-bearing context above; what is specific to this one is that it
+    // carries the publish/retract/republish triple, which is what the rest of
+    // this block is about. Asserting the count here keeps the loops below from
+    // going quiet if the triple is ever split across contexts.
+    expect(attested).toBeDefined();
+    expect(MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ATTESTED_CTX)).toHaveLength(3);
+    expect(Number.isFinite(receiptTs)).toBe(true);
   });
 
   it('orders publish < retract < republish strictly', () => {
@@ -962,6 +1091,36 @@ describe('the attested context and the events describing it share a clock', () =
     expect(mirror('republished')).toBe(feed('ev-9'));
   });
 
+  it('keeps EVERY lifecycle mirror equal to its feed event, not just this one', () => {
+    // The class, derived. `ev-10`/the cashflow retraction is the second such
+    // pair and was moved in the same commit; a third context added with a
+    // lifecycle mirror is covered with nothing to extend.
+    //
+    // Matched on (ctx_id, event_type) because that is the identity the two
+    // surfaces share — the feed's `id` is a control-plane event id and the
+    // mirror's `event_id` is a registry lifecycle id, so they are not the same
+    // key and never will be.
+    const FEED_TYPE: Record<string, string> = {
+      retracted: 'context_retracted',
+      republished: 'context_republished',
+    };
+    let pairs = 0;
+    for (const ctx of ALL_FIXTURE_CONTEXTS) {
+      for (const l of ctx.registry_state?.lifecycle_events ?? []) {
+        const wanted = FEED_TYPE[l.event_type];
+        expect(wanted, `no feed eventType known for lifecycle '${l.event_type}'`).toBeDefined();
+        const feed = MOCK_CONTEXT_EVENTS.filter(
+          (e) => e.ctxId === ctx.body.ctx_id && e.eventType === wanted,
+        );
+        expect(feed.length, `${ctx.body.ctx_id}: ${l.event_type} appears ${feed.length}x in the feed`).toBe(1);
+        expect(l.occurred_at, `${ctx.body.ctx_id} ${l.event_type}: mirror vs feed`).toBe(feed[0].eventTs);
+        pairs++;
+      }
+    }
+    // Three today: the attested retract/republish, and the cashflow retraction.
+    expect(pairs).toBeGreaterThanOrEqual(3);
+  });
+
   it('derives the dates rather than hardcoding them', () => {
     // Comments STRIPPED first. The explanatory comment above these values has
     // to name the date in order to state the rule, so a whole-file grep would
@@ -970,9 +1129,107 @@ describe('the attested context and the events describing it share a clock', () =
     const src = readFileSync(join(process.cwd(), 'lib/data/mock-data.ts'), 'utf8');
     const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     expect(code).not.toContain('2026-07-06');
-    // And the derivation really is from the receipt, not from a second copy of
-    // the same instant kept somewhere else.
-    expect(code).toContain('MOCK_CRYPTO.attested.registry_receipt.created_at');
+    // And the derivation really is from the receipt. The whole-file
+    // `toContain` that used to stand here was false comfort: it was satisfied by
+    // an unrelated occurrence further down the file, so replacing the base with
+    // `new Date(1783339020000).toISOString()` — the same instant, expressed as a
+    // magic number — decoupled the events from the receipt and killed no test.
+    // Behaviourally identical today, and stale the moment the receipt fixture is
+    // regenerated. So the assertion is on the DECLARATION, not the file.
+    const decl = /const ATTESTED_RECEIPT_TS\s*=\s*([^;]+);/.exec(code)?.[1];
+    expect(decl, 'ATTESTED_RECEIPT_TS is not declared as a single const').toBeDefined();
+    expect(decl).toContain('MOCK_CRYPTO.attested.registry_receipt.created_at');
+    // The three event timestamps are offsets FROM that base, not independent
+    // values that happen to land nearby.
+    for (const name of ['ATTESTED_PUBLISHED_TS', 'ATTESTED_RETRACTED_TS', 'ATTESTED_REPUBLISHED_TS']) {
+      const rhs = new RegExp(`const ${name}\\s*=\\s*([^;]+);`).exec(code)?.[1];
+      expect(rhs, `${name} is not declared as a single const`).toBeDefined();
+      expect(rhs, `${name} does not derive from the receipt base`).toContain('ATTESTED_RECEIPT_TS');
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The CLASS, not the instance (#85 symptom 2: "lifecycle events contradict
+// their own context").
+//
+// The first version of this phase guarded one context and its comment claimed to
+// guard the class. Writing the derived guard the plan asked for immediately found
+// a second live instance the scoped one could not see: the cashflow v1 snapshot
+// was `created_at: iso(272)` and RETRACTED at `iso(3600)` — fifty-five minutes
+// before it existed — in both the feed and its own lifecycle mirror. And its
+// revision, `CASHFLOW_V2`, was dated `iso(86400)`: a day-old v2 superseding a
+// four-minute-old v1, so the version chain on /lineage read backwards. Both are
+// fixed in the same commit as this guard, which is the point — a guard that only
+// covers the instance you already knew about has not established anything.
+// ══════════════════════════════════════════════════════════════════════
+describe('no event is dated before the context it describes', () => {
+  it('covers every fixture context, derived, not a list', () => {
+    expect(ALL_FIXTURE_CONTEXTS.length).toBeGreaterThanOrEqual(5);
+    // `CASHFLOW_V2` lives only in `MOCK_LINEAGE_CHAINS`, and it is exactly the
+    // fixture a `MOCK_CONTEXTS`-only guard would have missed.
+    const inContexts = new Set(MOCK_CONTEXTS.map((c) => c.body.ctx_id));
+    expect(ALL_FIXTURE_CONTEXTS.some((c) => !inContexts.has(c.body.ctx_id))).toBe(true);
+    for (const c of ALL_FIXTURE_CONTEXTS) expect(Number.isFinite(Date.parse(c.body.created_at))).toBe(true);
+  });
+
+  it('holds for the events feed', () => {
+    // No exception list is needed here, which is worth stating: `ev-1`/`ev-2`
+    // are the documented wall-clock exception for the UPPER bound only — they
+    // are dated NOW against an 81-day-old context, so they are comfortably
+    // AFTER it. The lower bound is unconditional.
+    const createdAt = new Map(ALL_FIXTURE_CONTEXTS.map((c) => [c.body.ctx_id, Date.parse(c.body.created_at)]));
+    let checked = 0;
+    for (const e of MOCK_CONTEXT_EVENTS) {
+      const created = e.ctxId ? createdAt.get(e.ctxId) : undefined;
+      if (created === undefined) continue;
+      const lag = Math.round((Date.parse(e.eventTs) - created) / 1000);
+      expect(lag, `feed ${e.id} (${e.eventType}) on ${e.ctxId} is ${-lag}s BEFORE created_at`).toBeGreaterThanOrEqual(0);
+      checked++;
+    }
+    // Without this the loop above is vacuous the day `ctxId` is renamed.
+    expect(checked).toBeGreaterThanOrEqual(6);
+  });
+
+  it('holds for the lifecycle mirrors', () => {
+    let checked = 0;
+    for (const ctx of ALL_FIXTURE_CONTEXTS) {
+      const created = Date.parse(ctx.body.created_at);
+      for (const l of ctx.registry_state?.lifecycle_events ?? []) {
+        const lag = Math.round((Date.parse(l.occurred_at) - created) / 1000);
+        expect(
+          lag,
+          `lifecycle ${l.event_type} on ${ctx.body.ctx_id} is ${-lag}s BEFORE created_at`,
+        ).toBeGreaterThanOrEqual(0);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(3);
+  });
+
+  it('serves every version chain oldest-first, which is how it is labelled', () => {
+    // `MOCK_LINEAGE_CHAINS` is documented "oldest → newest" and
+    // `lineage-chain.tsx` renders it in array order, so the array order IS the
+    // claim. The cashflow chain violated it: v2 predated v1 by a day.
+    //
+    // `<=` rather than `<` because two versions of one context CAN share a
+    // second in principle; what cannot happen is a later version dated earlier.
+    let multi = 0;
+    for (const [lineageId, chain] of Object.entries(MOCK_LINEAGE_CHAINS)) {
+      for (let i = 1; i < chain.length; i++) {
+        const prev = Date.parse(chain[i - 1].body.created_at);
+        const cur = Date.parse(chain[i].body.created_at);
+        expect(prev, `${lineageId}: version ${i + 1} predates version ${i}`).toBeLessThanOrEqual(cur);
+        multi++;
+      }
+      // And `supersedes`, where present, points BACK down the chain rather than
+      // being a second, contradicting statement of the same order.
+      for (let i = 1; i < chain.length; i++) {
+        const sup = (chain[i].body as { supersedes?: string | null }).supersedes;
+        if (sup) expect(chain.slice(0, i).map((c) => c.body.ctx_id)).toContain(sup);
+      }
+    }
+    expect(multi, 'no chain has two versions, so the ordering claim is untested').toBeGreaterThanOrEqual(1);
   });
 });
 
