@@ -20,6 +20,10 @@ import {
 import * as MockData from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
+import {
+  REGISTRY_ADVERTISABLE_PROFILES,
+  NOT_ADVERTISABLE,
+} from '../support/advertisable-profiles';
 
 describe('mock scenarios', () => {
   it('covers the full catalog', () => {
@@ -586,55 +590,12 @@ describe('run-revoked-1: the RFC-ACDP-0014 fixture', () => {
 // deliberately about the CLASS of drift rather than this instance.
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * A literal mirror of `REGISTRY_ADVERTISABLE_PROFILES` from
- * `acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340` — the set
- * `acdp-registry-server/src/main.rs:415-431` enforces at STARTUP, so a registry
- * advertising anything outside it does not run.
- *
- * Mirrored rather than imported on purpose. A cross-repo import is not
- * available here and would be wrong if it were: this repo must not take a
- * dependency on a Rust crate's source layout.
- *
- * BE PRECISE ABOUT WHAT THE MIRROR CAN AND CANNOT DETECT, because the first
- * version of this comment got it backwards. A hand-copied list has no coupling
- * to its source, so nothing here observes upstream at all. The two staleness
- * directions are not symmetric:
- *
- *   Upstream ADDS an eighth profile → the mirror is now STRICTER than reality.
- *     A fixture advertising the new id fails the subset check below. That is a
- *     false red, which is loud and self-explaining — annoying, not dangerous.
- *
- *   Upstream REMOVES or RENAMES one → the mirror is now MORE PERMISSIVE than
- *     reality. A fixture advertising the dead id passes here while a real
- *     registry refuses to boot on it — the exact defect #95 was. Nothing in
- *     this repo can see that happen. The length assertion below does not help:
- *     the removal changes a number upstream and no number here.
- *
- * So the guard that follows makes NO claim about upstream. What it does pin is
- * the local failure mode, which is the likely one: the cheapest way to make a
- * fixture pass the subset check is to add the invalid id to this mirror, and
- * `acdp-consumer`/`acdp-federated` are exactly the two values that would be
- * added. Widening the mirror is what it catches.
- *
- * The mitigation for the unguarded direction is not a test, it is provenance:
- * the file:line above is where to re-check, and upstream keeps ITS copy honest
- * with a conformance test (`registry_advertisable_profiles_matches_spec`) that
- * recomputes the set from the pinned spec's `registries/profiles.json`, so the
- * const cannot drift from the SPEC without upstream CI going red first. A
- * machine-readable list this repo could actually consume is requested in
- * `acdp-registry-rs#347`; until one exists, a mirror plus a citation is the
- * honest ceiling.
- */
-const REGISTRY_ADVERTISABLE_PROFILES = [
-  'acdp-registry-core',
-  'acdp-registry-discovery',
-  'acdp-registry-federated',
-  'acdp-registry-receipts',
-  'acdp-registry-head-receipts',
-  'acdp-registry-transparency-log',
-  'acdp-registry-lifecycle',
-];
+// `REGISTRY_ADVERTISABLE_PROFILES` and `NOT_ADVERTISABLE` are imported from
+// `test/support/advertisable-profiles.ts`, where the mirror's provenance and
+// the precise limits of what a hand-copy can detect are written out. Shared
+// because `registry-card-profiles.test.tsx` makes a DIFFERENT claim about the
+// same seven strings, and two copies of a mirror can disagree.
+
 
 /**
  * The acdp version each profile first appears in, for the version-coherence
@@ -664,14 +625,22 @@ function atLeast(actual: string, required: string): boolean {
 }
 
 describe('demo registry profiles are ones a real registry would start with', () => {
-  it('cannot be widened to launder an invalid id through the subset check', () => {
-    // NOT a staleness guard — see the docblock; a local literal compared to a
-    // local number observes nothing upstream, and the first version of this test
-    // claimed otherwise. What it guards is the local shortcut: the cheapest way
-    // to make an invalid fixture pass the subset check below is to add the id
-    // here, and these are the two ids that would be added.
-    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-consumer');
-    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-federated');
+  it('cannot be widened to launder either of the two ids #95 removed', () => {
+    // NOT a staleness guard — see the mirror's own docblock; a local literal
+    // compared to a local number observes nothing upstream, and the first
+    // version of this test claimed otherwise. What it guards is the local
+    // shortcut: the cheapest way to make an invalid fixture pass the subset
+    // check below is to add the id here, and these are the two ids that would
+    // be added.
+    //
+    // The title says "either of the two" rather than "an invalid id" because
+    // that is what the body delivers. Round 2 of the gate measured the wider
+    // claim and found it false: inventing a WELL-FORMED id and adding it to the
+    // mirror, the fixture, `PROFILE_MIN_VERSION` and `PROFILE_INFO` together —
+    // four coordinated edits — passes everything. Widening the mirror ALONE is
+    // caught; a four-file conspiracy is not, and no test in this repo claims to
+    // catch one.
+    for (const id of NOT_ADVERTISABLE) expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain(id);
     // Every entry must look like a registry profile id. `acdp-consumer` fails
     // this on its own shape, which is the property that generalises: a consumer
     // or agent profile smuggled in later is caught without being named.
@@ -696,6 +665,12 @@ describe('demo registry profiles are ones a real registry would start with', () 
     // Not a taste call. `acdp-playground/config/registry-b.toml:8` is
     // `["acdp-registry-core", "acdp-registry-discovery"]`, and this demo depicts
     // that playground — so the set is copied, and copied in order.
+    //
+    // TWO, not three. Issue #95's parenthetical says registry-b is configured
+    // with `acdp-registry-federated` as well. It is not — re-read at
+    // `registry-b.toml:8` while implementing this, and the line has exactly the
+    // two ids above. The issue is wrong on that detail and this fixture follows
+    // the config, so nobody re-litigates it from the issue text later.
     expect(MOCK_CAPABILITIES.b.profiles).toEqual([
       'acdp-registry-core',
       'acdp-registry-discovery',

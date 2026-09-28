@@ -13,6 +13,16 @@
 // two entries is only safe if an id with NO entry still renders its own text,
 // which is the assertion that makes the deletion a non-event rather than a
 // regression waiting for a future profile.
+//
+// WHY THIS FILE ASSERTS ON `title`, against CLAUDE.md's rule. The rule — "assert
+// on rendered text, never on a `title` tooltip" — exists because a trust
+// surface that discloses only on hover is invisible to touch, to the keyboard
+// and to a screen reader, so it is not disclosing. Nothing here is a trust
+// verdict: the chip's own TEXT is the profile id, which is the fact, and the
+// tooltip is a gloss on it. What is asserted is that the gloss exists and is
+// reachable for every advertisable id — the opposite failure from the one the
+// rule guards. The tooltip predates this change; whether it should be a tooltip
+// at all is a separate question, and it is filed rather than settled here.
 // ══════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +31,10 @@ import { render, cleanup, within } from '@testing-library/react';
 import { RegistryCard } from '@/components/registries/registry-card';
 import { MOCK_CAPABILITIES } from '@/lib/data/mock-data';
 import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
+import {
+  REGISTRY_ADVERTISABLE_PROFILES,
+  NOT_ADVERTISABLE,
+} from '../support/advertisable-profiles';
 
 afterEach(cleanup);
 
@@ -38,22 +52,12 @@ function chips(container: HTMLElement): string[] {
 
 /**
  * The seven ids a real registry may advertise, in the order upstream declares
- * them (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`).
- * The same mirror as `mock-data.test.ts`, kept here rather than shared because
- * the claim differs: there it bounds what the FIXTURES may say, here it bounds
- * what the component must have COPY for. The mirror's limits — what a hand-copy
- * can and cannot detect about upstream — are written out at its definition in
- * `mock-data.test.ts`.
+ * them. THE SAME OBJECT `mock-data.test.ts` uses, not a second copy of it: the
+ * claim differs — there it bounds what the FIXTURES may say, here it bounds
+ * what the component must have COPY for — but the set does not, and two copies
+ * of a mirror can drift apart. Provenance and limits live at its definition.
  */
-const ADVERTISABLE = [
-  'acdp-registry-core',
-  'acdp-registry-discovery',
-  'acdp-registry-federated',
-  'acdp-registry-receipts',
-  'acdp-registry-head-receipts',
-  'acdp-registry-transparency-log',
-  'acdp-registry-lifecycle',
-];
+const ADVERTISABLE = REGISTRY_ADVERTISABLE_PROFILES;
 
 describe('registry-b renders the profiles it now advertises', () => {
   it('shows exactly two chips, and the two valid ids', () => {
@@ -145,17 +149,79 @@ describe('an unknown profile id still reaches the screen', () => {
   });
 });
 
+/**
+ * The keys of `PROFILE_INFO`, read out of the component's source.
+ *
+ * Source rather than an import because `PROFILE_INFO` is module-private, and
+ * exporting it purely so a test can read it would widen the component's API to
+ * suit its test. Scoped to the object literal itself — a key is a quoted string
+ * at the start of a line, optionally bracketed — so a colon inside a `title`
+ * string cannot be mistaken for one.
+ */
+function parseProfileKeys(src: string): string[] {
+  const start = src.indexOf('const PROFILE_INFO');
+  if (start < 0) throw new Error('PROFILE_INFO not found — has it been renamed?');
+  const open = src.indexOf('{', start);
+  const close = src.indexOf('\n};', open);
+  if (open < 0 || close < 0) throw new Error('PROFILE_INFO object literal not delimited as expected');
+  const body = src
+    .slice(open + 1, close)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  return [...body.matchAll(/^\s*\[?\s*['"]([^'"]+)['"]\s*\]?\s*:/gm)].map((m) => m[1]);
+}
+
+function profileInfoKeys(): string[] {
+  const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
+  const keys = parseProfileKeys(src);
+  // Anti-vacuity: a parser that silently returned [] would make the set
+  // assertions below pass against an empty object AND fail-open on a rename.
+  expect(keys.length).toBeGreaterThan(0);
+  return keys;
+}
+
 describe('the dead tooltip copy is gone', () => {
-  it('names no profile id that no registry can advertise', () => {
-    // A source assertion because the copy is unreachable BY DEFINITION — no
-    // fixture emits these ids any more, so no render can demonstrate their
-    // absence. This is the only way to see that they are gone.
-    const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    expect(code).not.toContain("'acdp-consumer'");
-    expect(code).not.toContain("'acdp-federated'");
+  it('has copy for EXACTLY the advertisable seven — no more, no fewer', () => {
+    // A source assertion because unreachable copy is unreachable BY DEFINITION:
+    // no fixture emits an invalid id any more, so no render can demonstrate its
+    // absence. Reading the keys is the only way to see them.
+    //
+    // It reads the KEY SET rather than grepping for two strings, and round 2 of
+    // the gate is why. The old version was two exact single-quoted substring
+    // checks, so `["acdp-consumer"]: { title: … }` — the very copy #95 deleted,
+    // re-added in bracket form with double quotes — passed the whole suite,
+    // lint and typecheck. So did an eighth key of any other name, while the
+    // component's docblock and this test's own title both claimed the keys are
+    // "exactly" the advertisable set. Set equality is the assertion those
+    // claims were always making.
+    expect(new Set(profileInfoKeys())).toEqual(new Set(ADVERTISABLE));
+    // Stated separately so a failure says WHICH direction drifted rather than
+    // just that two sets differ.
+    for (const id of NOT_ADVERTISABLE) expect(profileInfoKeys()).not.toContain(id);
     // The valid federation id is untouched — the removal must not have taken it.
-    expect(code).toContain("'acdp-registry-federated'");
+    expect(profileInfoKeys()).toContain('acdp-registry-federated');
+  });
+
+  it('GUARDS THE GUARD: the key reader sees every quoting style an editor might use', () => {
+    // `profileInfoKeys` is a regex over source, so its blind spots are the
+    // test's blind spots. Anything it cannot see is a key that could be added
+    // unnoticed — which is exactly how the substring version failed.
+    const seen = parseProfileKeys(`const PROFILE_INFO: Record<string, X> = {
+  'plain-single': { title: 'a' },
+  "plain-double": { title: 'b' },
+  ['bracket-single']: { title: 'c' },
+  ["bracket-double"]: { title: 'd' },
+  'with-colon-in-title': { title: 'Lineage: signed heads' },
+};`);
+    expect(seen).toEqual([
+      'plain-single',
+      'plain-double',
+      'bracket-single',
+      'bracket-double',
+      'with-colon-in-title',
+    ]);
+    // And it does not mistake a nested property for a key.
+    expect(seen).not.toContain('title');
   });
 
   it('keeps REACHABLE copy for every advertisable profile, not just a line in the file', () => {

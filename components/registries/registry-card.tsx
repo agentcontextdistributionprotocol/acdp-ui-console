@@ -11,7 +11,12 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
  *
  * The seven keys here are exactly `REGISTRY_ADVERTISABLE_PROFILES`
  * (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`), which
- * is the set a real registry will start with. Entries for `acdp-consumer` and
+ * is the set a real registry will start with — and "exactly" is enforced, not
+ * asserted in prose: `registry-card-profiles.test.tsx` reads these keys out of
+ * this file and compares them to that set. It did not, for one round: the guard
+ * was a substring check for two names, so an eighth key under any other name,
+ * or either deleted name re-added in bracket form, passed everything while this
+ * sentence quietly became false. Entries for `acdp-consumer` and
  * `acdp-federated` were removed with #95: the first is a profile a registry is
  * forbidden to advertise and the second is not a spec id at all, so copy for
  * either was unreachable text that ratified two invalid ids for whoever read it
