@@ -714,7 +714,7 @@ export const MOCK_RUNS: CpRun[] = [
 // CONSEQUENCE, DELIBERATE, DO NOT "FIX" BACK: these three render as locale
 // dates rather than "2 minutes ago", because `timeAgo` falls through to
 // `toLocaleDateString()` past 30 days (`lib/utils/format.ts:17-18`) and they
-// really are 81 days old. That is the honest outcome, and it is what makes the
+// really are that old. That is the honest outcome, and it is what makes the
 // events feed agree with the context card instead of contradicting it.
 //
 // A frozen global `now` was considered and rejected: it would break `elapsed()`
@@ -731,9 +731,34 @@ function afterReceipt(base: string, seconds: number): string {
 // Publish at the receipt moment itself, then hold and restore within the same
 // day. Distinct offsets so publish < retract < republish holds STRICTLY and the
 // guard can assert `<` rather than `<=`.
+//
+// The hold must begin AFTER every signed instant on this context's own crypto
+// fixture, not merely after the publish. `MOCK_CRYPTO.attested` carries four
+// more frozen timestamps that render on the SAME detail card as the lifecycle
+// strip, the latest at receipt+2280 s:
+//
+//   receipt+2160  witness_signatures[1].witnessed_at
+//   receipt+2220  lineage_head_receipt.as_of  <- with head_status: 'active'
+//   receipt+2220  log_checkpoint.timestamp (and witness[0]'s copy of it)
+//   receipt+2280  witness_signatures[0].witnessed_at
+//
+// The first version of this phase used 1800/5400, which put all four INSIDE
+// the retraction window - so `context-detail.tsx` rendered "head status:
+// active, as of 12:34" directly above "retracted 12:27 / republished 13:27".
+// `lib/types.ts` documents `head_status` as the registry's attestation of the
+// head's status AT `as_of`, so the card asserted the context was the live head
+// at an instant its own signed lifecycle says it was held. That is symptom (1)
+// of #85 - one surface contradicting another about the same fact - created by
+// the fix for symptom (2).
+//
+// These offsets move and the receipt does not: `as_of` and the witness
+// signatures are SIGNED and frozen by `scripts/gen-mock-crypto.mjs`, so the
+// narrative is the only side that can give. `mock-data.test.ts` holds the
+// window clear of every frozen instant on the fixture, derived rather than
+// listed, so a regenerated fixture cannot silently re-enter it.
 const ATTESTED_PUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 0);
-const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 1800);
-const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 5400);
+const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 3600);
+const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 7200);
 
 export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
