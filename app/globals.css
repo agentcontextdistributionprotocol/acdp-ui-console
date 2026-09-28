@@ -123,7 +123,19 @@ textarea {
 .shell {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
-  grid-template-rows: var(--topbar-h) 1fr;
+  /* `minmax`, not a fixed `--topbar-h`, because `.topbar-pills` now wraps: a
+     failing service appends its state word to its pill, and at phone width two
+     of those push the row onto a second line. With a fixed track the second
+     line was clipped by `overflow` and the word was unreadable exactly when it
+     mattered. `.content` is `overflow-y: auto`, so row 2 gives up the height.
+
+     Known cosmetic consequence, accepted: `.workbench-canvas`'s
+     `calc(100vh - var(--topbar-h) - 92px)` under-computes by the wrapped
+     amount, so the workbench scrolls inside `.content` instead of fitting
+     exactly. The alternative is measuring the topbar in JS and publishing it as
+     a custom property, which is a resize observer and a layout thrash for a few
+     pixels on a page nobody visits with two dead services. */
+  grid-template-rows: minmax(var(--topbar-h), auto) 1fr;
   height: 100vh;
   grid-template-areas:
     'sidebar topbar'
@@ -260,7 +272,10 @@ textarea {
   flex: 1;
 }
 .topbar-breadcrumb span { color: var(--muted); font-weight: 400; }
-.topbar-pills { display: flex; gap: 6px; }
+/* `flex-wrap` pairs with `.shell`'s `minmax` row above — see the note there for
+   why a fixed topbar track had to go. Without the wrap the fifth item is simply
+   pushed out of the box. */
+.topbar-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 .pill {
   display: flex;
   align-items: center;
@@ -281,6 +296,17 @@ textarea {
   color: var(--brand);
   background: var(--brand-dim);
 }
+/* The service-state word inside a non-healthy pill. `font-weight: 400` against
+   `.pill`'s 500 so it reads as a qualifier on the label rather than a second
+   label. No `active-pill` interaction to worry about: this element only renders
+   when the service is not healthy, and `active-pill` only when it is.
+
+   Muted by default and red only on `.bad`, because the word renders for
+   `checking…` too. A first probe still in flight painted in `--danger` would be
+   the display asserting a failure it has no evidence for — the same over-claim
+   as the dot below, and the reason this class is not simply red. */
+.pill-detail { color: var(--muted); font-weight: 400; }
+.pill-detail.bad { color: var(--danger); }
 
 /* ── Content ── */
 .content {

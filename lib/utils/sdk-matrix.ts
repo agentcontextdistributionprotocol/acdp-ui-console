@@ -50,6 +50,20 @@ export interface SdkMatrixRowView {
   /** False when `version` is static reference data that isn't confirmed against the running service. */
   versionIsLive: boolean;
   status: SdkMatrixRowStatus;
+  /**
+   * Why a `down` row is down — `undefined` on every other status.
+   *
+   * A qualifier on `down`, deliberately NOT a fifth `SdkMatrixRowStatus`. A
+   * degraded service and an unreachable one are in the same state as far as
+   * this table's badge, sort order and colour are concerned; the difference is
+   * what an operator should go and look at. Widening the status union would
+   * have put that distinction in the place the rendering switch branches on,
+   * growing a fourth arm for something that is not a fourth state.
+   *
+   * Sourced from `HealthResult.detail`, whose own docblock defines the two
+   * words, so the table cannot invent a third.
+   */
+  detail?: 'degraded' | 'unreachable';
 }
 
 /**
@@ -104,11 +118,27 @@ export function buildSdkMatrixRows(
 
     const health = healthByService.get(service);
     const liveVersion = health?.version;
+    const down = health !== undefined && !health.ok;
     return {
       component: row.component,
       version: liveVersion ?? row.version,
       versionIsLive: liveVersion !== undefined,
       status: health === undefined ? 'unknown' : health.ok ? 'ok' : 'down',
+      // Gated on `down`, not on `health?.detail` being present. `detail` is
+      // documented as absent when `ok` is true, but that is a convention rather
+      // than an invariant the type enforces — a hand-built fixture or a future
+      // probe arm could carry both, and `degraded` printed on a row badged
+      // `● ok` would be the table contradicting itself in one cell.
+      //
+      // No default here, deliberately. A failure with no `detail` at all is
+      // only reachable from a pre-`detail` fixture (`pingHealth` sets it on
+      // every failure path), and defaulting it to a word in TWO places would
+      // make one of them dead: the badge's own `?? 'down'` is the fallback, and
+      // `down` is the right word for THAT surface, whose vocabulary is
+      // ok/down/unknown/reference. `useHealth` defaults to `unreachable`
+      // because its vocabulary has no `down`. Each surface falls back to the
+      // word it already used.
+      ...(down && health.detail ? { detail: health.detail } : {}),
     };
   });
 }
