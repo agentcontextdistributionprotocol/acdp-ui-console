@@ -146,11 +146,19 @@ function ByLineage({ demoMode }: { demoMode: boolean }) {
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+      {/* Same defect as the run picker above, and it was missed on the first
+          pass. `flex: 1` is `1 1 0%`, but a flex item's `min-width` is `auto`,
+          which for a text input resolves to the intrinsic width of its default
+          `size=20` — roughly 180px that it will NOT give up. Add the fixed
+          130px select and the button and the row cannot fit 400px, so it
+          pushed `.content` sideways. `minWidth: 0` is what actually lets the
+          input shrink; `flexWrap` puts the button on its own line rather than
+          squeezing the input to nothing. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
         <input
           className="form-input"
           placeholder="lineage_id (e.g. lin-cashflow-001)"
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && lookup()}

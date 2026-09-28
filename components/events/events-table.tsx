@@ -23,9 +23,9 @@ export function EventsTable({ events }: { events: CpContextEvent[] }) {
   const router = useRouter();
   if (events.length === 0) return <EmptyState title="No events match these filters" />;
   return (
-    <TableScroll label="Context event history, scrollable">
+    <TableScroll label="Context event history">
       <table className="data-table">
-        <caption className="sr-only">Context event history: type, agent, context id, registry, run and time</caption>
+        <caption className="sr-only">Context event history: type, agent, ctx id, registry, run and time</caption>
         <thead>
           <tr>
             <th>Type</th>

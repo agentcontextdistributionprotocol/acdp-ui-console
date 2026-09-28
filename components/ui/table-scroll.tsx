@@ -6,13 +6,22 @@ import type { CSSProperties, ReactNode } from 'react';
  * ## Why a component and not a `className`
  *
  * `.table-scroll { overflow-x: auto }` alone would fix the visual defect and
- * leave a keyboard-only operator unable to reach the hidden columns. **Five of
- * the eleven tables in this repo have no focusable descendant at all** (agents,
- * the security JWKS table, the SDK matrix, recent runs, events), so there is
- * nothing to tab to that would scroll the container into view — a
- * scroll region reachable by nobody, which is WCAG 2.1.1. `tabIndex={0}` is the
- * fix, and it is the easiest thing in the world to forget at the eleventh call
- * site. A component makes omitting it impossible.
+ * leave a keyboard-only operator unable to reach the hidden columns of any
+ * table with nothing focusable inside it — nothing to tab to means nothing that
+ * scrolls the container into view, which is WCAG 2.1.1.
+ *
+ * FOUR of the eleven tables are in that state: the SDK matrix, the security
+ * revocation feed, and both tables in `run-trust-panel.tsx`. (An earlier
+ * version of this docblock said FIVE and listed agents, recent runs and events
+ * among them — all three spread `pressable()` from `lib/utils/a11y.ts` onto
+ * their rows, which sets `role="button"` and `tabIndex: 0`, so every one of
+ * them has a focusable descendant. It also named a "security JWKS table",
+ * which does not exist: `JwksCard` renders no `.data-table`. The corrected
+ * count is smaller and the conclusion is unchanged.)
+ *
+ * `tabIndex={0}` is therefore load-bearing for those four and harmless for the
+ * rest — and putting it on a shared component is what stops the eleventh call
+ * site from forgetting it.
  *
  * ## Why `role="group"`
  *

@@ -48,9 +48,9 @@ export default function AgentsPage() {
       {data && data.length === 0 && <EmptyState title="No agents observed yet" />}
       {data && data.length > 0 && (
         <Card>
-          <TableScroll label="Agent inventory, scrollable">
+          <TableScroll label="Agent inventory">
             <table className="data-table">
-              <caption className="sr-only">Agent inventory: DID, framework, registry, contexts published and last seen</caption>
+              <caption className="sr-only">Agent inventory: agent DID, registry, contexts, first seen and last active</caption>
               <thead>
                 <tr>
                   <th>Agent DID</th>

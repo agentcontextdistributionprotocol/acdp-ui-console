@@ -12,9 +12,9 @@ export function RecentRunsTable({ runs, scenarioName }: { runs: CpRun[]; scenari
   const router = useRouter();
   if (runs.length === 0) return <EmptyState title="No runs yet" description="Launch a scenario to see runs here." />;
   return (
-    <TableScroll label="Recent runs, scrollable">
+    <TableScroll label="Recent runs">
       <table className="data-table">
-        <caption className="sr-only">Recent runs: scenario, status, context count and start time</caption>
+        <caption className="sr-only">Recent runs: scenario, status, contexts and started</caption>
         <thead>
           <tr>
             <th>Scenario</th>

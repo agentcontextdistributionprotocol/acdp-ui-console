@@ -105,9 +105,9 @@ export function Enrollments() {
           />
         </div>
       ) : data && data.length > 0 ? (
-        <TableScroll label="Registry enrollments, scrollable">
+        <TableScroll label="Registry enrollments">
           <table className="data-table">
-            <caption className="sr-only">Registry enrollments: authority, DID, base URL, tenant, status and last update</caption>
+            <caption className="sr-only">Registry enrollments: authority, registry DID, base URL, tenant, status, updated and actions</caption>
             <thead>
               <tr>
                 <th>Authority</th>

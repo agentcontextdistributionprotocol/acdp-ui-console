@@ -59,9 +59,9 @@ export function WebhookConfig() {
           <LoadingSkeleton rows={2} height={32} />
         </div>
       ) : data && data.length > 0 ? (
-        <TableScroll label="Webhook subscriptions, scrollable">
+        <TableScroll label="Webhook subscriptions">
           <table className="data-table">
-            <caption className="sr-only">Webhook subscriptions: URL, events, status and last delivery</caption>
+            <caption className="sr-only">Webhook subscriptions: URL, events, status, updated and actions</caption>
             <thead>
               <tr>
                 <th>URL</th>

@@ -665,10 +665,16 @@ textarea {
    unreadable — which is a WCAG 1.4.10 failure rather than a fix. The overflow
    has to stop before it gets there, which is what this does. */
 .table-scroll { overflow-x: auto; }
-/* `tabIndex={0}` on the container makes it focusable, so it MUST show focus —
-   five of the eleven tables contain nothing focusable, and this container is the
-   only way a keyboard user reaches their hidden columns. */
-.table-scroll:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+/* NO `:focus-visible` rule here, deliberately, and the first version of this
+   change got it wrong. The repo-wide `:focus-visible` further down already
+   gives every focusable element the same outline — including these containers,
+   which `tabIndex={0}` makes focusable — and this file states the convention
+   explicitly beside `.error-detail > pre`: a local copy "would silently keep
+   the old treatment for this component alone the day that one changes".
+   The copy that was here had ALREADY diverged on the day it landed: it omitted
+   the global rule's `border-radius`, and at higher specificity it won, so the
+   eleven new scroll containers rendered a square focus ring where everything
+   else in the console gets a rounded one. */
 /* For the `<caption>` on each table: named to a screen reader, absent to the
    eye. The `clip-path` + 1px box form rather than `display: none` or
    `visibility: hidden`, both of which remove the element from the accessibility

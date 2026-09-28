@@ -78,9 +78,9 @@ function RevocationFeed() {
           <EmptyState title="No revocations recorded" />
         )}
         {entries.length > 0 && (
-          <TableScroll label="Registry signing keys, scrollable">
+          <TableScroll label="Revocation feed">
             <table className="data-table">
-              <caption className="sr-only">Registry signing keys: authority, key id, algorithm and use</caption>
+              <caption className="sr-only">Revoked credentials: subject, issuer, JTI, revoked and original expiry</caption>
               <thead>
                 <tr>
                   <th>Subject</th>

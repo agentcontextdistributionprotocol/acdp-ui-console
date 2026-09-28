@@ -13,9 +13,9 @@ export function RunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName:
   const router = useRouter();
   if (runs.length === 0) return <EmptyState title="No runs match these filters" />;
   return (
-    <TableScroll label="Run list, scrollable">
+    <TableScroll label="Run list">
       <table className="data-table">
-        <caption className="sr-only">Run list: run id, scenario, status, registry mode, contexts, started and duration</caption>
+        <caption className="sr-only">Run list: run, scenario, status, contexts, registries, started and duration</caption>
         <thead>
           <tr>
             <th>Run</th>

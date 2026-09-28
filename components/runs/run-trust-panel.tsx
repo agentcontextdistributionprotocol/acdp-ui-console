@@ -115,9 +115,9 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
         )}
 
         {hasFlags && (
-          <TableScroll label="Context verdicts for this run, scrollable" style={{ marginBottom: hasRevoked ? 14 : 0 }}>
+          <TableScroll label="Context discrepancies for this run" style={{ marginBottom: hasRevoked ? 14 : 0 }}>
             <table className="data-table">
-              <caption className="sr-only">Context verdicts for this run: context id, signature, binding and revocation</caption>
+              <caption className="sr-only">Context discrepancies for this run: ctx id, status and discrepancies</caption>
               <thead>
                 <tr>
                   <th>Ctx ID</th>
@@ -149,9 +149,9 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
         )}
 
         {hasRevoked && (
-          <TableScroll label="Revoked keys for this run, scrollable">
+          <TableScroll label="Revoked-key findings for this run">
             <table className="data-table">
-              <caption className="sr-only">Revoked keys for this run: key, revocation time and effect</caption>
+              <caption className="sr-only">Revoked-key findings for this run: ctx id, status, boundary, trust class and sources</caption>
               <thead>
                 <tr>
                   <th>Ctx ID</th>

@@ -153,9 +153,9 @@ export default function TrustPage() {
             // indistinguishability is the whole reason this phase exists.
             <EmptyState title="No trust violations" description="Every audited receipt bound cleanly to its served context." />
           ) : (
-            <TableScroll label="Trust signals per run, scrollable">
+            <TableScroll label="Trust findings">
               <table className="data-table">
-                <caption className="sr-only">Trust signals per run: scenario, verdict counts and violations</caption>
+                <caption className="sr-only">Trust findings: run, ctx id, finding, detail and when</caption>
                 <thead>
                   <tr>
                     <th>Run</th>
