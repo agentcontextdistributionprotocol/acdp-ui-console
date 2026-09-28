@@ -42,7 +42,42 @@ import {
   assertNoRuntimeCopyForms,
   assertNoAlternateDisclosureChannel,
   advertisableIdsInComponent,
+  assertGlossIsPureOfId,
+  assertNoProseOutsideLabelTable,
 } from '../support/profile-copy-table';
+
+/**
+ * Every visible string `RegistryCard` is allowed to render.
+ *
+ * The CLOSED SET, and the reason it is a list of labels rather than a pattern:
+ * asking "does this sentence disclose a non-advertisable profile" is an
+ * open-world question over English, and eight rounds of answering it with
+ * patterns and probes were defeated by a coordinate or a phrasing nobody had
+ * enumerated. A closed set has nothing to evade — a string that is not here
+ * cannot be in the file, reachable under a fixture or not.
+ *
+ * Adding an entry is the review step. It should be a label a reviewer can point
+ * to on the rendered card, not a sentence about a profile.
+ */
+const CARD_LABELS = [
+  '● healthy',
+  'Event count',
+  'Base URL',
+  '—',
+  'Last seen',
+  'ACDP version',
+  'Algorithms',
+  // Compared TRIMMED, because JSX text nodes carry the surrounding source
+  // indentation. So the join separator `', '` and the unit `' KB'` appear here
+  // without their padding.
+  ',',
+  'Profiles',
+  'Max payload',
+  'KB',
+  'Anon reads',
+  'enabled',
+  'disabled',
+] as const as readonly string[];
 
 afterEach(cleanup);
 
@@ -228,6 +263,36 @@ const REGISTRY_FIXTURES: KnownRegistry[] = [
  * and the copy moved to the axis still held constant. This is that axis.
  */
 const POSITIONS = ['alone', 'first', 'last', 'middle'] as const;
+
+/**
+ * ANTI-VACUITY for the position axis, and the fifth time this file has needed
+ * one for an array it had just added.
+ *
+ * `CAPABILITY_FIXTURES` and `REGISTRY_FIXTURES` have had a pin since round 6;
+ * `PROBES` got one in round 7, after deleting every adversarial entry was
+ * measured leaving the suite green. `POSITIONS` shipped in that same commit
+ * with no pin, and the commit message claimed narrowing it to `['alone']` was
+ * killed. It is not: that narrowing produces three `tsc` errors, but only as a
+ * side effect of `switch` exhaustiveness in `profilesWith` — no guard fires.
+ * Rewriting `profilesWith` to return `[profileId]` for every case achieves the
+ * identical silencing with tsc clean, lint clean and the whole suite green.
+ *
+ * With the axis silenced, round 8's `i > 2` escape widens back to round 7's
+ * `i > 0`. So the pin is on the RENDERED ARRAY LENGTHS, which is what
+ * `profilesWith` is actually for — a version that ignores `position` fails
+ * here rather than quietly flattening the axis.
+ *
+ * The axis itself is no longer the guarantee: `assertGlossIsPureOfId` denies
+ * the callback an index at all, at every N. This keeps the behavioural probe
+ * honest alongside it.
+ */
+function assertPositionAxisIsReal(): void {
+  const lengths = POSITIONS.map((p) => profilesWith('x', p).length);
+  expect(lengths, 'profilesWith no longer varies the array length by position').toEqual([1, 3, 3, 3]);
+  expect(profilesWith('x', 'first').indexOf('x'), 'first').toBe(0);
+  expect(profilesWith('x', 'middle').indexOf('x'), 'middle').toBe(1);
+  expect(profilesWith('x', 'last').indexOf('x'), 'last').toBe(2);
+}
 
 function profilesWith(profileId: string, position: (typeof POSITIONS)[number]): string[] {
   const filler = ['acdp-registry-core', 'acdp-registry-discovery'];
@@ -430,6 +495,50 @@ describe('the dead tooltip copy is gone', () => {
     expect(() => assertGlossIsGated()).not.toThrow();
   });
 
+  // ══════════════════════════════════════════════════════════════════
+  // The two structural guards that replace "add one more probe axis".
+  //
+  // Rounds 6, 7 and 8 each answered a gloss escape by widening the fixture
+  // matrix — a `registry` axis, then a POSITION axis — and each time the copy
+  // moved to a coordinate the widened matrix still did not reach. Round 8's
+  // findings were `i > 2` (the position axis reaches 0, 1 and 2), and three
+  // gates on fields the fixtures hold constant (`registry.lastSeen`,
+  // `capabilities.anonymous_public_reads`, `registry.eventCount`).
+  //
+  // The input space is infinite: every field of both props, crossed with every
+  // index. No finite matrix closes it. These two close it by construction
+  // instead — one bounds the EXPRESSION the gloss may be, the other bounds the
+  // SET OF STRINGS the card may render.
+  // ══════════════════════════════════════════════════════════════════
+
+  it('the gloss is a function of the profile id and nothing else', () => {
+    // Kills every index gate at every N, and every gate on any field of either
+    // prop, without enumerating any of them: the callback is denied the index
+    // parameter, and `info` may only ever be `glossFor(p)`.
+    expect(() => assertGlossIsPureOfId()).not.toThrow();
+  });
+
+  it('renders no prose outside the pinned label list', () => {
+    // An unconditional `<div className="metric-row">` naming `acdp-log-witness`
+    // passed every other guard in this file — the probes read `.chip` elements
+    // and nothing else, and the only thing in the way was two literal
+    // `not.toContain` assertions naming two ids on one fixture.
+    //
+    // Source-level, because a render assertion is only as good as its
+    // fixtures: prose gated on `registry.lastSeen > '2026-09-01'` renders under
+    // none of them.
+    expect(() => assertNoProseOutsideLabelTable(CARD_LABELS)).not.toThrow();
+  });
+
+  it('GUARDS THE GUARD: the label list is not a wildcard', () => {
+    // A list containing the empty string, or one long enough to have stopped
+    // being read, is the shape this check goes vacuous in. Every entry is a
+    // label a reviewer can point to on screen.
+    expect(CARD_LABELS.length).toBeLessThan(25);
+    for (const l of CARD_LABELS) expect(l.trim()).not.toBe('');
+    expect(new Set(CARD_LABELS).size).toBe(CARD_LABELS.length);
+  });
+
   it('the component’s own id mirror matches the shared one, entry for entry', () => {
     // There are two copies of this list and there have to be: the component
     // types `PROFILE_INFO` off its own `as const` array (which is what makes an
@@ -548,6 +657,14 @@ describe('the dead tooltip copy is gone', () => {
     expect(adversarial).toContain(''); // the empty string
     expect(adversarial.some((p) => ADVERTISABLE.some((a) => p.startsWith(a) && p !== a))).toBe(true);
     expect(new Set(adversarial).size).toBe(adversarial.length);
+  });
+
+  it('pins the POSITION axis, the one array added without a pin', () => {
+    // See `assertPositionAxisIsReal`. Narrowing `POSITIONS` to `['alone']` was
+    // claimed killed in the commit that added it; it is killed only by `tsc`
+    // switch-exhaustiveness, and the tsc-clean form of the same silencing
+    // (return `[profileId]` for every case) passes every gate.
+    assertPositionAxisIsReal();
   });
 
   it('every advertisable id keeps its gloss on EVERY registry, not just the demo two', () => {

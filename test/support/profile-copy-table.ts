@@ -54,8 +54,13 @@
 //                                  types it `Record<AdvertisableProfileId, …>`
 //                                  off an `as const` mirror, so an eighth key
 //                                  is an excess-property error and a missing
-//                                  one is a missing-property error. No test
-//                                  polices this, and no syntax evades it.
+//                                  one is a missing-property error. (This
+//                                  read "No test polices this". False: the
+//                                  key-set parser below kills an eighth key
+//                                  before tsc ever runs. Widening the
+//                                  annotation to `Record<string, …>` deletes
+//                                  the tsc bound with every gate green — the
+//                                  parser is what actually holds it.)
 //   `assertNoCopyOutsideTable()`   any OTHER object literal in the file — the
 //                                  whole file, not its statement list —
 //                                  carrying `title` or `accent`, under ANY
@@ -67,8 +72,11 @@
 //                                  `Reflect.*`, `new Proxy` — the verbs that
 //                                  attach copy with no property literal to find.
 //   `assertNoAlternateDisclosure…` `aria-*`, `data-*` and
-//                                  `dangerouslySetInnerHTML`, none of which any
-//                                  render probe reads.
+//                                  `dangerouslySetInnerHTML`. (This read
+//                                  "none of which any render probe reads".
+//                                  False since `attributesOf()` landed: the
+//                                  probes assert the chip's EXACT attribute
+//                                  key set. Two layers, not one.)
 //   `assertGlossChokePoint()`      the one expression that may reach a rendered
 //                                  `title` attribute, and no JSX spread.
 //   `assertGlossIsGated()`         the shape of the membership gate, and that
@@ -540,6 +548,220 @@ export function assertGlossIsGated(): void {
     ts.forEachChild(node, visit);
   };
   visit(sf);
+}
+
+/**
+ * The gloss must be a function of the PROFILE ID AND NOTHING ELSE.
+ *
+ * ── Why this is structural and not a render probe ────────────────────
+ *
+ * Eight gate rounds have now found the same escape with a different gate on it.
+ * Every previous answer was to widen the probe matrix — add a `capabilities`
+ * axis, add a `registry` axis, add a POSITION axis — and every time the copy
+ * moved to a coordinate the widened matrix still did not reach:
+ *
+ *   round 6  `registry.authority === 'registry-a…' ? {gloss} : undefined`
+ *            — the probes fixed `registry`.
+ *   round 7  `i > 0 ? {gloss} : undefined`
+ *            — the probes rendered one id, always at index 0.
+ *   round 8  `i > 2 ? {gloss} : undefined`
+ *            — the position axis reached indices 0, 1 and 2. The fix for round
+ *              7 moved the boundary from 0 to 2; it did not remove it.
+ *            `registry.lastSeen > '2026-09-01' ? {gloss} : undefined`
+ *            `capabilities.anonymous_public_reads === false ? …`
+ *            `registry.eventCount > 100 ? …`
+ *            — three fields the fixtures hold CONSTANT. `REGISTRY_FIXTURES`
+ *              varies authority, baseUrl and eventCount; `firstSeen` and
+ *              `lastSeen` are identical in all three.
+ *
+ * A fixture matrix bounds the coordinates it enumerates. The input space is
+ * infinite — every field of both props, crossed with every index — so no finite
+ * matrix closes it, and "add one more axis" has failed three times running.
+ *
+ * So bound the EXPRESSION instead. If `info` can only ever be `glossFor(p)`,
+ * and the callback has no other parameter to gate on, then there is no index to
+ * compare and no second branch to take: the gloss is a pure function of `p` by
+ * construction, and every mutation above is a syntax error against this guard
+ * rather than a coordinate the probes happened to miss.
+ *
+ * ── What it does NOT cover ───────────────────────────────────────────
+ *
+ * It says nothing about what `glossFor` itself does — that is `assertGlossIsGated`
+ * and `assertNoCopyOutsideTable`'s subject — and nothing about the chip's
+ * className or its text, which the render probes read.
+ */
+export function assertGlossIsPureOfId(): void {
+  const sf = sourceFile();
+  let mapCall: ts.CallExpression | undefined;
+  const findMap = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.getText(sf) === 'map' &&
+      node.expression.expression.getText(sf).replace(/\s+/g, '') === 'capabilities.profiles'
+    ) {
+      mapCall = node;
+    }
+    ts.forEachChild(node, findMap);
+  };
+  findMap(sf);
+  if (!mapCall) fail('no `capabilities.profiles.map(...)` found — this guard lost its subject');
+  const call: ts.CallExpression = mapCall;
+
+  const cb = call.arguments[0];
+  if (!cb || (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb))) {
+    fail('the profiles `.map` callback is not a function literal, so its parameters are unbounded');
+  }
+  const fn = cb as ts.ArrowFunction | ts.FunctionExpression;
+
+  // ONE parameter. The index is the thing every round-7 and round-8 gloss
+  // escape reached for, and a callback that never receives it cannot use it.
+  if (fn.parameters.length !== 1) {
+    fail(
+      `the profiles \`.map\` callback takes ${fn.parameters.length} parameters ` +
+        `(\`${fn.parameters.map((p) => p.getText(sf)).join(', ')}\`), expected exactly 1. ` +
+        'The second parameter is the array index, and a gloss gated on it disclosed copy for a ' +
+        'non-advertisable profile id at every position the render probes did not enumerate — ' +
+        'first `i > 0`, then `i > 2`. There is no index to gate on if it is never bound.',
+    );
+  }
+  const param = fn.parameters[0].name.getText(sf);
+
+  // …and `info` is EXACTLY `glossFor(<that parameter>)`. Not `glossFor(p) ??
+  // anything`, not a conditional, not a spread, not an `Object.assign`.
+  const decls: ts.VariableDeclaration[] = [];
+  const findInfo = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(sf) === 'info') decls.push(node);
+    ts.forEachChild(node, findInfo);
+  };
+  findInfo(fn);
+  if (decls.length !== 1) {
+    fail(`the callback declares ${decls.length} \`info\` bindings, expected exactly 1`);
+  }
+  const init = decls[0].initializer?.getText(sf).replace(/\s+/g, '') ?? '';
+  const only = `glossFor(${param})`;
+  if (init !== only) {
+    fail(
+      `\`info\` is initialised to \`${init}\`, but the only allowed initialiser is \`${only}\`. ` +
+        'Anything else makes the gloss a function of something other than the profile id — ' +
+        'which is how it came to depend on the array index, on `registry.authority`, on ' +
+        '`registry.lastSeen` and on `capabilities.anonymous_public_reads` in successive rounds.',
+    );
+  }
+}
+
+/**
+ * Every piece of PROSE the card can render must be in the pinned label list.
+ *
+ * ── The hole this closes ─────────────────────────────────────────────
+ *
+ * The render probes read `container.querySelectorAll('.chip')` and then only
+ * that element's attributes and text. Text rendered anywhere ELSE in the card
+ * was invisible to every layer of this file: `assertNoCopyOutsideTable` walks
+ * object literals, `assertNoAlternateDisclosureChannel` covers `aria-*`,
+ * `data-*` and `dangerouslySetInnerHTML`, and `assertGlossChokePoint` counts
+ * `title` attributes. None of them reads a text node.
+ *
+ * So a `<div className="metric-row">` added beside Max payload, carrying a
+ * gloss for `acdp-log-witness`, passed every gate — UNCONDITIONALLY, with the
+ * full suite green, lint clean and tsc clean. That is #95's exact harm through
+ * the loudest channel there is: `assertNoAlternateDisclosureChannel`'s own
+ * docblock argues an `aria-label` is worse than a `title` because it is
+ * announced, and visible body text is louder than both.
+ *
+ * The only thing standing in the way was two literal
+ * `textContent).not.toContain('acdp-consumer' | 'acdp-federated')` assertions
+ * on one fixture — two strings, where the branch's own reasoning says
+ * `acdp-log-witness` is upstream's most likely mistake.
+ *
+ * ── Why source-level and not a render assertion ──────────────────────
+ *
+ * Because a render assertion is only as good as its fixtures, and the same
+ * round proved prose gated on `registry.lastSeen` never renders under any
+ * fixture this suite has. Reading the SOURCE makes fixture coverage irrelevant:
+ * a string that is not in the list cannot be in the file, reachable or not.
+ *
+ * ── What it does NOT cover ───────────────────────────────────────────
+ *
+ * Attribute values, which is deliberate — `className`, `style`, `tone`,
+ * `variant` and the rest are not prose, and an allow-list over them went red on
+ * legitimate props of `StatusDot` and `Badge` and had to be narrowed. The
+ * disclosure channels among them (`title`, `aria-*`, `data-*`) have their own
+ * guards above. And it does not read the gloss table's VALUES; those are
+ * `profileCopyTable()`'s subject.
+ */
+export function assertNoProseOutsideLabelTable(allowed: readonly string[]): void {
+  const sf = sourceFile();
+  const permitted = new Set(allowed);
+  const seen = new Set<string>();
+
+  const check = (text: string, node: ts.Node): void => {
+    const t = text.trim();
+    if (t === '') return;
+    seen.add(t);
+    if (!permitted.has(t)) {
+      fail(
+        `renders the prose \`${t.slice(0, 70)}\`, which is not in the pinned label list. ` +
+          'Every visible string this card can show is enumerated in that list so that copy ' +
+          'cannot be added to a region no probe reads — an unconditional text row naming ' +
+          '`acdp-log-witness` passed every other guard in this file. Add it to the list only ' +
+          `after arguing it belongs on screen. (at ${ts.getLineAndCharacterOfPosition(sf, node.getStart(sf)).line + 1})`,
+      );
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxText(node)) check(node.text, node);
+
+    // A string in a CHILD position: `{'...'}`, `{cond ? 'a' : 'b'}`, `{x ?? '—'}`.
+    // Attribute initialisers are excluded by construction — a JsxExpression
+    // inside a JsxAttribute has that attribute as its parent.
+    if (ts.isJsxExpression(node) && node.parent && !ts.isJsxAttribute(node.parent)) {
+      const literals: ts.Node[] = [];
+      const collect = (n: ts.Node): void => {
+        // Do NOT descend into nested JSX or into attributes. `{capabilities &&
+        // (<>…</>)}` is a JsxExpression whose subtree contains every attribute
+        // of every element inside it, so a naive recursive walk reported
+        // `className="metric-row"` as prose. The nested elements' own text and
+        // expressions are reached by the outer `visit`; attribute values are
+        // deliberately out of scope (see this function's docblock).
+        if (
+          ts.isJsxElement(n) ||
+          ts.isJsxSelfClosingElement(n) ||
+          ts.isJsxFragment(n) ||
+          ts.isJsxAttributes(n)
+        ) {
+          return;
+        }
+        if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) literals.push(n);
+        if (ts.isTemplateExpression(n)) {
+          // Fail closed. A template with substitutions cannot be read
+          // statically, so it could carry anything at runtime.
+          fail(
+            `renders a template literal with substitutions as a child ` +
+              `(\`${n.getText(sf).slice(0, 60)}\`) — its text cannot be read from here`,
+          );
+        }
+        ts.forEachChild(n, collect);
+      };
+      collect(node);
+      for (const l of literals) check((l as ts.StringLiteral).text, l);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+
+  // ANTI-VACUITY. A component that rendered no prose at all — or a walker that
+  // stopped finding any — would satisfy every assertion above by finding
+  // nothing to check. The card demonstrably shows these.
+  for (const required of ['Event count', 'Profiles', 'Base URL']) {
+    if (!seen.has(required)) {
+      fail(
+        `the prose walk did not find the label \`${required}\`, which the card definitely ` +
+          'renders — so this guard is looking at the wrong nodes and is passing vacuously',
+      );
+    }
+  }
 }
 
 /**

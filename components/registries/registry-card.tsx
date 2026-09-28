@@ -80,7 +80,9 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     went red to green on that commit.
  *   - `assertNoAlternateDisclosureChannel()` bounds `aria-*`, `data-*` and
  *     `dangerouslySetInnerHTML`. A comment used to assert the render probes
- *     read those. They read `title`, `className` and `textContent`.
+ *     read those, then a correction claimed they read only `title`,
+ *     `className` and `textContent`. Both were wrong in turn: `attributesOf()`
+ *     reads EVERY attribute and the probes assert the exact key set.
  *   - The render probes bound WHAT REACHES THE SCREEN, across a matrix of both
  *     props. Neither prop axis may be fixed: copy conditioned on
  *     `registry.authority` was invisible to a probe that always passed
@@ -88,7 +90,22 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     deployment cannot advertise. POSITION within `capabilities.profiles` is
  *     the third axis and was fixed for two rounds after the other two were
  *     varied: every probe rendered a one-element array, so a gloss gated on
- *     `i > 0` disclosed freely. All three vary now.
+ *     `i > 0` disclosed freely.
+ *
+ *     "All three vary now" was the previous sentence here, and it was the
+ *     wrong idea rather than an incomplete one. Widening the matrix moved the
+ *     escape rather than closing it — `i > 2` cleared the new position axis,
+ *     and `registry.lastSeen`, `capabilities.anonymous_public_reads` and
+ *     `registry.eventCount` cleared it by using fields the fixtures hold
+ *     constant. The input space is infinite; no finite matrix closes it.
+ *   - `assertGlossIsPureOfId()` closes it by construction instead: the map
+ *     callback is denied the index parameter and `info` may only ever be
+ *     `glossFor(p)`, so the gloss is a function of the profile id at every
+ *     index and every field value, with nothing enumerated.
+ *   - `assertNoProseOutsideLabelTable()` bounds the SET OF STRINGS this card
+ *     may render, read from the source rather than the DOM. The render probes
+ *     read `.chip` elements; an unconditional text row elsewhere in the card,
+ *     naming `acdp-log-witness`, passed every other guard here.
  *
  * Their honest residual: no test can quantify over every possible id string, so
  * the probe universe is a sample (the seven, the three forbidden ones, shape
