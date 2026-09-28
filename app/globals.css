@@ -654,6 +654,36 @@ textarea {
 .badge-neutral { background: var(--panel-3); color: var(--muted); border-color: var(--border); }
 
 /* ── Tables ── */
+/* The horizontal scroll container every `.data-table` sits in
+   (`components/ui/table-scroll.tsx`). Without it a wide table pushed the whole
+   `.content` region sideways: `.content` is `overflow-y: auto` with no
+   `overflow-x`, which per CSS computes the other axis to `auto` too, so the
+   overflow surfaced on the page instead of on the table.
+
+   `.content` is deliberately NOT given `overflow-x: hidden` instead. That would
+   clip the columns with no way to reach them — data present in the DOM and
+   unreadable — which is a WCAG 1.4.10 failure rather than a fix. The overflow
+   has to stop before it gets there, which is what this does. */
+.table-scroll { overflow-x: auto; }
+/* `tabIndex={0}` on the container makes it focusable, so it MUST show focus —
+   five of the eleven tables contain nothing focusable, and this container is the
+   only way a keyboard user reaches their hidden columns. */
+.table-scroll:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+/* For the `<caption>` on each table: named to a screen reader, absent to the
+   eye. The `clip-path` + 1px box form rather than `display: none` or
+   `visibility: hidden`, both of which remove the element from the accessibility
+   tree and so would defeat the point. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -682,9 +712,17 @@ textarea {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--muted);
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* `max-width: 220px`, `overflow: hidden` and `text-overflow: ellipsis` were
+     here and were PROVABLY INERT. CSS 2.1 §10.4 leaves `max-width` undefined on
+     a table cell, and auto table layout sizes the column to its content
+     regardless — so no DID was ever truncated and no ellipsis ever rendered.
+     Worse than useless: reading them suggested the overflow problem was already
+     handled, which is part of why it went unfixed.
+
+     `white-space: nowrap` STAYS and is now load-bearing. A wrapped DID is
+     unreadable and a mid-string break is ambiguous about whether the break is
+     in the identifier; an unwrappable column is exactly what a scroll container
+     is for. */
   white-space: nowrap;
 }
 

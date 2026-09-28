@@ -82,8 +82,18 @@ function ByRun({ demoMode }: { demoMode: boolean }) {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <select className="form-input" style={{ width: 320 }} value={selectedRunId ?? ''} onChange={(e) => setRunId(e.target.value)}>
+      {/* Not a table, but the same overflow defect (#93) for the same reason: a
+          fixed 320px child in a non-wrapping flex row cannot shrink, so at phone
+          width it pushed `.content` sideways exactly as the tables did.
+          `maxWidth: '100%'` lets it shrink instead of overflowing; `flexWrap`
+          covers the case where a sibling is added later. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <select
+          className="form-input"
+          style={{ width: 320, maxWidth: '100%' }}
+          value={selectedRunId ?? ''}
+          onChange={(e) => setRunId(e.target.value)}
+        >
           {runs.map((r) => (
             <option key={r.runId} value={r.runId}>
               {scenarioName(r.scenarioId)} · {r.runId}

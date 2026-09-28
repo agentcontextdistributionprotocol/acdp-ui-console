@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { pingHealth } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { SDK_MATRIX_ROW_SERVICE, buildSdkMatrixRows } from '@/lib/utils/sdk-matrix';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { C } from '@/lib/colors';
 
 /**
@@ -52,55 +53,58 @@ export function SdkMatrix() {
   return (
     <Card>
       <CardHeader title="SDK Matrix" sub={demoMode ? 'demo' : 'live status'} />
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Component</th>
-            <th>Version</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.component}>
-              <td>{row.component}</td>
-              <td className="did">
-                {/* Polarity is inverted from the original: the MARKER goes on
-                    the live-verified version, not on the reference one. After
-                    Phase 8 the table is mostly reference in every mode, so
-                    marking the common case put ink on almost every row and
-                    said nothing; the rare, notable state is the one worth
-                    pointing at.
-
-                    No `title`. It was invisible on touch, invisible to
-                    keyboard focus, and inconsistently announced — so the
-                    explanation was unreachable for most of the people who
-                    needed it. The legend below the table carries it instead:
-                    the meaning is identical for every marked row, so a legend
-                    states it once, in the reading order, with no interaction. */}
-                {row.version}
-                {row.versionIsLive && <LiveMarker style={{ marginLeft: 6 }} />}
-              </td>
-              <td>
-                {row.status === 'reference' ? (
-                  <Badge variant="neutral">◇ reference</Badge>
-                ) : row.status === 'unknown' ? (
-                  <Badge variant="neutral">— unknown</Badge>
-                ) : row.status === 'ok' ? (
-                  <Badge variant="complete">● ok</Badge>
-                ) : (
-                  // `row.detail` rather than a flat `down`: the two words
-                  // separate "something answered and said it is unwell" from
-                  // "nothing answered", which are different things to go and
-                  // do. `?? 'down'` keeps the old word for a row whose probe
-                  // predates `detail`. The legend below defines both.
-                  <Badge variant="failed">✗ {row.detail ?? 'down'}</Badge>
-                )}
-              </td>
+      <TableScroll label="SDK and service versions">
+        <table className="data-table">
+          <caption className="sr-only">SDK and service versions: component, version and status</caption>
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Version</th>
+              <th>Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.component}>
+                <td>{row.component}</td>
+                <td className="did">
+                  {/* Polarity is inverted from the original: the MARKER goes on
+                      the live-verified version, not on the reference one. After
+                      Phase 8 the table is mostly reference in every mode, so
+                      marking the common case put ink on almost every row and
+                      said nothing; the rare, notable state is the one worth
+                      pointing at.
+
+                      No `title`. It was invisible on touch, invisible to
+                      keyboard focus, and inconsistently announced — so the
+                      explanation was unreachable for most of the people who
+                      needed it. The legend below the table carries it instead:
+                      the meaning is identical for every marked row, so a legend
+                      states it once, in the reading order, with no interaction. */}
+                  {row.version}
+                  {row.versionIsLive && <LiveMarker style={{ marginLeft: 6 }} />}
+                </td>
+                <td>
+                  {row.status === 'reference' ? (
+                    <Badge variant="neutral">◇ reference</Badge>
+                  ) : row.status === 'unknown' ? (
+                    <Badge variant="neutral">— unknown</Badge>
+                  ) : row.status === 'ok' ? (
+                    <Badge variant="complete">● ok</Badge>
+                  ) : (
+                    // `row.detail` rather than a flat `down`: the two words
+                    // separate "something answered and said it is unwell" from
+                    // "nothing answered", which are different things to go and
+                    // do. `?? 'down'` keeps the old word for a row whose probe
+                    // predates `detail`. The legend below defines both.
+                    <Badge variant="failed">✗ {row.detail ?? 'down'}</Badge>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableScroll>
       {/* Reads correctly with zero marked rows, which is the demo steady state
           after Phase 8 and also real mode with every service still loading —
           it describes what the marker means, not that any row has one. */}
