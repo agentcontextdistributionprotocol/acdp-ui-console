@@ -39,6 +39,8 @@ import {
   assertNoCopyOutsideTable,
   assertGlossChokePoint,
   assertGlossIsGated,
+  assertNoRuntimeCopyForms,
+  assertNoAlternateDisclosureChannel,
   advertisableIdsInComponent,
 } from '../support/profile-copy-table';
 
@@ -165,8 +167,11 @@ describe('an unknown profile id still reaches the screen', () => {
  * syntax: however an entry is written into `PROFILE_INFO` — on its own line, on
  * someone else's line, under a computed key, through a spread, by a
  * post-literal `Object.assign` — the chip either gets a tooltip or it does not,
- * and that is what an operator sees. Two rounds of this gate were lost to
- * source-regex readers that each missed a different subset of those forms.
+ * and that is what an operator sees. Several rounds of this gate were lost to
+ * source readers that each missed a different subset of those forms; the count
+ * and the full list live in ONE place, `test/support/profile-copy-table.ts`'s
+ * header, because five separate restatements of that history had drifted to
+ * five different numbers.
  */
 /**
  * The capability fixtures every render probe runs against.
@@ -208,28 +213,110 @@ const REGISTRY_FIXTURES: KnownRegistry[] = [
   { ...REGISTRY_B, authority: 'registry-z.example.test', baseUrl: undefined, eventCount: 0 },
 ];
 
+/**
+ * Where in `capabilities.profiles` a probed id is placed.
+ *
+ * THE THIRD AXIS, and the one #95 is actually about. `chipFor` rendered
+ * `profiles: [profileId]` — one id, always at index 0, never beside another —
+ * so no test in this repo ever rendered a forbidden id anywhere but first or in
+ * company. A gloss gated on `i > 0` therefore disclosed the copy #95 deleted
+ * with the whole suite green, and `app/registries/page.tsx` feeds this
+ * component a live capability document where a multi-profile array is the
+ * normal case: `MOCK_CAPABILITIES.a` already carries six.
+ *
+ * Successive rounds fixed one prop axis each (`capabilities`, then `registry`)
+ * and the copy moved to the axis still held constant. This is that axis.
+ */
+const POSITIONS = ['alone', 'first', 'last', 'middle'] as const;
+
+function profilesWith(profileId: string, position: (typeof POSITIONS)[number]): string[] {
+  const filler = ['acdp-registry-core', 'acdp-registry-discovery'];
+  switch (position) {
+    case 'alone':
+      return [profileId];
+    case 'first':
+      return [profileId, ...filler];
+    case 'last':
+      return [...filler, profileId];
+    case 'middle':
+      return [filler[0], profileId, filler[1]];
+  }
+}
+
 function chipFor(
   profileId: string,
-  capabilities: RegistryCapabilities = MOCK_CAPABILITIES.b as RegistryCapabilities,
-  registry: KnownRegistry = REGISTRY_B,
+  capabilities: RegistryCapabilities,
+  registry: KnownRegistry,
+  position: (typeof POSITIONS)[number] = 'alone',
 ): HTMLElement {
   const { container } = render(
     <RegistryCard
       registry={registry}
-      capabilities={{ ...capabilities, profiles: [profileId] } as RegistryCapabilities}
+      capabilities={{ ...capabilities, profiles: profilesWith(profileId, position) } as RegistryCapabilities}
     />,
   );
   const chip = [...container.querySelectorAll('.chip')].find((c) => c.textContent === profileId);
-  expect(chip, `no chip rendered for ${profileId}`).toBeTruthy();
+  expect(chip, `no chip rendered for ${profileId} at ${position}`).toBeTruthy();
   return chip as HTMLElement;
 }
+
+/**
+ * Every attribute the chip carries, so a gloss cannot arrive through a channel
+ * no assertion reads.
+ *
+ * The probes read `title`, `className` and `textContent`. An `aria-label`
+ * carrying the deleted copy — announced to a screen reader IN PLACE OF the
+ * text, where a `title` may not be announced at all — passed the whole suite.
+ */
+function attributesOf(el: HTMLElement): Record<string, string> {
+  return Object.fromEntries([...el.attributes].map((a) => [a.name, a.value]));
+}
+
+/**
+ * The id universe the disclosure probe samples.
+ *
+ * MODULE SCOPE so its own anti-vacuity pin can reach it. It was local, and it
+ * was the one array here with no pin: deleting every adversarial entry left the
+ * suite green, because the set-equality below only needs `ADVERTISABLE ⊆ PROBES`.
+ */
+const PROBES: string[] = [
+  ...ADVERTISABLE,
+  ...NOT_ADVERTISABLE,
+  // Shape variants: near-misses of a real id, and the affix patterns a
+  // synthesised gloss is cheapest to write against (`p.startsWith`,
+  // `p.endsWith`, a case fold). An id-derived title survived when the
+  // universe held no id of the shape its predicate tested.
+  'acdp-agent-core',
+  'acdp-registry-quantum',
+  'acdp-registry',
+  'acdp-registry-receipts-v2',
+  'acdp-registry-core-mirror',
+  'acdp-registry-CORE',
+  'ACDP-REGISTRY-CORE',
+  ' acdp-registry-core',
+  'acdp-registry-core ',
+  'registry-core',
+  'core',
+  'x',
+  '',
+  // `Object.prototype` names. `PROFILE_INFO[p]` without an own-property
+  // check returns a FUNCTION for these, which is truthy — so the chip
+  // reached `info.accent` on something that is not copy at all.
+  'toString',
+  'constructor',
+  'valueOf',
+  'hasOwnProperty',
+  '__proto__',
+];
 
 describe('the dead tooltip copy is gone', () => {
   it('has copy for EXACTLY the advertisable seven — no more, no fewer', () => {
     // Read with the TYPESCRIPT COMPILER, not a regex and not `Object.keys`.
     //
-    // Three earlier versions of this assertion each failed differently, and the
-    // third failed worst: it imported the object and compared `Object.keys`,
+    // Earlier versions of this assertion each failed differently (the list is
+    // in the support module's header, kept in one place because restating it
+    // produced five different counts). The worst imported the object and
+    // compared `Object.keys`,
     // which meant any OTHER module could import the same object and add a key
     // at module scope — Vitest isolates module graphs per test file, so this
     // guard went on seeing a pristine seven while the app rendered the deleted
@@ -267,7 +354,7 @@ describe('the dead tooltip copy is gone', () => {
   });
 
   it('contains NOTHING at module scope but its imports, the table and the component', () => {
-    // The guard, inverted. Four previous versions hunted for copy and each
+    // The guard, inverted. Previous versions hunted for copy and each
     // missed a construct its author had not anticipated — a second
     // `Record<string, string>` table, a `Map`, a prototype getter, an aliased
     // `Object.defineProperty`, and (the one that stung) a plain
@@ -295,13 +382,35 @@ describe('the dead tooltip copy is gone', () => {
     expect(() => assertNoCopyOutsideTable()).not.toThrow();
   });
 
+  it('builds no copy through a runtime form that leaves no property literal', () => {
+    // RESTORED. An earlier revision of this file had exactly this check,
+    // walking the whole file, and the module-scope rewrite deleted it. The
+    // measurement is unambiguous: an in-body `Proxy` get-trap synthesising the
+    // `acdp-consumer` title was RED before that rewrite and GREEN after. That
+    // is the fourth time a fix on this claim removed coverage the version
+    // before it had, which is why the support module now lists its bounds
+    // separately instead of describing one guard that covers everything.
+    expect(() => assertNoRuntimeCopyForms()).not.toThrow();
+  });
+
+  it('discloses through no attribute a probe does not read', () => {
+    // `aria-*`, `data-*`, `dangerouslySetInnerHTML`. The choke-point check's
+    // own docblock claimed "the render probes are what read those"; they never
+    // did — every probe read `title`, `className` and `textContent` — so a
+    // single added `aria-label` carrying the deleted copy, on every registry
+    // with no gating at all, passed the whole suite. By CLAUDE.md's own
+    // reasoning that is the LOUDER channel: a `title` may not be announced,
+    // an `aria-label` is announced in place of the text.
+    expect(() => assertNoAlternateDisclosureChannel()).not.toThrow();
+  });
+
   it('routes every rendered gloss through the one lookup', () => {
     // The literal walk above cannot see `title={registry.authority === 'x' ?
     // info?.title : undefined}` — there is no literal to find — and that
     // mutation dropped the tooltip from every registry but one with the whole
     // suite green. The render matrix catches it behaviourally; this catches it
     // structurally, and a claim worth one layer of defence on a surface that
-    // has regressed six times is worth two.
+    // has regressed as often as this one is worth two.
     expect(() => assertGlossChokePoint()).not.toThrow();
   });
 
@@ -343,13 +452,18 @@ describe('the dead tooltip copy is gone', () => {
     for (const id of NOT_ADVERTISABLE) {
       for (const registry of REGISTRY_FIXTURES) {
         for (const capabilities of CAPABILITY_FIXTURES) {
-          const chip = chipFor(id, capabilities, registry);
-          expect(chip.textContent).toBe(id);
-          expect(
-            chip.getAttribute('title'),
-            `${id} is glossed on ${registry.authority} @ ${capabilities.acdp_version}`,
-          ).toBeNull();
-          cleanup();
+          for (const position of POSITIONS) {
+            const where = `${id} on ${registry.authority} @ ${capabilities.acdp_version} (${position})`;
+            const chip = chipFor(id, capabilities, registry, position);
+            expect(chip.textContent).toBe(id);
+            // NOT just `title`. Every attribute but `class` must be absent, so
+            // copy cannot arrive through `aria-label`, `aria-describedby` or a
+            // `data-*` the probes were never reading.
+            expect(attributesOf(chip), `${where} carries more than a class`).toEqual({
+              class: 'chip',
+            });
+            cleanup();
+          }
         }
       }
     }
@@ -382,42 +496,30 @@ describe('the dead tooltip copy is gone', () => {
     // copy conditioned on `acdp_version`; a probe pinned to one registry cannot
     // see copy conditioned on `authority`, which is how the deleted
     // `acdp-consumer` gloss came back for registry-a with the suite green.
-    const PROBES = [
-      ...ADVERTISABLE,
-      ...NOT_ADVERTISABLE,
-      // Shape variants: near-misses of a real id, and the affix patterns a
-      // synthesised gloss is cheapest to write against (`p.startsWith`,
-      // `p.endsWith`, a case fold). An id-derived title survived when the
-      // universe held no id of the shape its predicate tested.
-      'acdp-agent-core',
-      'acdp-registry-quantum',
-      'acdp-registry',
-      'acdp-registry-receipts-v2',
-      'acdp-registry-core-mirror',
-      'acdp-registry-CORE',
-      'ACDP-REGISTRY-CORE',
-      ' acdp-registry-core',
-      'acdp-registry-core ',
-      'registry-core',
-      'core',
-      'x',
-      '',
-      // `Object.prototype` names. `PROFILE_INFO[p]` without an own-property
-      // check returns a FUNCTION for these, which is truthy — so the chip
-      // reached `info.accent` on something that is not copy at all.
-      'toString',
-      'constructor',
-      'valueOf',
-      'hasOwnProperty',
-      '__proto__',
-    ];
+    const expected = profileCopyTable().entries;
     const disclosing: string[] = [];
     for (const id of PROBES) {
       for (const registry of REGISTRY_FIXTURES) {
         for (const fixture of CAPABILITY_FIXTURES) {
-          const chip = chipFor(id, fixture, registry);
-          if (chip.getAttribute('title') !== null && !disclosing.includes(id)) disclosing.push(id);
-          cleanup();
+          for (const position of POSITIONS) {
+            const where = `${id} on ${registry.authority} @ ${fixture.acdp_version} (${position})`;
+            const chip = chipFor(id, fixture, registry, position);
+            const attrs = attributesOf(chip);
+            // Nothing but `class` and (for the seven) `title`. A gloss arriving
+            // through `aria-label` or a `data-*` is a disclosure no previous
+            // version of this loop could see, and for a screen-reader user it
+            // is the LOUDER channel of the two.
+            expect(Object.keys(attrs).sort(), `${where}: unexpected attributes`).toEqual(
+              expected.has(id) ? ['class', 'title'] : ['class'],
+            );
+            // And where a gloss is allowed, it is the TABLE's, character for
+            // character. `toBeTruthy()` and an RFC regex both accept copy
+            // synthesised anywhere in the component; equality does not, which
+            // is what bounds the value behind an allow-listed import.
+            if (expected.has(id)) expect(attrs.title, `${where}: gloss is not the table's`).toBe(expected.get(id));
+            if (attrs.title !== undefined && !disclosing.includes(id)) disclosing.push(id);
+            cleanup();
+          }
         }
       }
     }
@@ -426,6 +528,26 @@ describe('the dead tooltip copy is gone', () => {
     // an empty `disclosing`, and set-equality against an empty ADVERTISABLE
     // would be true.
     expect(disclosing).toHaveLength(ADVERTISABLE.length);
+  });
+
+  it('pins the adversarial id universe, so the probe above cannot be narrowed to the easy cases', () => {
+    // `PROBES` was the one array here with no anti-vacuity pin, while
+    // `NOT_ADVERTISABLE`, `CAPABILITY_FIXTURES` and `REGISTRY_FIXTURES` all had
+    // one. Deleting every adversarial entry — the affix variants, the case
+    // folds, the whitespace, the empty string, the `Object.prototype` names —
+    // left the suite green, because the set-equality only needs
+    // `ADVERTISABLE ⊆ PROBES`. The one array the design notes call deliberately
+    // adversarial could be silently reduced to the seven ids that pass easily.
+    expect(PROBES).toEqual(expect.arrayContaining([...ADVERTISABLE, ...NOT_ADVERTISABLE]));
+    const adversarial = PROBES.filter((p) => !ADVERTISABLE.includes(p) && !NOT_ADVERTISABLE.includes(p));
+    expect(adversarial.length).toBeGreaterThanOrEqual(15);
+    // The classes, named — a count alone is satisfied by fifteen copies of 'x'.
+    expect(adversarial).toEqual(expect.arrayContaining(['toString', 'constructor', '__proto__']));
+    expect(adversarial.some((p) => p !== p.toLowerCase())).toBe(true); // a case fold
+    expect(adversarial.some((p) => p !== p.trim())).toBe(true); // whitespace
+    expect(adversarial).toContain(''); // the empty string
+    expect(adversarial.some((p) => ADVERTISABLE.some((a) => p.startsWith(a) && p !== a))).toBe(true);
+    expect(new Set(adversarial).size).toBe(adversarial.length);
   });
 
   it('every advertisable id keeps its gloss on EVERY registry, not just the demo two', () => {
@@ -438,12 +560,14 @@ describe('the dead tooltip copy is gone', () => {
     for (const registry of REGISTRY_FIXTURES) {
       for (const capabilities of CAPABILITY_FIXTURES) {
         for (const id of ADVERTISABLE) {
-          const chip = chipFor(id, capabilities, registry);
-          expect(
-            chip.getAttribute('title'),
-            `${id} has no gloss on ${registry.authority} @ ${capabilities.acdp_version}`,
-          ).toMatch(/RFC-ACDP-\d{4}/);
-          cleanup();
+          for (const position of POSITIONS) {
+            const chip = chipFor(id, capabilities, registry, position);
+            expect(
+              chip.getAttribute('title'),
+              `${id} has no gloss on ${registry.authority} @ ${capabilities.acdp_version} (${position})`,
+            ).toMatch(/RFC-ACDP-\d{4}/);
+            cleanup();
+          }
         }
       }
     }
@@ -466,7 +590,11 @@ describe('the dead tooltip copy is gone', () => {
   it('DISCRIMINATES: a real profile rendered the same way DOES get its tooltip', () => {
     // Without this, the probe above would pass against a component that had
     // lost its tooltips entirely.
-    const chip = chipFor('acdp-registry-lifecycle');
+    const chip = chipFor(
+      'acdp-registry-lifecycle',
+      MOCK_CAPABILITIES.b as RegistryCapabilities,
+      REGISTRY_B,
+    );
     expect(chip.getAttribute('title')).toContain('RFC-ACDP-0013');
     cleanup();
   });

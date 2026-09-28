@@ -16,8 +16,10 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
  * "`PROFILE_INFO` has copy for exactly these seven ids" then stops being a
  * claim a test has to police and becomes a condition `tsc` enforces. An eighth
  * key is an excess-property error; a missing one is a missing-property error.
- * Five successive test-shaped guards failed to hold that line (the list is in
- * `test/support/profile-copy-table.ts`); the type system holds it for free.
+ * Six successive test-shaped guards failed to hold that line (the list, and the
+ * authoritative count, are in `test/support/profile-copy-table.ts`'s header —
+ * restating either here is how five files came to disagree about it); the type
+ * system holds it for free.
  *
  * It is mirrored rather than imported because the shared mirror lives under
  * `test/`, and production code must not import from the test tree.
@@ -67,12 +69,26 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *   - `assertModuleShape()` bounds WHAT MAY BE IMPORTED — by binding name, not
  *     just by module specifier. Allow-listing a specifier alone left four
  *     unbounded suppliers of copy: `import { PROFILE_GLOSS } from
- *     '@/lib/utils/format'` was on the allow-list.
+ *     '@/lib/utils/format'` was on the allow-list. Binding names narrow WHICH
+ *     suppliers remain unbounded; they do not close the channel, because a
+ *     name says nothing about the value behind it. `timeAgo` could be edited
+ *     to return copy. The render probes are what catch that.
+ *   - `assertNoRuntimeCopyForms()` bounds the VERBS that attach copy with no
+ *     property literal to find — `Object.assign`/`create`/`defineProperty`/
+ *     `setPrototypeOf`, `Reflect.*`, `new Proxy`. A check like this existed
+ *     two revisions ago and was deleted by a "fix"; an in-body Proxy get-trap
+ *     went red to green on that commit.
+ *   - `assertNoAlternateDisclosureChannel()` bounds `aria-*`, `data-*` and
+ *     `dangerouslySetInnerHTML`. A comment used to assert the render probes
+ *     read those. They read `title`, `className` and `textContent`.
  *   - The render probes bound WHAT REACHES THE SCREEN, across a matrix of both
  *     props. Neither prop axis may be fixed: copy conditioned on
  *     `registry.authority` was invisible to a probe that always passed
  *     registry-b, and that is exactly the defect #95 is — copy for an id one
- *     deployment cannot advertise.
+ *     deployment cannot advertise. POSITION within `capabilities.profiles` is
+ *     the third axis and was fixed for two rounds after the other two were
+ *     varied: every probe rendered a one-element array, so a gloss gated on
+ *     `i > 0` disclosed freely. All three vary now.
  *
  * Their honest residual: no test can quantify over every possible id string, so
  * the probe universe is a sample (the seven, the three forbidden ones, shape
