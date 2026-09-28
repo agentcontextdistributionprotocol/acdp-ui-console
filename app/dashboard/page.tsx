@@ -250,9 +250,14 @@ export default function DashboardPage() {
  * version stating the first arm's cause over the second's, which is the defect
  * this whole file exists to remove.
  *
- * Five renderings, four states. That is deliberate: `unknown` is one state
- * about one thing we do not know, and the reasons differ only in what may be
- * said ABOUT not knowing.
+ * SIX renderings, four states. That is deliberate: `unknown` is one state
+ * about one thing we do not know, split three ways only by what may honestly be
+ * said ABOUT not knowing. The six are: the `.kpi-grid` for `reported`, one
+ * paragraph each for `checked-clean` and `disabled`, and one for each of the
+ * three `because` values. Counted here because an earlier version of this line
+ * said five, which invites the next reader to conclude an arm is dead and
+ * merge it — which is precisely how the over-claiming `flags-disagree` copy
+ * came to be written.
  */
 function RevocationBody({ state }: { state: DashboardRevocationState }) {
   if (state.kind === 'reported') {
@@ -316,11 +321,13 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
           Revocation checking is switched off on this deployment.
         </strong>
         <br />
-        No figures are shown because nothing was measured — which is not the same as nothing being
-        found. The control plane reports the compromise-boundary check as disabled, so nothing new
-        will be classified until it is enabled. Figures already recorded against an earlier window
-        are unaffected: classification happens at audit time and is not undone by switching the
-        check off.
+        No figures are shown for this window because the control plane stops sending the count
+        while the check is off — which is not the same as having looked and found nothing. It is
+        also not a claim that nothing was classified: classification happens at audit time and is
+        not undone by disabling the check, so anything already recorded stays recorded, in this
+        window as much as an earlier one. What the console cannot tell you from here is whether the
+        check was running earlier in this window. Nothing new will be classified until it is
+        enabled.
       </p>
     );
   }

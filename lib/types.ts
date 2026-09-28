@@ -284,6 +284,13 @@ export interface CpDashboardOverview {
    * same discipline `components/registries/log-witness-card.tsx` already
    * encodes for the nullable quorum counts.
    */
+  // Optional, NOT nullable, and that asymmetry with `keyRevocation` above is
+  // deliberate: `dashboard.service.ts:260` builds this object unconditionally,
+  // so `null` is not a shape upstream can send, whereas an older control plane
+  // omitting the key entirely is. `dashboardRevocationState` still guards
+  // `null` at runtime — a round-2 gate found that a `null` on the wire crashed
+  // `/dashboard` outright — because a type is a claim about the deployments we
+  // know of, not a runtime guarantee about the one in front of us.
   features?: CpDashboardFeatures;
   // Upstream's dashboard payload also carries `logWitness`, `totalRetracted`
   // and `totalContextsLive`. They are deliberately NOT declared here: nothing

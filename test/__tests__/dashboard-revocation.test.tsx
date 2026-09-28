@@ -127,7 +127,14 @@ describe('dashboard — Key Revocation with no feature flags (the pre-#178 backe
     renderWith(
       overview({ keyRevocation: { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 } }),
     );
-    const text = revocationCard().textContent ?? '';
+    // Scoped to the PARAGRAPH, not the card. Read off the whole card this was
+    // half-vacuous in exactly the way round 2 found for the `checked-clean`
+    // guard: the card subtitle carries its own "…older than this window is not
+    // reflected here", which satisfied `toContain('window')` on its own, so
+    // dropping the scope from the claim itself left this green. Proven by
+    // stripping every "window" from the arm's prose — this test stayed green
+    // until it was rescoped.
+    const text = proseText();
     expect(text).toContain('window');
     expect(text).not.toMatch(/not reported by this deployment/);
     expect(text).not.toMatch(/this deployment (does not|never)/);
@@ -176,7 +183,15 @@ const HEDGE = 'the check is disabled by default';
  * rather than throwing.
  */
 function proseText(): string {
-  return revocationCard().querySelector('p')?.textContent ?? '';
+  // Throws rather than returning `''`. An empty string silently satisfies
+  // every `not.toMatch` in this file, so a change that removed the paragraph
+  // altogether — or reverted the prose arms to `<div>` — would turn a whole
+  // class of assertions into no-ops while staying green.
+  const p = revocationCard().querySelector('p');
+  if (p === null) {
+    throw new Error('no <p> in the revocation card: the prose arms render no paragraph to scope');
+  }
+  return p.textContent ?? '';
 }
 
 describe('dashboard — Key Revocation says which of four states it is', () => {
@@ -273,10 +288,60 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     );
     const text = revocationCard().textContent ?? '';
     expect(text).toContain('Revocation checking is switched off on this deployment');
-    // The distinction the whole issue turns on: nothing MEASURED is not the
+    // The distinction the whole issue turns on: no figures SENT is not the
     // same as nothing FOUND.
-    expect(text).toMatch(/nothing was measured/i);
+    expect(text).toMatch(/not the same as having looked and found nothing/i);
     expect(text).not.toContain(HEDGE);
+  });
+
+  it('pins the explanatory tails no other assertion covers', () => {
+    // Round 3's non-blocking B: five sentences could each be deleted with the
+    // whole suite green. None of the deletions creates a FALSE claim — they are
+    // explanatory tails — but one of them is load-bearing in a different way:
+    // `flag-on-no-counters`' "no cause is offered beyond that" is the sentence
+    // that STATES THE RESTRAINT, and this arm exists precisely because an
+    // earlier version invented a cause. A guard that lets the restraint be
+    // deleted silently is guarding the wrong half.
+    renderWith(
+      overview({
+        keyRevocation: { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 },
+        features: { ...FEATURES, keyRevocationCheck: true },
+      }),
+    );
+    const clean = proseText();
+    expect(clean).toMatch(/a longer window may also show figures/i);
+    cleanup();
+
+    renderWith(overview({ keyRevocation: undefined, features: { ...FEATURES, keyRevocationCheck: true } }));
+    const noCounters = proseText();
+    expect(noCounters).toMatch(/same setting upstream/i);
+    expect(noCounters).toMatch(/no cause is offered beyond that/i);
+    cleanup();
+
+    renderWith(overview({ keyRevocation: undefined, features: { ...FEATURES, keyRevocationCheck: 'yes' } as never }));
+    expect(proseText()).toMatch(/not a value this console can read/i);
+  });
+
+  it('disabled: does NOT claim nothing was measured over this window', () => {
+    // Round 3's fourth finding. The console knows the check is off NOW. It does
+    // not know the check was off for the whole window: upstream gates both the
+    // query and the tile on the same config value, so switching the check off
+    // nulls the tile regardless of what was classified earlier in that window,
+    // while the persisted `key_revocation_status` rows are untouched. A
+    // deployment that ran the check over the first half of the window and
+    // disabled it yesterday was rendering "nothing was measured" — false.
+    //
+    // This is the same conflation of UNMONITORED with CLEAN that #97 exists to
+    // remove, running in the opposite direction, so it is asserted as an
+    // absence rather than left to the positive wording above.
+    renderWith(
+      overview({ keyRevocation: CLEAN, features: { ...FEATURES, keyRevocationCheck: false } }),
+    );
+    const text = revocationCard().textContent ?? '';
+    expect(text).not.toMatch(/nothing was measured/i);
+    expect(text).not.toMatch(/never been checked|has not been checked/i);
+    // …and it says so positively: the limit of what this view can tell.
+    expect(text).toMatch(/cannot tell you .* whether the check was running earlier/i);
   });
 
   it('disabled: scopes \u201cnothing will be classified\u201d to NEW classification only', () => {
@@ -294,7 +359,11 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     );
     const text = proseText();
     expect(text).toMatch(/nothing new will be classified/i);
-    expect(text).toMatch(/figures already recorded against an earlier window are unaffected/i);
+    // Retroactivity, now stated for THIS window too rather than only an
+    // earlier one — the narrower wording was what let the arm go on implying
+    // that nothing in the current window could have been measured.
+    expect(text).toMatch(/anything already recorded stays recorded/i);
+    expect(text).toMatch(/in this window as much as an earlier one/i);
     expect(text).toMatch(/classification happens at audit time/i);
     // The over-claim, explicitly absent: no sentence may say that no window can
     // show figures while the check is off.

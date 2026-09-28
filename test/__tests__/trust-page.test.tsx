@@ -309,7 +309,12 @@ describe('/trust — the deployment revocation flag', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toContain('Revocation checking is switched off on this deployment');
-    expect(text).toContain('nothing was measured');
+    // NOT "nothing was measured". This page's gate is
+    // `revocationReportedRuns === 0`, which is satisfied precisely by runs that
+    // WERE audited and found clean — so that wording claimed the opposite of
+    // what the payload may hold, with no scope at all to soften it.
+    expect(text).toContain('no figures are sent while it is off');
+    expect(text).not.toContain('nothing was measured');
     // And the card subtitle agrees with the KPI hint — two strings, one fact.
     expect(text).toContain('revocation checking off');
   });

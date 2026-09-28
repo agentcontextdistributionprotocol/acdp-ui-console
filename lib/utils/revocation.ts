@@ -361,8 +361,11 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *                    the function exists.
  *   `disabled`       the flag says the check is off. Nothing was measured, and
  *                    saying so is different from saying nothing was found.
- *   `unknown`        we cannot tell — for one of two REASONS, carried on the
+ *   `unknown`        we cannot tell — for one of THREE reasons, carried on the
  *                    arm as `because`, because they license different copy.
+ *                    (Enumerated below. This line said "two" for one commit
+ *                    after the third was added, contradicting its own list
+ *                    twenty lines further down.)
  *
  * The `because` split exists for a defect the first gate round on this change
  * found. The `unknown` arm inherited the old prose verbatim, hedge included —
@@ -445,7 +448,19 @@ export function dashboardRevocationState(
   // reading a property off it would yield `undefined` and route to
   // `flag-unreadable` — which would claim a features object arrived when what
   // arrived was not one.
-  if (features === undefined || features === null || typeof features !== 'object') {
+  //
+  // An ARRAY is the gap in that reasoning and is excluded explicitly:
+  // `typeof [] === 'object'`, so without the array test a `features: []` would
+  // pass this guard and render "It sent a feature report, but the
+  // compromise-boundary setting in it was not a value this console can read" —
+  // asserting a feature report arrived when an array is not one either. The
+  // rationale above covers what it says it covers; this is the case it did not.
+  if (
+    features === undefined ||
+    features === null ||
+    typeof features !== 'object' ||
+    Array.isArray(features)
+  ) {
     return { kind: 'unknown', because: 'no-flags' };
   }
 

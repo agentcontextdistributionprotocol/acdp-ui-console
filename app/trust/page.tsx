@@ -129,7 +129,7 @@ export default function TrustPage() {
                 // receiptCoverage/didMethods are window-scoped. Saying "window"
                 // would describe a scope this page does not apply.
                 revocationCheckOff
-                ? 'Revocation checking is switched off on this deployment — nothing was measured'
+                ? 'Revocation checking is switched off on this deployment — no figures are sent while it is off'
                 : 'Not reported by this deployment — no run in this view carried a revocation classification'
           }
         />
