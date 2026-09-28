@@ -236,10 +236,23 @@ export default function DashboardPage() {
  * classified", never "nothing is revoked". The window picker can change the
  * answer, so a deployment-level claim would be unwarranted from the same data.
  *
- * `unknown` keeps the old prose verbatim, hedge included. That arm is a control
- * plane predating acdp-control-plane#178, where we genuinely cannot tell whether
- * the check ran — so the hedge is still the honest thing to say, and moving it
- * here is what lets the other three arms stop saying it.
+ * `unknown` renders THREE ways, one per `because`, and only `no-flags` keeps the
+ * old prose with its "disabled by default" hedge. That route is a control plane
+ * predating acdp-control-plane#178, where nothing has told us whether the check
+ * runs — so the hedge is still the honest thing to say there, and confining it
+ * to that route is what lets every other rendering stop saying it.
+ *
+ * The other two say only what holds on their own route: `flag-on-no-counters`
+ * may state that the deployment reports the check as on (it does — `=== true`),
+ * and `flag-unreadable` may state only that the flag could not be read, since
+ * on that route the counters may be absent or present-and-zero and the flag
+ * says nothing either way. Round 2 of this change's gate found the merged
+ * version stating the first arm's cause over the second's, which is the defect
+ * this whole file exists to remove.
+ *
+ * Five renderings, four states. That is deliberate: `unknown` is one state
+ * about one thing we do not know, and the reasons differ only in what may be
+ * said ABOUT not knowing.
  */
 function RevocationBody({ state }: { state: DashboardRevocationState }) {
   if (state.kind === 'reported') {
@@ -269,11 +282,19 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
     );
   }
 
-  const prose = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 } as const;
+  // `margin: 0` because these render as `<p>` rather than `<div>`. The element
+  // is a paragraph — one block of explanatory prose — and saying so is what
+  // lets a test assert sentence-by-sentence over the PROSE alone. Round 2 of
+  // this change's gate found the window-scoping guard reading the whole card:
+  // the header and subtitle carry no terminal period, so splitting on the
+  // period glued the subtitle onto the first claim, and the subtitle's own
+  // "older than this window" satisfied the scope assertion no matter what the
+  // claim said.
+  const prose = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, margin: 0 } as const;
 
   if (state.kind === 'checked-clean') {
     return (
-      <div style={prose}>
+      <p style={prose}>
         <strong style={{ color: 'var(--text)' }}>
           Revocation checking is enabled, and nothing in this window is classified against a revoked
           key.
@@ -284,13 +305,13 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
         does not follow that every event in the window was checked — classification happens at audit
         time, so events audited before the check was switched on keep the status they were given
         then, and enabling it does not re-classify them. A longer window may also show figures.
-      </div>
+      </p>
     );
   }
 
   if (state.kind === 'disabled') {
     return (
-      <div style={prose}>
+      <p style={prose}>
         <strong style={{ color: 'var(--text)' }}>
           Revocation checking is switched off on this deployment.
         </strong>
@@ -300,29 +321,56 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
         will be classified until it is enabled. Figures already recorded against an earlier window
         are unaffected: classification happens at audit time and is not undone by switching the
         check off.
-      </div>
+      </p>
     );
   }
 
-  // `unknown`, whose two reasons license different explanations. Only
+  // `unknown`, whose three reasons license different explanations. Only
   // `no-flags` may keep the original hedge — see `dashboardRevocationState`.
-  if (state.because === 'flags-disagree') {
+  if (state.because === 'flag-on-no-counters') {
     return (
-      <div style={prose}>
+      <p style={prose}>
         <strong style={{ color: 'var(--text)' }}>
           This deployment&rsquo;s report about revocation checking does not add up.
         </strong>
         <br />
-        It says the compromise-boundary check is enabled but sent no counters at all — not even
+        {/*
+          Both halves of this sentence are things the console holds directly on
+          this route and nowhere else: the flag was read as exactly `true`, and
+          `keyRevocation` was absent rather than zeroed. Upstream derives both
+          from the same setting, so one of them is wrong.
+        */}
+        It reports the compromise-boundary check as enabled, yet sent no counters at all — not even
         zeros. Those two come from the same setting upstream, so one of them is wrong and there is
-        no way to tell which from here. No figures are shown, and deliberately no cause is given:
+        no way to tell which from here. No figures are shown, and no cause is offered beyond that:
         the check is not reported as off, so saying it was would be inventing an explanation.
-      </div>
+      </p>
+    );
+  }
+
+  if (state.because === 'flag-unreadable') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          This deployment did not say whether revocation checking is running.
+        </strong>
+        <br />
+        {/*
+          The ONE fact that holds on every route here. Nothing is said about the
+          counters: on this route they may be absent or present-and-zero, and
+          the previous merged copy claimed the second could not happen. Nothing
+          is said about the deployment being old either — a feature block did
+          arrive; it just could not be read.
+        */}
+        It sent a feature report, but the compromise-boundary setting in it was not a value this
+        console can read as on or off. No figures are shown, because whether anything was measured
+        is exactly what could not be established.
+      </p>
     );
   }
 
   return (
-    <div style={prose}>
+    <p style={prose}>
       <strong style={{ color: 'var(--text)' }}>
         Nothing in this window carried a revocation classification.
       </strong>
@@ -331,6 +379,6 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
       when it cannot be told apart from never having looked — the check is disabled by default. This
       is a statement about the selected window, not about the deployment: a different window may
       well show figures. They appear as soon as anything is classified.
-    </div>
+    </p>
   );
 }

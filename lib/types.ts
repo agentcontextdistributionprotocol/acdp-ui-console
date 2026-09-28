@@ -285,16 +285,14 @@ export interface CpDashboardOverview {
    * encodes for the nullable quorum counts.
    */
   features?: CpDashboardFeatures;
-  /**
-   * RFC-ACDP-0012 checkpoint-witness posture (`dashboard.service.ts:215-235`).
-   * `null` when `LOG_WITNESS_ENABLED` is off — the same
-   * distinguish-off-from-clean reasoning as `keyRevocation` above.
-   */
-  logWitness?: CpDashboardLogWitness | null;
-  /** Currently-retracted contexts in the window (`dashboard.service.ts:203`). */
-  totalRetracted?: number;
-  /** Published minus currently retracted (`dashboard.service.ts:204`). */
-  totalContextsLive?: number;
+  // Upstream's dashboard payload also carries `logWitness`, `totalRetracted`
+  // and `totalContextsLive`. They are deliberately NOT declared here: nothing
+  // in the console reads them, so no test could hold the declared shape to
+  // account, and a wrong shape would sit in the type surface being trusted
+  // until the first consumer arrived. Same standard that removed this module's
+  // `DashboardRevocation` re-export in this change — a declaration nothing
+  // reads is a claim nothing checks. Add them WITH the surface that consumes
+  // them, and a fixture that pins them.
 }
 
 /** The three RFC-ACDP-0014 §7 compromise-boundary counters, window-scoped. */
@@ -332,14 +330,6 @@ export interface CpDashboardFeatures {
   logInclusionAudit: boolean;
   witnessCosigning: boolean;
   witnessQuorum: boolean;
-}
-
-/** `dashboard.service.ts:215-235`. `unacknowledgedAlerts` is the durable worklist. */
-export interface CpDashboardLogWitness {
-  witnessedLogs: number;
-  activeAlerts: number;
-  unacknowledgedAlerts: number;
-  headsMeetingQuorum: number;
 }
 
 export interface KnownAgent {

@@ -62,10 +62,12 @@ afterEach(() => {
 
 // ══════════════════════════════════════════════════════════════════════
 // MIGRATED, not deleted (#97). Every test in the block below predates
-// `features` and passes NO flags, so each one now exercises the `unknown` arm
-// — a control plane predating acdp-control-plane#178, where the old prose
-// (hedge included) is still exactly the honest thing to say. That is the
-// mapping criterion 8 asks for, and it is why these read unchanged:
+// `features` and passes NO flags. THREE of the five therefore exercise the
+// `unknown` arm — a control plane predating acdp-control-plane#178, where the
+// old prose (hedge included) is still exactly the honest thing to say. The
+// other two carry a non-zero count, which is self-evidencing and routes to
+// `reported` whatever the flags say. That is the mapping criterion 8 asks for,
+// and it is why these read unchanged:
 //
 //   "all-zero payload renders no figure"      -> kind `unknown`
 //   "one non-zero renders all three figures"  -> kind `reported`
@@ -73,7 +75,8 @@ afterEach(() => {
 //   "scopes the absence to the WINDOW"        -> kind `unknown`
 //   "counters are window-scoped"              -> kind `reported`
 //
-// The four-arm coverage the flags make possible is the describe that follows.
+// The four-state, six-rendering coverage the flags make possible is the
+// describe that follows.
 // ══════════════════════════════════════════════════════════════════════
 describe('dashboard — Key Revocation with no feature flags (the pre-#178 backend)', () => {
   it('keeps the card but renders NO figure — not even a 0', () => {
@@ -166,6 +169,16 @@ const SOME = { preCompromise: 9, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0
 /** The one phrase that may appear in exactly one arm. */
 const HEDGE = 'the check is disabled by default';
 
+/**
+ * The explanatory paragraph of the revocation tile, excluding the card header
+ * and subtitle. The prose arms render as `<p>`; the `reported` arm renders a
+ * `.kpi-grid` and no paragraph at all, which is why this returns '' there
+ * rather than throwing.
+ */
+function proseText(): string {
+  return revocationCard().querySelector('p')?.textContent ?? '';
+}
+
 describe('dashboard — Key Revocation says which of four states it is', () => {
   it('reported: figures, no prose', () => {
     renderWith(overview({ keyRevocation: SOME, features: FEATURES }));
@@ -211,16 +224,37 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     // as a unit: "nothing was classified against a revoked key" reads as a
     // deployment-level all-clear regardless of what preceded it.
     renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
-    const text = revocationCard().textContent ?? '';
+    // Scoped to the PROSE paragraph, not the whole card. Round 2 of this
+    // change's gate found the card-wide version half-vacuous: the card header
+    // and its subtitle carry no terminal period, so splitting the card text on
+    // the period glued "…an event older than this window is not reflected here"
+    // onto the headline claim — and the SUBTITLE's own "this window" then
+    // satisfied the scope assertion no matter what the claim said. Dropping
+    // "in this window" from the headline left this test green.
+    const prose = proseText();
     // `<br />` contributes no whitespace to textContent, so split on the period
     // itself rather than on a space after it.
-    const sentences = text.split(/(?<=\.)\s*/).filter((s) => s.trim().length > 0);
-    const claims = sentences.filter((s) =>
-      /classified against a revoked key|counters are zero/.test(s),
+    const sentences = prose.split(/(?<=\.)\s*/).filter((x) => x.trim().length > 0);
+    const claims = sentences.filter((x) =>
+      /classified against a revoked key|counters are zero/.test(x),
     );
     // Without this the loop below goes vacuous the moment the copy is reworded.
     expect(claims.length).toBeGreaterThanOrEqual(2);
-    for (const s of claims) expect(s).toMatch(/this window|selected window/);
+    for (const x of claims) expect(x).toMatch(/this window|selected window/);
+  });
+
+  it('GUARDS THE GUARD: the card subtitle cannot supply the scope for a claim', () => {
+    // The mechanism of the defect above, pinned directly. The subtitle is
+    // outside the prose paragraph, so no wording of it can satisfy the per-
+    // sentence assertion — and the prose must therefore carry its own scope.
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    const card = revocationCard().textContent ?? '';
+    expect(card).toMatch(/older than this window/); // the subtitle really is there…
+    expect(proseText()).not.toMatch(/older than this window/); // …and really is excluded.
+    // And the headline claim carries the scope on its own.
+    const headline = proseText().split(/(?<=\.)\s*/)[0];
+    expect(headline).toMatch(/classified against a revoked key/);
+    expect(headline).toMatch(/this window/);
   });
 
   it('checked-clean never states a DEPLOYMENT-level clean', () => {
@@ -245,6 +279,29 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(text).not.toContain(HEDGE);
   });
 
+  it('disabled: scopes \u201cnothing will be classified\u201d to NEW classification only', () => {
+    // Round 2's fifth finding: this arm's body was unpinned in both directions
+    // — deleting the retroactivity sentence and reverting to the over-claiming
+    // version it replaced both left the suite green.
+    //
+    // Classification happens at AUDIT TIME. Switching the check off stops new
+    // events being classified; it does not un-classify what an earlier window
+    // already recorded. “No window will show figures until it is enabled” —
+    // the wording this replaced — asserts the opposite, and would have an
+    // operator read a historical window's real figures as impossible.
+    renderWith(
+      overview({ keyRevocation: CLEAN, features: { ...FEATURES, keyRevocationCheck: false } }),
+    );
+    const text = proseText();
+    expect(text).toMatch(/nothing new will be classified/i);
+    expect(text).toMatch(/figures already recorded against an earlier window are unaffected/i);
+    expect(text).toMatch(/classification happens at audit time/i);
+    // The over-claim, explicitly absent: no sentence may say that no window can
+    // show figures while the check is off.
+    expect(text).not.toMatch(/no window will show figures/i);
+    expect(text).not.toMatch(/no figures .{0,40}until it is enabled/i);
+  });
+
   it('disabled: reached by a null payload too, which is what upstream actually sends', () => {
     // `dashboard.service.ts:240` emits literal `null` when the check is off.
     renderWith(overview({ keyRevocation: null, features: { ...FEATURES, keyRevocationCheck: false } }));
@@ -260,24 +317,26 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(revocationCard().textContent).toContain(HEDGE);
   });
 
-  it('all FIVE renderings are DISTINGUISHABLE text', () => {
-    // Four kinds, but five renderings: `unknown` splits on `because`, and the
-    // whole point of that split is that the two read differently. Without this,
-    // arms could collapse onto one paragraph and every test above would still
-    // pass in isolation.
+  it('all SIX renderings are DISTINGUISHABLE text', () => {
+    // Four kinds, but six renderings: `unknown` splits three ways on `because`,
+    // and the whole point of that split is that each reads differently — each
+    // says only what holds on its own route. Without this, arms could collapse
+    // onto one paragraph and every test above would still pass in isolation.
+    const stringy = { ...FEATURES, keyRevocationCheck: 'true' } as unknown as typeof FEATURES;
     const texts: string[] = [];
     for (const [k, f] of [
       [SOME, FEATURES],                                        // reported
       [CLEAN, FEATURES],                                       // checked-clean
       [CLEAN, { ...FEATURES, keyRevocationCheck: false }],     // disabled
       [CLEAN, undefined],                                      // unknown/no-flags
-      [null, FEATURES],                                        // unknown/flags-disagree
+      [null, FEATURES],                                        // unknown/flag-on-no-counters
+      [CLEAN, stringy],                                        // unknown/flag-unreadable
     ] as const) {
       renderWith(overview({ keyRevocation: k, features: f }));
       texts.push(revocationCard().textContent ?? '');
       cleanup();
     }
-    expect(new Set(texts).size).toBe(5);
+    expect(new Set(texts).size).toBe(6);
   });
 
   it('a non-zero count is REPORTED even when the flag says the check is off', () => {
@@ -305,16 +364,57 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(text).not.toMatch(/disabled|switched off/i);
     expect(text).not.toContain('classified against a revoked key');
     expect(text).toMatch(/does not add up/i);
+    // And it states the two facts it actually holds on THIS route, both of
+    // which are false on the unreadable-flag route below.
+    expect(text).toMatch(/reports the compromise-boundary check as enabled/i);
+    expect(text).toMatch(/no counters at all/i);
   });
 
-  it('a non-boolean flag lands in the same no-explanation arm, not on the pre-#178 hedge', () => {
-    // A `features` object DID arrive, so this is not a pre-#178 backend and the
-    // "disabled by default" explanation is not ours to reach for.
+  it('an UNREADABLE flag says only that, and states nothing about the counters', () => {
+    // Round 2's first finding. This route and the one above shared a rendering,
+    // and the shared copy — "It says the compromise-boundary check is enabled
+    // but sent no counters at all — not even zeros" — is false HERE on both
+    // halves: nothing readable said the check is enabled, and the counters
+    // arrived, as zeros. Stating one route's cause over another's is the same
+    // defect the `because` split was introduced to remove, one level down.
     const stringy = { ...FEATURES, keyRevocationCheck: 'true' } as unknown as typeof FEATURES;
     renderWith(overview({ keyRevocation: CLEAN, features: stringy }));
     const text = revocationCard().textContent ?? '';
+    // A features object DID arrive, so the pre-#178 hedge is not ours to reach.
     expect(text).not.toContain(HEDGE);
-    expect(text).toMatch(/does not add up/i);
+    // It must not claim the deployment reports the check as enabled…
+    expect(text).not.toMatch(/reports the compromise-boundary check as enabled/i);
+    expect(text).not.toMatch(/does not add up/i);
+    // …nor that no counters arrived, when zeros did.
+    expect(text).not.toMatch(/no counters at all|not even zeros/i);
+    // …nor that the check is off.
+    expect(text).not.toMatch(/switched off|disabled/i);
+    // What it may say, and does: the flag could not be read.
+    expect(text).toMatch(/did not say whether revocation checking is running/i);
+    expect(text).toMatch(/not a value this console can read as on or off/i);
+  });
+
+  it('the SAME unreadable flag with the counters absent renders identically', () => {
+    // The route is about the flag, so it must not fork on the counters — if it
+    // did, one of the two renderings would be making a claim about them.
+    const stringy = { ...FEATURES, keyRevocationCheck: 'true' } as unknown as typeof FEATURES;
+    renderWith(overview({ keyRevocation: CLEAN, features: stringy }));
+    const withZeros = proseText();
+    cleanup();
+    renderWith(overview({ keyRevocation: null, features: stringy }));
+    expect(proseText()).toBe(withZeros);
+  });
+
+  it('a null `features` renders the pre-#178 arm instead of crashing the route', () => {
+    // Round 2's fourth finding: `features === undefined` is false for `null`,
+    // and the next line dereferenced it — taking down the whole `/dashboard`
+    // render tree, which calls this inline.
+    const nully = null as unknown as typeof FEATURES;
+    expect(() => renderWith(overview({ keyRevocation: CLEAN, features: nully }))).not.toThrow();
+    const text = revocationCard().textContent ?? '';
+    // Nothing arrived that says anything about the check, so this is the one
+    // place the legacy hedge is still fair.
+    expect(text).toContain(HEDGE);
   });
 });
 

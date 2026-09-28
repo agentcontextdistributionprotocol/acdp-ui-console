@@ -206,8 +206,10 @@ export function violationCount(trust: RunTrustSummary): number {
 // Since acdp-control-plane#178 it does — `GET /dashboard/overview` returns
 // `keyRevocation: null` when the check is off and carries a `features` object
 // with all six audit/witness flags — so the DASHBOARD tile no longer infers
-// anything: `dashboardRevocationState()` below reads the flag and says which of
-// three states it is (#97).
+// anything from a zero: `dashboardRevocationState()` below reads the flag and
+// says which of FOUR states it is (#97). It still derives `reported` from the
+// counters, which is not an inference about the check — a non-zero count is
+// self-evidencing.
 //
 // This run-scoped inference stays, because there is no equivalent signal for it.
 // `features` rides on the overview payload and nothing else; a run's trust
@@ -370,12 +372,25 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  * object whose `keyRevocationCheck` is `true`, and rendering "disabled by
  * default" there states a cause the console has direct evidence against. So:
  *
- *   `because: 'no-flags'`       nothing said whether the check runs (pre-#178).
- *                               The legacy hedge is a fair explanation here and
- *                               only here.
- *   `because: 'flags-disagree'` flags arrived but cannot be squared with the
- *                               counters. Never explain this as "disabled" —
- *                               the flag we can read says the opposite.
+ *   `because: 'no-flags'`            nothing said whether the check runs
+ *                                    (pre-#178). The legacy hedge is a fair
+ *                                    explanation here and only here.
+ *   `because: 'flag-on-no-counters'` the flag says the check runs and the
+ *                                    counters are ABSENT (not zero). Upstream
+ *                                    cannot produce that combination.
+ *   `because: 'flag-unreadable'`     a `features` object arrived but its
+ *                                    `keyRevocationCheck` is neither `true` nor
+ *                                    `false`.
+ *
+ * Three, not two, and the second gate round on this change is why. A single
+ * `flags-disagree` value collapsed the last two, and the copy written for it
+ * described only the first: it said the deployment "says the check is enabled
+ * but sent no counters at all", which on the `flag-unreadable` route is false
+ * twice over — the deployment said nothing readable about the check, and the
+ * counters may well have arrived as zeros. Rendering one route's cause over
+ * another's is the same defect this split was introduced to remove, one level
+ * down. A `because` value must name a fact that holds on every route that
+ * carries it.
  *
  * `null` counters WITH `keyRevocationCheck === true` is a combination upstream
  * cannot produce — both derive from the same config value
@@ -394,11 +409,18 @@ export type DashboardRevocationState =
   | { kind: 'reported'; counts: DashboardRevocation }
   | { kind: 'disabled' }
   | { kind: 'checked-clean' }
-  | { kind: 'unknown'; because: 'no-flags' | 'flags-disagree' };
+  | { kind: 'unknown'; because: 'no-flags' | 'flag-on-no-counters' | 'flag-unreadable' };
 
 export function dashboardRevocationState(
   keyRevocation: DashboardRevocation | null | undefined,
-  features: CpDashboardFeatures | undefined,
+  // `| null` is not decoration. `CpDashboardFeatures | undefined` is what a
+  // correct upstream sends, but this value comes off the network, and the
+  // second gate round reached this function with `features: null` and crashed
+  // the whole `/dashboard` route — `=== undefined` is false for `null`, and the
+  // next line dereferenced it. `/trust` was already null-safe via `?.`, so the
+  // two surfaces disagreed about the same payload. Typed as nullable so the
+  // guard below is required rather than remembered.
+  features: CpDashboardFeatures | null | undefined,
 ): DashboardRevocationState {
   // Counters with something in them are self-evidencing: whatever the flags
   // say, a non-zero count means the check ran and found that. Checked first so
@@ -413,10 +435,19 @@ export function dashboardRevocationState(
     return { kind: 'reported', counts: keyRevocation };
   }
 
-  // No flag object at all — the pre-#178 backend. This is the ONE route into
+  // No usable flag object at all — the pre-#178 backend, or a wire payload that
+  // sent `null` or something that is not an object. This is the ONE route into
   // `unknown` where "the check is disabled by default" is a fair explanation,
   // because nothing has told us otherwise.
-  if (features === undefined) return { kind: 'unknown', because: 'no-flags' };
+  //
+  // `typeof !== 'object'` as well as the null test: a `features` that arrived
+  // as a string or a number tells us nothing about the check either, and
+  // reading a property off it would yield `undefined` and route to
+  // `flag-unreadable` — which would claim a features object arrived when what
+  // arrived was not one.
+  if (features === undefined || features === null || typeof features !== 'object') {
+    return { kind: 'unknown', because: 'no-flags' };
+  }
 
   if (features.keyRevocationCheck === false) return { kind: 'disabled' };
 
@@ -425,14 +456,16 @@ export function dashboardRevocationState(
     // but the counters are absent rather than zero. Do not report clean — and
     // do not explain it as "disabled" either, since the one thing we can read
     // says it is on.
-    if (!keyRevocation) return { kind: 'unknown', because: 'flags-disagree' };
+    if (!keyRevocation) return { kind: 'unknown', because: 'flag-on-no-counters' };
     return { kind: 'checked-clean' };
   }
 
   // `keyRevocationCheck` is neither `true` nor `false` — a wire payload with
   // the flag missing or non-boolean. Unreachable through the type, reachable
-  // through the network. `flags-disagree` rather than `no-flags`: a `features`
-  // object DID arrive, so we are not talking to a pre-#178 backend and must not
-  // reach for that explanation.
-  return { kind: 'unknown', because: 'flags-disagree' };
+  // through the network. Its own `because`, not the one above: the counters on
+  // this route may be absent OR present-and-zero, so nothing may be said about
+  // them, and a `features` object DID arrive, so the pre-#178 explanation is
+  // also unavailable. The only fact that holds on every route here is that the
+  // flag itself could not be read.
+  return { kind: 'unknown', because: 'flag-unreadable' };
 }

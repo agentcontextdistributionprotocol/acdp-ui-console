@@ -370,43 +370,88 @@ describe('dashboardRevocationState', () => {
     expect(dashboardRevocationState(null, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
   });
 
-  it('distinguishes WHY it is unknown, because the two license different copy', () => {
-    // The gate's second finding. `unknown` inherited the pre-#178 hedge ("the
-    // check is disabled by default") on the argument that this arm IS a
-    // pre-#178 backend. That covers one route into the arm; the others arrive
-    // holding `keyRevocationCheck === true`, where the hedge states a cause the
-    // console has direct evidence against.
-    const noFlags = dashboardRevocationState(CLEAN, undefined);
-    expect(noFlags).toEqual({ kind: 'unknown', because: 'no-flags' });
+  it('distinguishes WHY it is unknown, because the three license different copy', () => {
+    // The gate's second finding, then its second round's first finding. The arm
+    // first inherited the pre-#178 hedge ("the check is disabled by default")
+    // on the argument that it IS a pre-#178 backend — true of one route only.
+    // Splitting it in two was not enough either: the merged
+    // flag-says-on/flag-unreadable reason carried copy describing the first,
+    // which is false on the second. A `because` names a fact that holds on
+    // EVERY route carrying it, so there are three.
+    expect(dashboardRevocationState(CLEAN, undefined)).toEqual({
+      kind: 'unknown',
+      because: 'no-flags',
+    });
 
-    // Flag says the check runs, but no counters arrived at all.
+    // Flag reads exactly `true`, but no counters arrived at all. Both halves of
+    // this route's copy are checkable facts here and nowhere else.
     expect(dashboardRevocationState(null, ALL_ON)).toEqual({
       kind: 'unknown',
-      because: 'flags-disagree',
+      because: 'flag-on-no-counters',
     });
     expect(dashboardRevocationState(undefined, ALL_ON)).toEqual({
       kind: 'unknown',
-      because: 'flags-disagree',
+      because: 'flag-on-no-counters',
     });
 
     // A features object arrived with an unreadable flag. NOT `no-flags`: we are
-    // demonstrably not talking to a backend that predates the field.
+    // demonstrably not talking to a backend that predates the field. And NOT
+    // the route above: the counters here are PRESENT and zero, so copy saying
+    // "sent no counters at all" would be false.
     const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
     expect(dashboardRevocationState(CLEAN, stringy)).toEqual({
       kind: 'unknown',
-      because: 'flags-disagree',
+      because: 'flag-unreadable',
+    });
+    // Same reason with the counters ABSENT — the route is about the flag, not
+    // the counters, so it must not fork on them.
+    expect(dashboardRevocationState(null, stringy)).toEqual({
+      kind: 'unknown',
+      because: 'flag-unreadable',
     });
 
-    // Both reasons are reachable, so neither arm is dead code. Read through a
-    // narrowing helper rather than asserting on a literal, so this fails if the
-    // two routes ever start returning the same reason.
-    const reasonOf = (s: DashboardRevocationState) => (s.kind === 'unknown' ? s.because : null);
+    // All three are reachable, so no arm is dead code. Read through a narrowing
+    // helper rather than asserting on literals, so this fails if any two routes
+    // ever start returning the same reason.
+    const reasonOf = (x: DashboardRevocationState) => (x.kind === 'unknown' ? x.because : null);
     const reasons = [
       reasonOf(dashboardRevocationState(CLEAN, undefined)),
       reasonOf(dashboardRevocationState(null, ALL_ON)),
+      reasonOf(dashboardRevocationState(CLEAN, stringy)),
     ];
-    expect(new Set(reasons).size).toBe(2);
+    expect(new Set(reasons).size).toBe(3);
     expect(reasons).not.toContain(null);
+  });
+
+  it('a null or non-object `features` is `no-flags`, and does not throw', () => {
+    // Found by round 2 of this change's gate: `features === undefined` is false
+    // for `null`, and the next line dereferenced it — crashing the whole
+    // `/dashboard` route, which calls this inline in its render tree. `/trust`
+    // was already null-safe through `?.`, so the two surfaces disagreed about
+    // the same wire payload.
+    const nully = null as unknown as CpDashboardFeatures;
+    expect(() => dashboardRevocationState(CLEAN, nully)).not.toThrow();
+    expect(dashboardRevocationState(CLEAN, nully)).toEqual({
+      kind: 'unknown',
+      because: 'no-flags',
+    });
+    // Not an object at all. `flag-unreadable` would claim a feature report
+    // arrived; a string is not one, so the honest reason is the same as sending
+    // nothing.
+    for (const junk of ['true', 42, false] as unknown as CpDashboardFeatures[]) {
+      expect(() => dashboardRevocationState(CLEAN, junk)).not.toThrow();
+      expect(dashboardRevocationState(CLEAN, junk)).toEqual({
+        kind: 'unknown',
+        because: 'no-flags',
+      });
+    }
+    // DISCRIMINATING: a real object with an unreadable flag is still the OTHER
+    // reason, so the guard above did not just swallow everything.
+    const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringy)).toEqual({
+      kind: 'unknown',
+      because: 'flag-unreadable',
+    });
   });
 
   it('no features at all is unknown — a pre-#178 control plane', () => {

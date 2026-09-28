@@ -304,7 +304,10 @@ export function getMockRunEvents(runId: string): StepEvent[] {
 export async function getCpDashboard(window: string, demoMode: boolean): Promise<CpDashboardOverview> {
   // Per-window demo payload: `{...MOCK_DASHBOARD, window}` returned identical
   // figures for every window and an always-non-zero `keyRevocation`, which left
-  // the "revocation not reported" degrade path unreachable outside a test.
+  // every state of the revocation tile but `reported` unreachable outside a
+  // test. (It used to say "the revocation not reported degrade path" — that
+  // heuristic is gone; #97 replaced it with `dashboardRevocationState`, whose
+  // other three states this per-window payload is what makes reachable.)
   if (demoMode) return delay(demoDashboardForWindow(window));
   return fetchJson<CpDashboardOverview>('control-plane', `/dashboard/overview?window=${encodeURIComponent(window)}`);
 }
