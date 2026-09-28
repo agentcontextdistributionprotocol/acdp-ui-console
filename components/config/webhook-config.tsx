@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
+import { ErrorDetail } from '@/components/ui/error-panel';
 import {
   listWebhooks,
   createWebhook,
@@ -17,6 +18,7 @@ import {
   type WebhookInput,
 } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { timeAgo } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
 import type { Webhook } from '@/lib/types';
@@ -216,8 +218,23 @@ function WebhookForm({
           </div>
         )}
       </div>
+      {/* No 403 arm here, deliberately, and none should be added. Webhook CRUD
+          is not admin-gated upstream — only `POST /registries/enroll` and the
+          revocation feed are — so an admin-scope sentence on this surface would
+          send an operator to have a key re-scoped for a permission that is not
+          what refused them. Same mistake `log-witness-card.tsx:118-121`
+          documents, and the same reason the sentence is a named constant rather
+          than something a surface can reach for casually.
+
+          It does get the disclosure, like every other error arm in this repo.
+          `POST /webhooks` is `ValidationPipe`-checked, so the upstream's body
+          is where "which field" lives — the single most useful thing on a
+          failed save, and the status alone can never carry it. */}
       {mut.error && (
-        <div style={{ marginTop: 12, fontSize: 11, color: C.danger }}>{String(mut.error)}</div>
+        <div style={{ marginTop: 12, fontSize: 11, color: C.danger }}>
+          {operatorErrorMessage(mut.error, 'Could not save this webhook')}
+          <ErrorDetail details={errorDiagnostic(mut.error)} />
+        </div>
       )}
     </Modal>
   );

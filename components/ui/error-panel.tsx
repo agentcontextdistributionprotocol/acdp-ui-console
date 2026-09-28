@@ -30,6 +30,45 @@ const ROW = { padding: 20, display: 'flex', alignItems: 'center', gap: 10 } as c
  * exact markup this component had before the prop existed — so every existing
  * call site renders byte-for-byte what it did.
  */
+/**
+ * The disclosure on its own, for the surfaces that are not `ErrorPanel`.
+ *
+ * Three sites render their error as inline text inside a modal or above a
+ * table, where `ErrorPanel`'s card chrome (20px padding, a border, an icon)
+ * would be out of place — but they need the upstream's own bytes reachable
+ * just as much, and on the 403 arms they need it MORE: `ADMIN_ROUTE_FORBIDDEN`
+ * deliberately refuses to diagnose and points at this disclosure by name.
+ *
+ * Extracted rather than copied so the bound (`max-height` + `overflow` on
+ * `.error-detail > pre`) and the a11y shape stay in one place. Renders nothing
+ * for an absent or empty diagnostic, so a caller can pass
+ * `errorDiagnostic(err)` straight through.
+ */
+export function ErrorDetail({ details }: { details?: string }) {
+  if (!details) return null;
+  return (
+    <details className="error-detail">
+      <summary>Technical detail</summary>
+      {/*
+        The `<pre>` is a scroll container (`max-height` + `overflow: auto`), so
+        without `tabIndex` a keyboard-only operator can open the disclosure and
+        still not reach past its first 220px. Recent Chrome and Firefox make
+        overflowing scrollers focusable on their own; WebKit does not.
+
+        `role="group"` rather than a bare `tabIndex`: a `<pre>` maps to ARIA's
+        `generic`, which is name-prohibited, so `aria-label` on it alone would
+        be dropped by Chromium — the same trap `sdk-matrix.tsx` documents for
+        `LiveMarker`. `group` permits a name and is not a landmark.
+
+        A text child, so React escapes it. No dangerouslySetInnerHTML.
+      */}
+      <pre tabIndex={0} role="group" aria-label="Technical detail">
+        {details}
+      </pre>
+    </details>
+  );
+}
+
 export function ErrorPanel({ message, details }: { message: string; details?: string }) {
   const head = (
     <>
@@ -43,25 +82,7 @@ export function ErrorPanel({ message, details }: { message: string; details?: st
   return (
     <div className="card" style={{ ...ROW, flexDirection: 'column', alignItems: 'stretch' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>{head}</div>
-      <details className="error-detail">
-        <summary>Technical detail</summary>
-        {/*
-          The `<pre>` is a scroll container (`max-height` + `overflow: auto`),
-          so without `tabIndex` a keyboard-only operator can open the disclosure
-          and still not reach past its first 220px. Recent Chrome and Firefox
-          make overflowing scrollers focusable on their own; WebKit does not.
-
-          `role="group"` rather than a bare `tabIndex`: a `<pre>` maps to ARIA's
-          `generic`, which is name-prohibited, so `aria-label` on it alone would
-          be dropped by Chromium — the same trap `sdk-matrix.tsx` documents for
-          `LiveMarker`. `group` permits a name and is not a landmark.
-
-          A text child, so React escapes it. No dangerouslySetInnerHTML.
-        */}
-        <pre tabIndex={0} role="group" aria-label="Technical detail">
-          {details}
-        </pre>
-      </details>
+      <ErrorDetail details={details} />
     </div>
   );
 }

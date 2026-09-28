@@ -255,6 +255,63 @@ export const CONTROL_PLANE_KEY_REJECTED = `${CP_KEY_PREAMBLE}check that it is se
 export const ADMIN_KEY_REQUIRED = `${CP_KEY_PREAMBLE}grant it admin scope.`;
 
 /**
+ * What an operator is told when an admin-gated control-plane route answers 403.
+ *
+ * **It does not diagnose, and the first version of it did.** That version said
+ * flatly that the key lacked admin scope, which is only one of the control
+ * plane's reasons for a 403 on these routes — and on the enrollment form it was
+ * reachable by typing the value the field's own placeholder suggested:
+ *
+ *  - `registries.controller.ts:174` runs `assertNotReservedTenant(body.tenantId)`
+ *    **after** the admin check at `:168` has already passed, so naming the
+ *    reserved tenant `default` yields a 403 from a key that is admin-scoped.
+ *  - `auth.guard.ts:170` refuses a `default` assertion in `X-Tenant-Id` — and
+ *    that header IS relayed (it is in the proxy's `FORWARD_HEADERS`).
+ *  - `auth.guard.ts:179` refuses a header naming a tenant other than the key's.
+ *  - `auth.guard.ts:184` refuses an unbound key outright under
+ *    `AUTH_REQUIRE_TENANT`. This one hits every admin route, the revocation
+ *    feed included.
+ *
+ * None of the four carries an `errorCode` — that is filed as
+ * acdp-control-plane#179 — so this console genuinely cannot tell them apart.
+ * The honest answer is therefore to name the likeliest cause as likely, say so,
+ * and hand the operator the control plane's own sentence. Which makes the
+ * disclosure load-bearing rather than decorative: every site rendering this
+ * string MUST also render `errorDiagnostic`, and the tests assert that.
+ */
+export const ADMIN_ROUTE_FORBIDDEN =
+  'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
+  'sends no code for any of them — so the reason it gave is in the detail below. The likeliest is an ' +
+  `under-scoped key: ${ADMIN_KEY_REQUIRED} The others are about tenancy: a request may not name the ` +
+  'reserved tenant `default`, and under AUTH_REQUIRE_TENANT a key that is not bound to a tenant is ' +
+  'refused outright. Read the detail before changing any key.';
+
+/**
+ * Is this the control plane refusing an admin-gated route — as opposed to this
+ * console refusing to proxy the request in the first place?
+ *
+ * Three surfaces need this and each carried its own copy of `error instanceof
+ * ApiError && error.status === 403`. That predicate is missing a term: a 403
+ * this console minted is **unstamped**, and the proxy route mints one for any
+ * path outside its allow-list (`app/api/proxy/[service]/[...path]/route.ts`),
+ * as does `middleware.ts` on an Origin mismatch. Neither is an admin-scope
+ * problem, and telling an operator to go get the deployment key re-scoped for
+ * a request that never left the browser sends them to fix the wrong thing —
+ * the defect class this module exists to remove.
+ *
+ * Deliberately NOT an `ApiError.isForbidden` getter beside `isNotFound`. That
+ * getter would be a bare status test on the transport class, which is the right
+ * shape for `isNotFound` and the wrong one here: the provenance gate is what
+ * makes this predicate correct, and a status-only sibling sitting next to it
+ * would be the more inviting of the two at exactly the call sites that must not
+ * use it. The getter is worth adding on its own merits; it is a different
+ * change, and it is filed.
+ */
+export function isUpstreamForbidden(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.fromUpstream;
+}
+
+/**
  * How each service is named to an operator.
  *
  * A `Record`, not a `Map`, and the contrast with `CONTEXT_ERROR_MESSAGES` above

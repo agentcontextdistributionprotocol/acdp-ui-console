@@ -21,6 +21,7 @@ import {
   contextErrorFallback,
   contextErrorMessage,
   errorDiagnostic,
+  isUpstreamForbidden,
   operatorErrorMessage,
   REGISTRY_ERROR_CODES,
 } from '@/lib/utils/api-error-messages';
@@ -810,5 +811,53 @@ describe('contextErrorMessage consults the registry map', () => {
     const msg = contextErrorMessage(registrySearchError(401, 'not_authenticated'));
     expect(msg).toBe('registry A requires credentials this console does not send.');
     expect(msg).not.toContain('rejected');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// `isUpstreamForbidden` — the admin-scope predicate.
+//
+// Three surfaces carried their own copy of `error instanceof ApiError &&
+// error.status === 403`, which is missing a term: a 403 THIS CONSOLE minted is
+// unstamped (the proxy route mints one for any path outside its allow-list,
+// `middleware.ts` one on an Origin mismatch), and neither is fixed by
+// re-scoping a deployment key.
+//
+// Unit-tested here rather than only through three component renders, because
+// the `instanceof` term was killable by nothing at all when it was verified.
+// ══════════════════════════════════════════════════════════════════════
+describe('isUpstreamForbidden', () => {
+  function at(status: number, fromUpstream: boolean): ApiError {
+    return new ApiError(status, '', 'control-plane', '/registries/enroll', fromUpstream);
+  }
+
+  it('is true only for a STAMPED 403', () => {
+    expect(isUpstreamForbidden(at(403, true))).toBe(true);
+  });
+
+  it('is false for a 403 this console minted', () => {
+    expect(isUpstreamForbidden(at(403, false))).toBe(false);
+  });
+
+  it('is false for every other stamped status', () => {
+    for (const status of [200, 400, 401, 404, 429, 500, 502, 503]) {
+      expect(isUpstreamForbidden(at(status, true))).toBe(false);
+    }
+  });
+
+  it('is false for anything that is not an ApiError, however 403-shaped', () => {
+    // The `instanceof` term. A plain object carrying the right members is the
+    // shape a hand-rolled `catch` or a test fixture produces, and letting it
+    // through would route it to admin-scope copy on the strength of a duck
+    // type. `fetcher.ts` is the ONLY constructor of `ApiError`, so anything
+    // else reaching these predicates came from somewhere that never crossed the
+    // proxy and has no provenance to read.
+    expect(isUpstreamForbidden({ status: 403, fromUpstream: true })).toBe(false);
+    expect(isUpstreamForbidden(Object.assign(new Error('403'), { status: 403, fromUpstream: true }))).toBe(false);
+    expect(isUpstreamForbidden('403')).toBe(false);
+    expect(isUpstreamForbidden(403)).toBe(false);
+    expect(isUpstreamForbidden(null)).toBe(false);
+    expect(isUpstreamForbidden(undefined)).toBe(false);
+    expect(isUpstreamForbidden(new TypeError('Failed to fetch'))).toBe(false);
   });
 });

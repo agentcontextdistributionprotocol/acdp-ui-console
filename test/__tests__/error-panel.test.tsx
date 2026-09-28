@@ -15,8 +15,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { ErrorPanel } from '@/components/ui/error-panel';
+import { cleanup, render, screen } from '@testing-library/react';
+import { ErrorDetail, ErrorPanel } from '@/components/ui/error-panel';
 
 describe('ErrorPanel', () => {
   it('renders just the message when there is no diagnostic', () => {
@@ -128,6 +128,64 @@ describe('ErrorPanel', () => {
       <ErrorPanel message="Could not load." details={'<img src=x onerror="boom">'} />,
     );
     expect(container.querySelector('pre')!.querySelector('img')).toBeNull();
+    expect(container.querySelector('pre')!.textContent).toContain('<img src=x');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// `ErrorDetail` — the disclosure without the card.
+//
+// Extracted from `ErrorPanel` when three surfaces that render their error as
+// inline text (two modal bodies and a panel above a table) needed the same
+// disclosure. They need it MORE than the panels do, in fact: the 403 copy on
+// the admin-gated routes deliberately refuses to diagnose — the control plane
+// has four reasons for a 403 there and sends a code for none of them — and it
+// points the operator at this detail by name.
+//
+// Tested directly as well as through `ErrorPanel`, because it is now a public
+// export with consumers that do not go through the panel at all.
+// ══════════════════════════════════════════════════════════════════════
+describe('ErrorDetail', () => {
+  it('renders nothing at all for an absent or empty diagnostic', () => {
+    // So a caller can pass `errorDiagnostic(err)` straight through — it returns
+    // `undefined` for a non-`ApiError`, where there are no upstream bytes. A
+    // disclosure that opens onto nothing is worse than no disclosure.
+    const { container } = render(<ErrorDetail />);
+    expect(container.firstChild).toBeNull();
+    cleanup();
+    const empty = render(<ErrorDetail details="" />);
+    expect(empty.container.firstChild).toBeNull();
+  });
+
+  it('carries the same bounded class and a11y shape as the panel version', () => {
+    // The whole reason it was extracted rather than copied: the bound
+    // (`max-height` + `overflow` on `.error-detail > pre`) and the
+    // name-permitting role live in one place. A second copy would drift.
+    const { container } = render(<ErrorDetail details={'y'.repeat(5000)} />);
+    const det = container.querySelector('details')!;
+    expect(det.className).toBe('error-detail');
+    expect(det.querySelector('summary')!.textContent).toBe('Technical detail');
+    const pre = det.querySelector('pre')!;
+    expect(pre.getAttribute('tabindex')).toBe('0');
+    expect(pre.getAttribute('role')).toBe('group');
+    expect(pre.getAttribute('aria-label')).toBeTruthy();
+  });
+
+  it('renders byte-identically to the disclosure ErrorPanel puts inside itself', () => {
+    // The extraction must not have changed what the panel renders. Compared as
+    // markup rather than asserted twice, so a change to either has to be a
+    // change to both.
+    const body = '502 from control-plane /runs — {"error":{"code":"x"}}';
+    const standalone = render(<ErrorDetail details={body} />);
+    const fromDetail = standalone.container.querySelector('details')!.outerHTML;
+    cleanup();
+    const panel = render(<ErrorPanel message="m" details={body} />);
+    expect(panel.container.querySelector('details')!.outerHTML).toBe(fromDetail);
+  });
+
+  it('escapes markup in the body rather than rendering it', () => {
+    const { container } = render(<ErrorDetail details={'<img src=x onerror="boom">'} />);
+    expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('pre')!.textContent).toContain('<img src=x');
   });
 });

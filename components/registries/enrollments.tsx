@@ -8,10 +8,15 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
-import { ErrorPanel } from '@/components/ui/error-panel';
+import { ErrorDetail, ErrorPanel } from '@/components/ui/error-panel';
 import { listEnrollments, enrollRegistry } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import { ApiError } from '@/lib/api/fetcher';
+import {
+  ADMIN_ROUTE_FORBIDDEN,
+  errorDiagnostic,
+  isUpstreamForbidden,
+  operatorErrorMessage,
+} from '@/lib/utils/api-error-messages';
 import { shortAuthority } from '@/lib/utils/acdp';
 import { timeAgo } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
@@ -47,7 +52,7 @@ export function Enrollments() {
     onSuccess: invalidate,
   });
 
-  const toggleForbidden = toggleMut.error instanceof ApiError && toggleMut.error.status === 403;
+  const toggleForbidden = isUpstreamForbidden(toggleMut.error);
 
   return (
     <Card>
@@ -60,14 +65,26 @@ export function Enrollments() {
           </Button>
         }
       />
-      {(toggleForbidden || (toggleMut.error && !toggleForbidden)) && (
+      {/* Was `toggleForbidden || (toggleMut.error && !toggleForbidden)`, which
+          is `toggleMut.error` with extra steps — and it hid that the two arms
+          below are the same condition split, not two independent guards.
+
+          The disclosure is NOT optional on the 403 arm. `ADMIN_ROUTE_FORBIDDEN`
+          deliberately refuses to diagnose — the control plane has four reasons
+          for a 403 here and sends a code for none of them — and it points the
+          operator at this detail by name. A first cut left it off on the theory
+          that a `<details>` above a table reflows it when opened; that is true,
+          it is the operator's own click, and it is a trivial cost next to
+          having no path at all to the reason the control plane gave. */}
+      {toggleMut.error && (
         <div style={{ padding: '0 14px' }}>
           <ErrorPanel
             message={
               toggleForbidden
-                ? 'Enrollment changes require an admin API key. The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this console to grant it admin scope.'
-                : String(toggleMut.error)
+                ? `Enrollment changes are admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`
+                : operatorErrorMessage(toggleMut.error, 'Could not change this enrollment')
             }
+            details={errorDiagnostic(toggleMut.error)}
           />
         </div>
       )}
@@ -77,7 +94,14 @@ export function Enrollments() {
         </div>
       ) : error ? (
         <div style={{ padding: 14 }}>
-          <ErrorPanel message={String(error)} />
+          {/* The LIST query, which is a plain read and carries no 403 arm —
+              `GET /registries/enrollments` is not admin-gated, only the enroll
+              write is. This one does get a disclosure: it replaces the table
+              rather than sitting above it, so nothing reflows. */}
+          <ErrorPanel
+            message={operatorErrorMessage(error, 'Could not load the registry enrollments')}
+            details={errorDiagnostic(error)}
+          />
         </div>
       ) : data && data.length > 0 ? (
         <table className="data-table">
@@ -188,7 +212,7 @@ function EnrollForm({
     },
   });
 
-  const forbidden = mut.error instanceof ApiError && mut.error.status === 403;
+  const forbidden = isUpstreamForbidden(mut.error);
   const secretTooShort = secret.length > 0 && secret.length < 16;
 
   return (
@@ -246,7 +270,15 @@ function EnrollForm({
             className="form-input"
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value)}
-            placeholder="default"
+            // NOT `placeholder="default"`. `default` is the control plane's
+            // RESERVED untenanted sentinel: `assertNotReservedTenant`
+            // (`src/tenant/request-tenant.ts:38`) refuses it with a 403, and it
+            // is refused AFTER the admin check passes — so a placeholder
+            // suggesting it handed the operator a one-click route to a refusal
+            // that has nothing to do with the key they would then go and get
+            // re-scoped. Blank means untenanted, which is what the field
+            // already does: `tenantId` is spread in only when truthy.
+            placeholder="blank = untenanted"
           />
         </div>
         <div className="form-row">
@@ -263,11 +295,30 @@ function EnrollForm({
           <div style={{ fontSize: 11, color: C.warning }}>Webhook secret must be at least 16 characters.</div>
         )}
       </div>
+      {/* No `codes` map, and the reason is narrower than it first looks. The
+          enroll handler
+          (`acdp-control-plane/src/registries/registries.controller.ts:156-185`)
+          raises `ForbiddenException`, `assertNotReservedTenant`'s, and
+          `ValidationPipe`'s — all built-in Nest exceptions, whose default body
+          already carries a STRING under `error`, so `withAcdpEnvelope`
+          (`exception.filter.ts:72`) short-circuits and no `error.code` is
+          minted at all. (It is not, as an earlier version of this comment said,
+          that they default to `INTERNAL_ERROR`; that default applies to the
+          string-bodied throws the filter DOES rewrite — a throttled enroll, or
+          any 500 — which is also the reason "only those three" was wrong.) The
+          upshot is unchanged: the only code this route can emit is
+          `INTERNAL_ERROR`, which says nothing a status does not. Filed as
+          acdp-control-plane#179.
+
+          Inline text rather than an `ErrorPanel` — a bordered card with a 20px
+          gutter is wrong inside a form — but it gets the same disclosure, for
+          the same reason the toggle above does. */}
       {mut.error && (
         <div style={{ marginTop: 12, fontSize: 11, color: C.danger }}>
           {forbidden
-            ? 'Enrollment requires an admin API key. The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this console to grant it admin scope.'
-            : String(mut.error)}
+            ? `Enrollment is admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`
+            : operatorErrorMessage(mut.error, 'Could not save this enrollment')}
+          <ErrorDetail details={errorDiagnostic(mut.error)} />
         </div>
       )}
     </Modal>
