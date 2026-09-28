@@ -120,7 +120,31 @@ export default function DashboardPage() {
         <KpiCard label="Total Runs" value={formatNumber(d.totalRuns)} delta={`window ${d.window}`} deltaTone="muted" accent="var(--brand)" icon={<Layers size={28} />} />
         <KpiCard label="Contexts Published" value={formatNumber(d.totalContexts)} accent="var(--info)" icon={<Boxes size={28} />} />
         <KpiCard label="Active Agents" value={formatNumber(d.totalAgents)} accent="var(--purple)" icon={<Users size={28} />} />
-        <KpiCard label="Registries" value={formatNumber(d.byRegistry.length)} delta="● all healthy" accent="var(--warning)" icon={<Database size={28} />} />
+        {/* No `delta`, and deliberately not a wired one.
+
+            This tile counted `byRegistry.length` — how many registries appear
+            in the event breakdown — and captioned it `● all healthy`, a claim
+            it had no input for: the literal was true of every dataset, every
+            deployment and every outage. A control plane with a dead database
+            rendered it unchanged.
+
+            Wiring it to `pingHealth` was considered and rejected. The subject
+            is wrong twice over. The figure is an EVENT COUNT, so a health
+            caption under it answers a question the tile is not asking; and the
+            registries can be perfectly healthy while the thing that failed is
+            the control plane this page reads from — the exact scenario #100
+            names — so a correctly-wired registry-health delta would still have
+            said "all healthy" through it. Demo mode seals it: `pingHealth`
+            returns `{ ok: true }` unconditionally there (`lib/api/client.ts`),
+            and demo is the default, so a wired delta would render the same
+            sentence forever with a probe's authority behind it. Worse than the
+            literal, not better.
+
+            The information is not lost. `components/layout/topbar.tsx` renders
+            a per-service pill on every route including this one, and it now
+            says `degraded` or `unreachable` in text rather than in a tooltip.
+            One health surface that works beats two that disagree. */}
+        <KpiCard label="Registries" value={formatNumber(d.byRegistry.length)} accent="var(--warning)" icon={<Database size={28} />} />
       </div>
 
       <div className="grid-2" style={{ marginBottom: 12 }}>
