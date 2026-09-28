@@ -697,6 +697,44 @@ export const MOCK_RUNS: CpRun[] = [
 ];
 
 // ── Context events (global firehose / history) ────────────────────────
+// ── The attested context's own clock ──────────────────────────────────
+// #85: three events describing the attested context were dated with `iso(...)`
+// — that is, relative to NOW — while the context they describe carries a signed
+// `created_at` of 2026-07-06, derived from its frozen registry receipt. So the
+// feed dated an 81-day-old context to "2 minutes ago", and the contradiction
+// grows by a day every day.
+//
+// These derive from the receipt instead. DERIVED, never hardcoded: writing that
+// date as a literal here would decouple silently the moment the crypto fixtures
+// are regenerated, which is exactly the failure being fixed. `mock-data.test.ts`
+// gates it — over the file with comments STRIPPED, because this very paragraph
+// has to name the date in order to explain the rule, and a whole-file grep would
+// be failed by its own explanation.
+//
+// CONSEQUENCE, DELIBERATE, DO NOT "FIX" BACK: these three render as locale
+// dates rather than "2 minutes ago", because `timeAgo` falls through to
+// `toLocaleDateString()` past 30 days (`lib/utils/format.ts:17-18`) and they
+// really are 81 days old. That is the honest outcome, and it is what makes the
+// events feed agree with the context card instead of contradicting it.
+//
+// A frozen global `now` was considered and rejected: it would break `elapsed()`
+// for the live run (which must read as running NOW) and push all ~70 other
+// `iso()` sites past the same 30-day cliff, rendering the whole demo as bare
+// locale dates.
+const ATTESTED_RECEIPT_TS = MOCK_CRYPTO.attested.registry_receipt.created_at;
+
+/** A fixed offset from a frozen receipt clock, so the narrative cannot drift. */
+function afterReceipt(base: string, seconds: number): string {
+  return new Date(Date.parse(base) + seconds * 1000).toISOString();
+}
+
+// Publish at the receipt moment itself, then hold and restore within the same
+// day. Distinct offsets so publish < retract < republish holds STRICTLY and the
+// guard can assert `<` rather than `<=`.
+const ATTESTED_PUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 0);
+const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 1800);
+const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 5400);
+
 export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
   { id: 'ev-2', eventType: 'context_retrieved', eventTs: iso(11), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_B, registryAuthority: AUTH_B, scenarioId: 's5_cross_registry' },
@@ -704,11 +742,11 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
   { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/fee57f10-e884-42f8-b01f-c12eb4fa54e0`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
-  { id: 'ev-7', eventType: 'context_published', eventTs: iso(140), runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
+  { id: 'ev-7', eventType: 'context_published', eventTs: ATTESTED_PUBLISHED_TS, runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
   // ── RFC-ACDP-0013 lifecycle events (ACDP 0.3) ─────────────────────────
   // Registry-initiated hold + restore on the attested context (a pair).
-  { id: 'ev-8', eventType: 'context_retracted', eventTs: iso(110), runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
-  { id: 'ev-9', eventType: 'context_republished', eventTs: iso(80), runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-8', eventType: 'context_retracted', eventTs: ATTESTED_RETRACTED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
+  { id: 'ev-9', eventType: 'context_republished', eventTs: ATTESTED_REPUBLISHED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
   // Producer-initiated retraction of the non-head cashflow v1.
   { id: 'ev-10', eventType: 'context_retracted', eventTs: iso(3600), runId: null, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', version: 1, registryAuthority: AUTH_A },
   // Retraction of the fan-out FX derivative (renders retracted in the run DAG).
@@ -1074,7 +1112,11 @@ export const MOCK_CONTEXTS: FullContext[] = [
           event_id: 'b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
           ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
           event_type: 'retracted',
-          occurred_at: iso(110),
+          // MIRROR of `ev-8` in MOCK_CONTEXT_EVENTS, and it must stay equal to
+          // it: `context-detail.tsx` renders this pair on the SAME card that
+          // shows `created_at`, so moving only the feed would trade one visible
+          // contradiction for a subtler one.
+          occurred_at: ATTESTED_RETRACTED_TS,
           actor: `did:web:${AUTH_A}`,
           reason: 'Held pending compliance review of the attested claims.',
           signature: {
@@ -1087,7 +1129,8 @@ export const MOCK_CONTEXTS: FullContext[] = [
           event_id: 'c3d4e5f6-7a8b-4c9d-a0e1-2b3c4d5e6f7a',
           ctx_id: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`,
           event_type: 'republished',
-          occurred_at: iso(80),
+          // MIRROR of `ev-9` — see the note on the retraction above.
+          occurred_at: ATTESTED_REPUBLISHED_TS,
           actor: `did:web:${AUTH_A}`,
           reason: 'Compliance review cleared; attestation restored.',
           signature: {
