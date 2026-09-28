@@ -22,9 +22,12 @@ import { render, screen, cleanup, within } from '@testing-library/react';
 import { ApiError } from '@/lib/api/fetcher';
 import type { LogWitnessAlertRow } from '@/lib/types';
 
+// The mock FORWARDS ITS ARGUMENTS. A zero-arg passthrough would make every
+// assertion about which listing the component asks for vacuous — the component
+// could request the unacknowledged-only listing and the spy would never know.
 const useLogWitnessAlerts = vi.fn();
 vi.mock('@/lib/hooks/use-security', () => ({
-  useLogWitnessAlerts: () => useLogWitnessAlerts(),
+  useLogWitnessAlerts: (...args: unknown[]) => useLogWitnessAlerts(...args),
 }));
 
 import { LogWitnessAlerts } from '@/components/registries/log-witness-alerts';
@@ -229,13 +232,47 @@ describe('witness alert worklist — the error copy blames nothing it cannot rea
     // it is tenant-scoped behind the global guard whose bearer the proxy
     // injects. The revocation feed's "grant the key admin scope" copy would
     // send an operator to fix something that was never the cause.
+    //
+    // `fromUpstream: true` — the FIFTH argument — is what makes this test able
+    // to fail. `operatorErrorMessage` short-circuits to the console-fault copy
+    // when `fromUpstream` is false and never reaches its 403 arm at all, so a
+    // console-minted 403 asserts the absence of admin wording from a path that
+    // could not emit it whatever the component did. The realistic defect is a
+    // future "make this consistent with the revocation feed" edit gated on
+    // `isUpstreamForbidden`, which is true only for a STAMPED 403.
+    renderWith({
+      error: new ApiError(403, JSON.stringify({ message: 'nope' }), 'control-plane', '/x', true),
+    });
+    const text = section().textContent ?? '';
+    expect(text).not.toContain('CONTROL_PLANE_API_KEY');
+    expect(text).not.toMatch(/admin scope|admin key|grant .* admin/i);
+    expect(section().querySelectorAll('tbody tr')).toHaveLength(0);
+    // Anti-vacuity: the 403 arm really was reached, so the assertions above
+    // ran against the copy an operator sees rather than against the generic
+    // console-fault sentence.
+    expect(text).toMatch(/not authorized by the control plane/i);
+  });
+
+  it('an UNSTAMPED 403 still renders the console-fault copy, not admin copy', () => {
+    // The other half of the pair: a 403 the console minted itself (no proxy
+    // stamp) must not be reported as the control plane refusing us.
     renderWith({
       error: new ApiError(403, JSON.stringify({ message: 'nope' }), 'control-plane', '/x'),
     });
     const text = section().textContent ?? '';
     expect(text).not.toContain('CONTROL_PLANE_API_KEY');
     expect(text).not.toMatch(/admin scope|admin key|grant .* admin/i);
-    expect(section().querySelectorAll('tbody tr')).toHaveLength(0);
+  });
+
+  it('renders the error DIAGNOSTIC, so the panel carries the detail', () => {
+    // `details={errorDiagnostic(...)}` was unpinned: dropping the prop left the
+    // whole suite green while an operator lost the status/service/path line.
+    renderWith({
+      error: new ApiError(503, 'upstream down', 'control-plane', '/registries/log-witness/alerts', true),
+    });
+    const text = section().textContent ?? '';
+    expect(text).toContain('503');
+    expect(text).toContain('control-plane');
   });
 
   it('renders an error panel at all, so a failure is not silent', () => {
@@ -297,10 +334,116 @@ describe('witness alert worklist — disclosure rules', () => {
   });
 
   it('shows the consecutive-failure count, including zero', () => {
-    // `0` is meaningful here: an acknowledged alert whose cursor has since
-    // recovered. Rendering nothing for it would hide that it recovered.
+    // `0` is meaningful and is the COMMON case for a dishonesty alert, not a
+    // recovery story: the counter tracks ENVIRONMENTAL failures only
+    // (`0016_log_witness.sql` — "Dishonesty signals do NOT count here"), and
+    // only `recordFailureSafe` increments it, so a root-mismatch row raised by
+    // `markAlert` sits at whatever the transport counter last was, typically 0.
+    // (An earlier version of this comment called `0` "an acknowledged alert
+    // whose cursor has since recovered" — that is wrong twice over: recovery
+    // runs through `advanceCursor`, which sets `alerted = false` and drops the
+    // row from the worklist entirely.) Rendering nothing for `0` would make a
+    // real value look like missing data.
     renderWith({ data: rows([row({ consecutiveFailures: 0 })]) });
     const cells = [...section().querySelectorAll('tbody td')].map((c) => c.textContent);
     expect(cells).toContain('0');
+  });
+});
+
+describe('witness alert worklist — it asks for the listing its copy describes', () => {
+  it('requests ACKNOWLEDGED ROWS TOO, because acknowledged does not mean resolved', () => {
+    // The load-bearing one. Upstream's `acknowledgeAlert` leaves `alerted =
+    // true`; only `advanceCursor` clears the condition. Asking for the default
+    // unacknowledged-only listing would hide still-outstanding detections on
+    // the one screen built to surface them — and the empty state below would
+    // then assert an all-clear that is false.
+    renderWith({ data: rows([row()]) });
+    expect(useLogWitnessAlerts).toHaveBeenCalled();
+    expect(useLogWitnessAlerts.mock.calls.at(-1)?.[0]).toBe(true);
+  });
+
+  it('the empty state does not claim an all-clear it cannot establish', () => {
+    renderWith({ data: rows([]) });
+    const text = section().textContent ?? '';
+    // It must say the listing spans both states — that is only true because of
+    // the assertion above, and the two move together.
+    expect(text).toMatch(/acknowledged or not/i);
+    // …and it must NOT report health for logs nobody ever witnessed — not even
+    // inside a denial. This matcher cannot read negation, and neither can a
+    // reader skimming the sentence, so the reassuring words must simply be
+    // absent.
+    expect(text).not.toMatch(/logs? (are|is) healthy|all clear|everything is fine/i);
+    expect(text).toMatch(/never witnessed/i);
+  });
+});
+
+describe('witness alert worklist — the State column actually varies', () => {
+  it('renders Acknowledged, with the acknowledger labelled as a KEY', () => {
+    // B2: before the listing included acknowledged rows this branch was
+    // unreachable on the shipped surface — `<th>State</th>` named a constant
+    // and the "key not a person" labelling was exercised only through a mock.
+    renderWith({
+      data: rows([
+        row({ acknowledgedAt: '2026-09-27T11:00:00.000Z', acknowledgedBy: 'ak_7f3c1...' }),
+      ]),
+    });
+    const text = section().textContent ?? '';
+    expect(text).toContain('Acknowledged');
+    expect(text).toContain('key ak_7f3c1...');
+    expect(text).not.toContain('Open');
+  });
+
+  it('renders Open for an unacknowledged row, in the same table', () => {
+    renderWith({
+      data: rows([
+        row({ authority: 'open.example.com' }),
+        row({
+          authority: 'acked.example.com',
+          acknowledgedAt: '2026-09-27T11:00:00.000Z',
+          acknowledgedBy: 'ak_7f3c1...',
+        }),
+      ]),
+    });
+    const text = section().textContent ?? '';
+    // Both states on one screen is the point of the column.
+    expect(text).toContain('Open');
+    expect(text).toContain('Acknowledged');
+  });
+});
+
+describe('witness alert worklist — it says WHICH registry is alerting', () => {
+  it('renders the authority in FULL, not truncated at the first dot', () => {
+    // N1: the worklist exists to cover authorities the console does not proxy,
+    // and `shortAuthority` would render these two identically — on the screen
+    // where telling them apart is the entire task.
+    renderWith({
+      data: rows([
+        row({ authority: 'registry-a.playground.local' }),
+        row({ authority: 'registry-a.corp.example' }),
+      ]),
+    });
+    const cells = [...section().querySelectorAll('tbody tr td:first-child')].map(
+      (c) => c.textContent,
+    );
+    expect(cells).toEqual(['registry-a.playground.local', 'registry-a.corp.example']);
+    expect(new Set(cells).size).toBe(2);
+  });
+});
+
+describe('witness alert worklist — an unreadable detail is not "no detail"', () => {
+  it('distinguishes a missing blob from one whose error is not a string', () => {
+    renderWith({
+      data: rows([
+        row({ authority: 'none.example.com', detail: null }),
+        row({ authority: 'unreadable.example.com', detail: { error: { nested: 'object' } } }),
+        row({ authority: 'message.example.com', detail: { error: 'a readable message' } }),
+      ]),
+    });
+    const detailCells = [...section().querySelectorAll('tbody tr td:nth-child(3)')].map(
+      (c) => c.textContent,
+    );
+    expect(detailCells).toEqual(['—', 'Detail not readable', 'a readable message']);
+    // Never `[object Object]`, which is what `String(detail.error)` would give.
+    expect(section().textContent).not.toContain('[object Object]');
   });
 });

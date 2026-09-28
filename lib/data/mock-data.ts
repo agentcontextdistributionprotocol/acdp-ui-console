@@ -1422,8 +1422,12 @@ export const MOCK_LOG_WITNESS: Record<string, LogWitnessState> = {
 // proxy's registry list is the normal case, not a contrived one.
 //
 // Ordering is upstream's: newest first by `at`, with a NULL `at` sorting
-// FIRST (`log-witness.repository.ts` orders on the column and Postgres puts
-// NULLs first on ASC). `registry-f` is the null-`at` row, so it leads — the UI
+// FIRST. The mechanism is `log-witness.repository.ts`'s `orderBy(desc(
+// lastAlertAt))` plus Postgres's rule that **DESC implies NULLS FIRST** (ASC
+// implies NULLS LAST — the opposite of what an earlier version of this comment
+// said). Getting the mechanism right matters here: an editor who "corrected"
+// this ordering to ASC on the strength of the old wording would have inverted
+// the entire listing. `registry-f` is the null-`at` row, so it leads — the UI
 // must therefore not assume the first row is the most recent.
 //
 // The AUTH_B row is DERIVED from `MOCK_LOG_WITNESS[AUTH_B]` rather than
@@ -1437,8 +1441,15 @@ const WITNESS_B_ALERT = MOCK_LOG_WITNESS[AUTH_B];
 
 export const MOCK_LOG_WITNESS_ALERTS: LogWitnessAlertRow[] = [
   {
-    // NULL `at`: a row whose cursor recorded an alert without a timestamp.
-    // Leads the list despite being the least informative row.
+    // NULL `at`. **No current control-plane path produces this**: `markAlert`
+    // is the only writer of `alerted = true` and it always sets `lastAlertAt`,
+    // and the two columns were added in the same migration so there are no
+    // legacy rows either. The row is here because the COLUMN IS NULLABLE and
+    // the UI must hold to that contract rather than to today's writer — a
+    // fixture that only ever carried timestamps would let a `timeAgo(null)`
+    // regression through, and this is also the row that proves the list is not
+    // sorted the way a reader assumes. It depicts a schema-permitted state, not
+    // an observed one; do not cite it as evidence the control plane emits this.
     authority: 'registry-f.playground.local',
     logId: null,
     lastWitnessedSize: null,
@@ -1497,8 +1508,17 @@ export const MOCK_LOG_WITNESS_ALERTS: LogWitnessAlertRow[] = [
     consecutiveFailures: 5,
   },
   {
-    // The acknowledged row. Present so `includeAcknowledged` has something to
-    // include — the default listing must NOT contain it.
+    // The acknowledged row — still ALERTED. Acknowledgement is a "someone has
+    // seen this" marker; upstream's `acknowledgeAlert` leaves `alerted = true`
+    // and only `advanceCursor` clears the condition. The worklist therefore
+    // renders this row, and its `State` cell is the one that reads
+    // "Acknowledged".
+    //
+    // `acknowledgedBy` is a TRUNCATED KEY FINGERPRINT, not an email. The value
+    // is `req.actorId ?? 'admin'`, and on the API-key path `actorId` is
+    // `token.slice(0, 8) + '...'`. An address here would render as
+    // "key ops@playground.local" — an identity claim the control plane never
+    // made, and exactly what the component's docblock exists to prevent.
     authority: 'registry-e.playground.local',
     logId: 'registry-e.playground.local/log/v1',
     lastWitnessedSize: 27310,
@@ -1510,7 +1530,7 @@ export const MOCK_LOG_WITNESS_ALERTS: LogWitnessAlertRow[] = [
     },
     at: iso(12000),
     acknowledgedAt: iso(9000),
-    acknowledgedBy: 'ops@playground.local',
+    acknowledgedBy: 'ak_7f3c1...',
     consecutiveFailures: 0,
   },
   {

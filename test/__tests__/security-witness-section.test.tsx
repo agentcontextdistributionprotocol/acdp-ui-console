@@ -22,9 +22,19 @@ import { ApiError } from '@/lib/api/fetcher';
 
 const getLogWitness = vi.fn();
 const listRegistries = vi.fn();
+const listLogWitnessAlerts =
+  vi.fn<(...args: unknown[]) => Promise<{ data: unknown[]; total: number }>>(async () => ({
+    data: [],
+    total: 0,
+  }));
 vi.mock('@/lib/api/client', () => ({
   getLogWitness: (...a: unknown[]) => getLogWitness(...a),
   listRegistries: (...a: unknown[]) => listRegistries(...a),
+  // Stubbed deliberately. Without it the alert worklist this page now mounts
+  // has no client function to call, so it renders a red ErrorPanel INSIDE
+  // otherwise-passing tests — a failure that is invisible because nothing here
+  // asserts on it.
+  listLogWitnessAlerts: (...a: unknown[]) => listLogWitnessAlerts(...a),
   listRevocations: vi.fn(async () => ({ entries: [], next_cursor: null })),
   getRegistryJwks: vi.fn(async () => ({ keys: [] })),
   getRegistryCapabilities: vi.fn(async () => ({})),
@@ -134,5 +144,27 @@ describe('/security — transparency-log witness section', () => {
       expect(screen.queryByRole('heading', { name: A })).toBeNull();
       expect(screen.queryByRole('heading', { name: B })).toBeNull();
     });
+  });
+});
+
+describe('/security — the witness alert worklist is actually mounted', () => {
+  it('renders the worklist section on the page', async () => {
+    // N2: deleting `<LogWitnessAlerts />` from `app/security/page.tsx` left the
+    // ENTIRE suite green. ESLint reports the orphaned import as a warning only,
+    // so `npm run lint` still exits 0 and CI stays green too — the worklist
+    // could vanish from the product without one red signal anywhere.
+    listRegistries.mockResolvedValue([]);
+    renderPage();
+    await waitFor(() => expect(screen.queryByText('Witness alert worklist')).not.toBeNull());
+  });
+
+  it('asks the client for the worklist, including acknowledged rows', async () => {
+    // The page-level half of the component's own guard: acknowledged does not
+    // mean resolved, so the request that actually leaves this page must carry
+    // `includeAcknowledged: true`.
+    listRegistries.mockResolvedValue([]);
+    renderPage();
+    await waitFor(() => expect(listLogWitnessAlerts).toHaveBeenCalled());
+    expect(listLogWitnessAlerts.mock.calls.at(-1)?.[0]).toEqual({ includeAcknowledged: true });
   });
 });

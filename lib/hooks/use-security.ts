@@ -55,13 +55,23 @@ export function useLogWitness(authority: string) {
  * responses from the same endpoint, and sharing a cache entry would serve the
  * filtered list to a caller that asked for the full one.
  *
+ * **The parameter is REQUIRED, deliberately — it has no default.** Upstream,
+ * acknowledging an alert does not resolve it: `acknowledgeAlert` writes
+ * `acknowledgedAt`/`acknowledgedBy` and leaves `alerted = true`, and the row
+ * only leaves the worklist when the underlying condition clears via
+ * `advanceCursor`. So `false` hides alerts that are still outstanding, and
+ * which of the two listings a surface wants is a judgement about what that
+ * surface then CLAIMS about an empty result — never something to inherit
+ * silently from a default. A caller must say which listing it means, and its
+ * empty-state copy must match the answer.
+ *
  * This is a thin wrapper by design, which is why `use-security.ts` may stay on
  * `vitest.config.mts`'s named hook-exclude list. Per `CLAUDE.md`, a hook here
  * that grows real aggregation logic comes OFF that list, as `use-trust.ts` did
  * — any filtering, sorting or counting of these rows belongs in the component
  * or in `lib/utils/`, not here.
  */
-export function useLogWitnessAlerts(includeAcknowledged = false) {
+export function useLogWitnessAlerts(includeAcknowledged: boolean) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   return useQuery({
     queryKey: ['log-witness-alerts', includeAcknowledged, demoMode],

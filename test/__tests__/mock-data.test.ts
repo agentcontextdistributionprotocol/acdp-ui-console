@@ -1394,10 +1394,12 @@ describe('the log-witness alert worklist fixture', () => {
   });
 
   it('ships exactly one row with a null `at`, and it sorts FIRST', () => {
-    // Postgres puts NULLs first on an ascending sort, so upstream's
-    // newest-first ordering leads with the row that has no timestamp. The UI
-    // must not read position 0 as "most recent"; a fixture where that happened
-    // to be true would let the bug through unnoticed.
+    // Upstream orders `desc(lastAlertAt)`, and Postgres puts NULLs FIRST on a
+    // DESCENDING sort (on ASC it puts them last — the reverse of what an
+    // earlier version of this comment claimed). So the newest-first listing
+    // leads with the row that has no timestamp at all. The UI must not read
+    // position 0 as "most recent"; a fixture where that happened to be true
+    // would let the bug through unnoticed.
     const nullAt = MOCK_LOG_WITNESS_ALERTS.filter((r) => r.at === null);
     expect(nullAt).toHaveLength(1);
     expect(MOCK_LOG_WITNESS_ALERTS[0].at).toBeNull();
