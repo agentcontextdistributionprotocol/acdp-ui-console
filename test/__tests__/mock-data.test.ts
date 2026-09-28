@@ -765,3 +765,119 @@ describe('demo registry profiles are ones a real registry would start with', () 
     expect(atLeast('0.1.0', '0.2.0')).toBe(false);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// `MOCK_RUNS` is in `startedAt` order, and stayed otherwise identical (#85).
+//
+// `MOCK_DASHBOARD.recentRuns` is `MOCK_RUNS.slice(0, 5)` — so "recent" meant
+// "the first five array positions", and two entries sat at the END of the array
+// out of order. `iso(n)` is n SECONDS ago (`mock-data.ts:31-34`), so those two
+// were `run-historical-1` at 150s — two and a half MINUTES ago, the second-most
+// recent run in the entire dataset — and `run-revoked-1` at 1900s, about half an
+// hour. The five that made it into "Recent Runs" ended at 3600s, a full hour.
+//
+// So the dashboard's Recent Runs table omitted the second-newest run in favour
+// of one twenty-four times older, and the Runs table read out of time order.
+//
+// The second test here is the one that makes the reorder safe rather than just
+// done. A multiset-of-ids assertion would NOT show that nothing else changed:
+// it passes just as happily if a `status` or a `startedAt` were edited during
+// the move. So the invariant is pinned per run, keyed by id, in a form that
+// survives `iso()` being recomputed from `Date.now()` at every module load.
+// ══════════════════════════════════════════════════════════════════════
+
+/** Seconds before module-load time, which is what `iso(n)` encodes. */
+function secondsAgo(ts: string | null | undefined): number | null {
+  if (!ts) return null;
+  return Math.round((Date.now() - Date.parse(ts)) / 1000);
+}
+
+/**
+ * Every run's identity-and-timing fields as they were BEFORE the reorder,
+ * keyed by id. Pinned as a fixture so the reorder is provably position-only:
+ * any edit to a value — a status, a count, a timestamp — fails here even though
+ * the ids and the ordering both still check out.
+ *
+ * Absolute timestamps cannot be pinned (they are recomputed from `Date.now()`
+ * at import), so the offsets are, which is exactly what `iso(n)` expresses.
+ */
+const RUNS_BEFORE_REORDER: Record<
+  string,
+  { scenarioId: string; status: string; startedSecondsAgo: number; completedSecondsAgo: number | null; contextsCount: number }
+> = {
+  [LIVE_RUN_ID]: { scenarioId: 's5_cross_registry', status: 'running', startedSecondsAgo: 24, completedSecondsAgo: null, contextsCount: 1 },
+  'run-historical-1': { scenarioId: 's24_historical_key', status: 'completed', startedSecondsAgo: 150, completedSecondsAgo: 138, contextsCount: 1 },
+  'run-revoked-1': { scenarioId: 's32_key_revocation', status: 'completed', startedSecondsAgo: 1900, completedSecondsAgo: 1850, contextsCount: 3 },
+};
+
+describe('MOCK_RUNS reads in time order', () => {
+  it('is strictly descending by startedAt', () => {
+    // Strictly, not `>=`: two runs sharing a start time would make "the five
+    // most recent" ambiguous, which is the property `recentRuns` depends on.
+    for (let i = 1; i < MOCK_RUNS.length; i++) {
+      const prev = Date.parse(MOCK_RUNS[i - 1].startedAt);
+      const cur = Date.parse(MOCK_RUNS[i].startedAt);
+      expect(cur, `${MOCK_RUNS[i].runId} starts at or after ${MOCK_RUNS[i - 1].runId}`).toBeLessThan(prev);
+    }
+  });
+
+  it('makes recentRuns actually the five most recent', () => {
+    const byTime = [...MOCK_RUNS].sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    expect(MOCK_DASHBOARD.recentRuns.map((r) => r.runId)).toEqual(
+      byTime.slice(0, 5).map((r) => r.runId),
+    );
+    // The sharpest instance of the old defect: `run-historical-1` started 150
+    // SECONDS ago — the second-newest run in the dataset — and was not in
+    // "recent" at all, while a run from a full hour earlier was.
+    expect(MOCK_DASHBOARD.recentRuns.map((r) => r.runId)).toContain('run-historical-1');
+  });
+
+  it('still leads with the live run', () => {
+    // `iso(24)` is the most recent value in the set, so the active run stays at
+    // index 0 and the dashboard still opens on the run that is happening now.
+    expect(MOCK_RUNS[0].runId).toBe(LIVE_RUN_ID);
+    expect(MOCK_RUNS[0].status).toBe('running');
+    expect(MOCK_DASHBOARD.recentRuns[0].runId).toBe(LIVE_RUN_ID);
+  });
+
+  it('moved positions and nothing else', () => {
+    // The assertion a set-of-ids check cannot make. A few seconds of tolerance
+    // because `iso()` is evaluated at module import and `Date.now()` here is
+    // not — the gap is the suite's own start-up time.
+    for (const [runId, before] of Object.entries(RUNS_BEFORE_REORDER)) {
+      const run = MOCK_RUNS.find((r) => r.runId === runId);
+      expect(run, `${runId} is missing`).toBeDefined();
+      expect(run!.scenarioId).toBe(before.scenarioId);
+      expect(run!.status).toBe(before.status);
+      expect(run!.contextsCount).toBe(before.contextsCount);
+      expect(Math.abs(secondsAgo(run!.startedAt)! - before.startedSecondsAgo)).toBeLessThanOrEqual(30);
+      if (before.completedSecondsAgo === null) {
+        expect(run!.completedAt ?? null).toBeNull();
+      } else {
+        expect(Math.abs(secondsAgo(run!.completedAt)! - before.completedSecondsAgo)).toBeLessThanOrEqual(30);
+      }
+    }
+  });
+
+  it('keeps all eight runs', () => {
+    expect(MOCK_RUNS).toHaveLength(8);
+    expect(new Set(MOCK_RUNS.map((r) => r.runId)).size).toBe(8);
+  });
+
+  it('keeps the lineage page opening on the live run', () => {
+    // CORRECTION TO THE PLAN. It asserted that `app/lineage/page.tsx` "defaults
+    // to `LIVE_RUN_ID`, a named lookup, not an index, so it is unaffected".
+    // That is wrong in its premise: the page defaults to
+    // `runId ?? runs[0]?.runId`, where `runs` is the run list filtered to
+    // `contextsCount > 0`. It IS order-sensitive, and reordering this fixture
+    // could have changed which run the page opens on.
+    //
+    // The conclusion survives for a different reason, which is the one worth
+    // asserting: the live run is the most recent AND has contexts, so it is
+    // still first after the filter. Asserted on the DATA, because that is where
+    // the dependency actually lives — a source grep for `LIVE_RUN_ID` would
+    // have passed while the page silently changed which run it showed.
+    const withContexts = MOCK_RUNS.filter((r) => r.contextsCount > 0);
+    expect(withContexts[0]?.runId).toBe(LIVE_RUN_ID);
+  });
+});

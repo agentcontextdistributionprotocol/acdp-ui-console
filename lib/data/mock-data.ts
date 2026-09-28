@@ -481,6 +481,32 @@ export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
 };
 
 // ── Runs ──────────────────────────────────────────────────────────────
+// ORDERED STRICTLY BY `startedAt`, MOST RECENT FIRST. This is a load-bearing
+// invariant, not a tidiness preference (#85): `MOCK_DASHBOARD.recentRuns` is
+// `MOCK_RUNS.slice(0, 5)`, so the dashboard's "Recent Runs" table showed
+// whatever the first five array positions happened to be. Two entries sat at
+// the END of the array out of order, and `iso(n)` is n SECONDS ago (see the
+// helper above), so they were `run-historical-1` at 150s — two and a half
+// MINUTES ago, the second-newest run in the whole dataset — and
+// `run-revoked-1` at 1900s. The five that did make it into "recent" ran back
+// to 3600s. So Recent Runs omitted the second-newest run in favour of one an
+// hour old, and the Runs table read out of time order.
+//
+// Reordered in the literal rather than sorted at runtime. A `.sort()` here
+// would make the fixture's order a property of code rather than something you
+// can read in the file, and `iso()` is computed from `Date.now()` at module
+// load, so a runtime sort would be correct and completely invisible. The whole
+// value of a fixture is that it can be read.
+//
+// `mock-data.test.ts` asserts the adjacent-pair ordering AND that no field
+// value changed in the move — only positions.
+//
+// One consumer really IS order-sensitive and must be kept in mind by anyone
+// editing this array: `app/lineage/page.tsx` opens on `runs[0]` of the list
+// filtered to `contextsCount > 0` — not on a named id, as was assumed when this
+// reorder was planned. The live run stays first here because it is both the most
+// recent and has a context, which is what keeps that page opening where it
+// should. Asserted on the data in the test, not by grepping that page.
 export const MOCK_RUNS: CpRun[] = [
   {
     runId: LIVE_RUN_ID,
@@ -494,6 +520,21 @@ export const MOCK_RUNS: CpRun[] = [
     inputs: { topic: 'Arctic shipping routes' },
     // Still running — the audit sweep hasn't produced a verdict yet.
     trust: null,
+  },
+  {
+    runId: 'run-historical-1',
+    tenantId: 'default',
+    scenarioId: 's24_historical_key',
+    status: 'completed',
+    startedAt: iso(150),
+    completedAt: iso(138),
+    contextsCount: 1,
+    registries: [AUTH_A],
+    inputs: { topic: 'rotated signing key' },
+    // The producer rotated its key after publishing; the pre-rotation context
+    // still verifies against the retired key pinned by the receipt (RFC-ACDP-0010
+    // §9 historically authorized) — cryptographically valid, just not current.
+    trust: { audited: 1, verified: 0, verifiedHistorical: 1, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
   {
     runId: COMPLETED_RUN_ID,
@@ -537,67 +578,6 @@ export const MOCK_RUNS: CpRun[] = [
     inputs: { topic: 'forecast model' },
     // Environmental: the registry was unreachable during the sweep — not a flag.
     trust: { audited: 1, verified: 0, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 1, flagged: [] },
-  },
-  {
-    runId: 'run-fan-3',
-    tenantId: 'default',
-    scenarioId: 's3_fanout',
-    status: 'completed',
-    startedAt: iso(3600),
-    completedAt: iso(3580),
-    contextsCount: 4,
-    registries: [AUTH_A],
-    inputs: { topic: 'market sentiment', consumers: 3 },
-    trust: { audited: 4, verified: 2, verifiedHistorical: 0, structural: 0, noReceipt: 2, errors: 0, flagged: [] },
-  },
-  {
-    runId: 'run-cross-org-1',
-    tenantId: 'default',
-    scenarioId: 's8_cross_org',
-    status: 'completed',
-    startedAt: iso(7200),
-    completedAt: iso(7170),
-    contextsCount: 2,
-    registries: [AUTH_A, AUTH_B],
-    inputs: { topic: 'joint venture terms' },
-    // One context's receipt content_hash diverges from the served body — a real
-    // trust violation surfaced by the audit.
-    trust: {
-      audited: 2,
-      verified: 1,
-      verifiedHistorical: 0,
-      structural: 0,
-      noReceipt: 0,
-      errors: 0,
-      flagged: [
-        {
-          eventId: 'ev-cross-org-2',
-          ctxId: `acdp://${AUTH_B}/f24ba292-b358-4343-a077-2d08c3c018b0`,
-          status: 'discrepancy',
-          discrepancies: [
-            // Fabricated/illustrative truncated hashes for the demo narrative — not derived
-            // from MOCK_CRYPTO or any real fixture, so they don't reference any ctx_id/UUID
-            // rewrite elsewhere in this file and should not be "fixed" to match one.
-            'content_hash_mismatch: receipt sha256:bb22c8a3… ≠ served body sha256:9c11a7f2…',
-          ],
-        },
-      ],
-    },
-  },
-  {
-    runId: 'run-historical-1',
-    tenantId: 'default',
-    scenarioId: 's24_historical_key',
-    status: 'completed',
-    startedAt: iso(150),
-    completedAt: iso(138),
-    contextsCount: 1,
-    registries: [AUTH_A],
-    inputs: { topic: 'rotated signing key' },
-    // The producer rotated its key after publishing; the pre-rotation context
-    // still verifies against the retired key pinned by the receipt (RFC-ACDP-0010
-    // §9 historically authorized) — cryptographically valid, just not current.
-    trust: { audited: 1, verified: 0, verifiedHistorical: 1, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
   },
   {
     runId: 'run-revoked-1',
@@ -664,6 +644,52 @@ export const MOCK_RUNS: CpRun[] = [
           boundary: '2026-08-01 00:00:00+00',
           trustClass: 'registry_attested',
           sources: [{ ctxId: `acdp://${AUTH_A}/c4f1a2b3-6d7e-4f8a-9b0c-1d2e3f4a5b6c`, publisher: DID_A }],
+        },
+      ],
+    },
+  },
+  {
+    runId: 'run-fan-3',
+    tenantId: 'default',
+    scenarioId: 's3_fanout',
+    status: 'completed',
+    startedAt: iso(3600),
+    completedAt: iso(3580),
+    contextsCount: 4,
+    registries: [AUTH_A],
+    inputs: { topic: 'market sentiment', consumers: 3 },
+    trust: { audited: 4, verified: 2, verifiedHistorical: 0, structural: 0, noReceipt: 2, errors: 0, flagged: [] },
+  },
+  {
+    runId: 'run-cross-org-1',
+    tenantId: 'default',
+    scenarioId: 's8_cross_org',
+    status: 'completed',
+    startedAt: iso(7200),
+    completedAt: iso(7170),
+    contextsCount: 2,
+    registries: [AUTH_A, AUTH_B],
+    inputs: { topic: 'joint venture terms' },
+    // One context's receipt content_hash diverges from the served body — a real
+    // trust violation surfaced by the audit.
+    trust: {
+      audited: 2,
+      verified: 1,
+      verifiedHistorical: 0,
+      structural: 0,
+      noReceipt: 0,
+      errors: 0,
+      flagged: [
+        {
+          eventId: 'ev-cross-org-2',
+          ctxId: `acdp://${AUTH_B}/f24ba292-b358-4343-a077-2d08c3c018b0`,
+          status: 'discrepancy',
+          discrepancies: [
+            // Fabricated/illustrative truncated hashes for the demo narrative — not derived
+            // from MOCK_CRYPTO or any real fixture, so they don't reference any ctx_id/UUID
+            // rewrite elsewhere in this file and should not be "fixed" to match one.
+            'content_hash_mismatch: receipt sha256:bb22c8a3… ≠ served body sha256:9c11a7f2…',
+          ],
         },
       ],
     },
