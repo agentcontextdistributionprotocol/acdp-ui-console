@@ -102,6 +102,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { REGISTRY_ADVERTISABLE_PROFILES } from './advertisable-profiles';
 
 // Anchored to THIS FILE, not to `process.cwd()`. The guard should not depend on
 // which directory the runner was invoked from. Not exported: nothing outside
@@ -168,6 +169,53 @@ export const GLOSS_GATE_CONDITION = '!(ADVERTISABLE_PROFILE_IDSasreadonlystring[
 export const GLOSS_RETURN_EXPRESSION = 'PROFILE_INFO[pasAdvertisableProfileId]';
 
 /**
+ * The chip element the profiles `.map` callback is allowed to return, as an
+ * exact attribute-name -> whitespace-stripped-spelling map.
+ *
+ * Parameterised on the callback's parameter name so renaming `p` is a
+ * mechanical edit rather than a guard failure; everything else is a literal
+ * spelling, because a spelling is the only thing that can be compared without
+ * re-implementing the component.
+ *
+ * `title` is here for the direction a render cannot see. Round 11 dropped it
+ * behind a condition no fixture satisfies and every tooltip vanished on the
+ * affected deployments with the suite green — the same defect
+ * `GLOSS_EXPRESSION`'s docblock cites as the reason it exists, arriving
+ * through the one door that docblock said was shut.
+ */
+export function CHIP_ATTRIBUTES(param: string): Record<string, string> {
+  return {
+    key: `{${param}}`,
+    className: "{info?.accent?'chipok':'chip'}",
+    title: '{info?.title}',
+  };
+}
+
+/**
+ * The profile ids this component's source may name, and the shape of the ones
+ * it may not.
+ *
+ * ROUND 11's B8. `f37ae31` deleted a comment-stripped whole-file check that the
+ * strings `'acdp-consumer'` and `'acdp-federated'` appear nowhere in
+ * `registry-card.tsx`, and argued its replacement (key-set equality over the
+ * parsed `PROFILE_INFO`) was a pure improvement. It is stronger against an
+ * eighth table key under any spelling and strictly WEAKER against the id string
+ * appearing anywhere else in the file — which is precisely where four of round
+ * 11's five injections lived:
+ *
+ *   const witnessNote = 'acdp-log-witness — …';   rendered under `!capabilities`
+ *   const consumerNote = 'acdp-consumer: …';      gated on max_search_limit
+ *   <input readOnly value="acdp-log-witness: …" />        unconditional
+ *
+ * The deleted check enumerated two bad strings, which is why it was easy to
+ * argue away. This one is CLOSED instead: a profile id is `acdp-` followed by
+ * lowercase words, the advertisable set is exactly seven, and no other string
+ * of that shape may appear in a string literal or a template literal anywhere
+ * in the file. Nothing has to guess which id somebody will name next.
+ */
+export const PROFILE_ID_SHAPE = /acdp-[a-z][a-z0-9-]*/g;
+
+/**
  * The component's AST — or, when `text` is given, an arbitrary one.
  *
  * The override exists ONLY so these guards can be exercised against source
@@ -196,9 +244,23 @@ function sourceFile(text?: string): ts.SourceFile {
   );
 }
 
+/**
+ * Every refusal in this module goes through `fail()`, and `fail()` puts this in
+ * front of the message. Exported so a self-test can require it.
+ *
+ * ROUND 12: this exists because `expect(() => guard.run(bad)).toThrow()` is
+ * satisfied by ANY throw, including one the guard did not mean. Round 11's
+ * G7b short-circuited `assertGlossIsPureOfId`'s `mapCalls.length === 0`
+ * vacuity check; `mapCalls[0]` was then `undefined`, `call.arguments[0]` threw
+ * a `TypeError`, and the rejection case passed — so the guard's own anti-vacuity
+ * pin could be disabled with the suite green. A rejection is only a rejection
+ * if the guard said so, which means the message has to come from `fail()`.
+ */
+export const GUARD_FAILURE_PREFIX = 'registry-card.tsx: ';
+
 function fail(what: string): never {
   throw new Error(
-    `registry-card.tsx: ${what}. Profile copy in this file is bounded to the PROFILE_INFO table ` +
+    `${GUARD_FAILURE_PREFIX}${what}. Profile copy in this file is bounded to the PROFILE_INFO table ` +
       `(whose keys tsc pins to the advertisable seven) reached through glossFor(), because five ` +
       `previous guards each bounded a region and the copy moved to the region next door. If this ` +
       `file genuinely needs the construct, widen the allow-list in ` +
@@ -239,8 +301,8 @@ function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
  * cannot carry copy, and forbidding them was pressure to widen the IMPORT
  * allow-list instead — which is the one direction that genuinely opens a hole.
  */
-export function assertModuleShape(): void {
-  const sf = sourceFile();
+export function assertModuleShape(source?: string): void {
+  const sf = sourceFile(source);
   let sawTable = false;
   let sawComponent = false;
 
@@ -333,8 +395,8 @@ export function assertModuleShape(): void {
  * is tested by ancestry, not by name, so declaring a same-named local does not
  * buy an exemption.
  */
-export function assertNoCopyOutsideTable(): void {
-  const sf = sourceFile();
+export function assertNoCopyOutsideTable(source?: string): void {
+  const sf = sourceFile(source);
   const table = copyTableNode(sf);
 
   const visit = (node: ts.Node): void => {
@@ -507,8 +569,8 @@ export function assertNoAlternateDisclosureChannel(source?: string): void {
  * argument for leaving a channel open, and it was false. That channel is now
  * closed by `assertNoAlternateDisclosureChannel` rather than by a claim.
  */
-export function assertGlossChokePoint(): void {
-  const sf = sourceFile();
+export function assertGlossChokePoint(source?: string): void {
+  const sf = sourceFile(source);
   const attrs: ts.JsxAttribute[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isJsxAttribute(node) && node.name.getText(sf) === 'title') attrs.push(node);
@@ -548,8 +610,8 @@ export function assertGlossChokePoint(): void {
  * truthy — a badge, an icon, a class — turns a latent difference into a visible
  * one. The gate is cheap; the second lookup site is what must not appear.
  */
-export function assertGlossIsGated(): void {
-  const sf = sourceFile();
+export function assertGlossIsGated(source?: string): void {
+  const sf = sourceFile(source);
   let gloss: ts.FunctionDeclaration | undefined;
   const findFn = (node: ts.Node): void => {
     if (ts.isFunctionDeclaration(node) && node.name?.getText(sf) === 'glossFor') gloss = node;
@@ -791,6 +853,179 @@ export function assertGlossIsPureOfId(source?: string): void {
         '`registry.lastSeen` and on `capabilities.anonymous_public_reads` in successive rounds.',
     );
   }
+
+  // ── THE CALLBACK'S WHOLE BODY, not just where `info` comes from ──────
+  //
+  // Round 11's blocking finding B3, and it falsified this file's stated
+  // residual rather than merely widening it. `GLOSS_RETURN_EXPRESSION`'s
+  // docblock said suppression "rests entirely on `assertGlossIsGated`" and
+  // called one allowed spelling "the only instrument that does". It is not:
+  // suppression has a second home, and it is this callback's RETURN.
+  //
+  //   const info = glossFor(p);
+  //   if (capabilities.limits.max_search_limit > 500) {
+  //     return <span key={p} className={info?.accent ? 'chip ok' : 'chip'}>{p}</span>;
+  //   }
+  //   return <span key={p} className={…} title={info?.title}>{p}</span>;
+  //
+  // tsc clean, eslint clean, 963/963 green — and every profile tooltip
+  // disappears on any registry whose capabilities report
+  // `max_search_limit > 500`. `assertGlossChokePoint` counts `title`
+  // attributes and still found exactly one; `assertGlossIsGated` bounds
+  // `glossFor`, which was untouched; and no render probe visits that
+  // coordinate, because the fixtures hold that field constant.
+  //
+  // The fix is not another coordinate. It is to bound the callback's body the
+  // way `glossFor`'s body is bounded: TWO statements, the second a bare
+  // `return` of ONE JSX element whose attribute set and child are pinned
+  // spellings. A conditional return, a second element, a dropped attribute, an
+  // added attribute and a changed child all fail the same way, without anyone
+  // enumerating which one somebody will try next.
+  const body = fn.body;
+  if (!body || !ts.isBlock(body)) {
+    fail(
+      'the profiles `.map` callback is not a block body — this guard pins the two statements it ' +
+        'is allowed to contain, and cannot do that for a concise arrow',
+    );
+  }
+  const stmts = (body as ts.Block).statements;
+  if (stmts.length !== 2) {
+    fail(
+      `the profiles \`.map\` callback has ${stmts.length} statements, expected exactly 2 ` +
+        '(`const info = glossFor(p);` then `return <chip>;`). Any third statement is an ' +
+        'unbounded place to compute, suppress or add per-profile copy',
+    );
+  }
+  const last = stmts[1];
+  if (!ts.isReturnStatement(last) || !last.expression) {
+    fail("the callback's second statement is not a bare `return <expression>;`");
+  }
+  // Unwrap the parentheses JSX is conventionally wrapped in. `return (<span
+  // …/>)` and `return <span …/>` are the same program, and a guard that
+  // refused one of the two spellings would be a formatting rule wearing a
+  // security guard's clothes — which is how guards get deleted.
+  let returned: ts.Expression = (last as ts.ReturnStatement).expression!;
+  while (ts.isParenthesizedExpression(returned)) returned = returned.expression;
+  if (!ts.isJsxElement(returned) && !ts.isJsxSelfClosingElement(returned)) {
+    fail(
+      `the callback returns \`${returned.getText(sf).slice(0, 60)}\`, which is not a single JSX ` +
+        'element. A conditional return is how the tooltip was dropped on one deployment with ' +
+        'every probe green',
+    );
+  }
+  const opening = ts.isJsxElement(returned) ? returned.openingElement : (returned as ts.JsxSelfClosingElement);
+  const attrs = opening.attributes.properties;
+  for (const a of attrs) {
+    if (!ts.isJsxAttribute(a)) {
+      fail('the chip element carries a spread attribute — its props are unbounded');
+    }
+  }
+  const spelled = (attrs as unknown as ts.JsxAttribute[]).map((a) => [
+    a.name.getText(sf),
+    (a.initializer?.getText(sf) ?? '').replace(/\s+/g, ''),
+  ] as const);
+  const expected = CHIP_ATTRIBUTES(param);
+  const actual = Object.fromEntries(spelled);
+  const names = spelled.map(([n]) => n).sort();
+  const wanted = Object.keys(expected).sort();
+  if (names.join(',') !== wanted.join(',')) {
+    fail(
+      `the chip's attributes are \`${names.join(', ')}\`, expected exactly ` +
+        `\`${wanted.join(', ')}\`. A dropped \`title\` suppresses every gloss; an added one is a ` +
+        'second disclosure channel',
+    );
+  }
+  for (const [name, want] of Object.entries(expected)) {
+    if (actual[name] !== want) {
+      fail(
+        `the chip's \`${name}\` is \`${actual[name]}\`, but the only allowed spelling is ` +
+          `\`${want}\`. Anything else makes this attribute a function of something other than ` +
+          'the profile id',
+      );
+    }
+  }
+  const children = ts.isJsxElement(returned) ? returned.children : [];
+  const childText = children
+    .map((c) => c.getText(sf).trim())
+    .filter((t) => t !== '')
+    .join('');
+  if (childText !== `{${param}}`) {
+    fail(
+      `the chip's children are \`${childText}\`, expected exactly \`{${param}}\`. The chip's own ` +
+        'text is the profile id and nothing else — a gloss rendered as a child is visible body ' +
+        'copy, which is the loudest channel there is',
+    );
+  }
+}
+
+/**
+ * No profile-id-shaped string in the component's source names an id outside the
+ * advertisable seven.
+ *
+ * ROUND 11's B8, restored as a CLOSED check rather than the two-literal
+ * denylist `f37ae31` removed. See `PROFILE_ID_SHAPE`.
+ *
+ * ── Why this belongs beside the rendered closed world, not instead of it ──
+ *
+ * The rendered closed world asks what is on the screen and is blind to a
+ * coordinate no fixture visits. This asks what is in the file and is blind to
+ * a string assembled at runtime. Neither subsumes the other, and round 11 got
+ * through both gaps in the same round: `!capabilities` (a coordinate no
+ * fixture visited) and a `max_search_limit > 500` gate (a field no fixture
+ * varied) each carried a hand-written `'acdp-log-witness — …'` literal, which
+ * this refuses without needing a fixture at all.
+ *
+ * ── Scope, stated narrowly ───────────────────────────────────────────
+ *
+ * String literals, no-substitution template literals, and the literal SPANS of
+ * a template with substitutions. Comments are exempt: this file's own
+ * docblocks name the forbidden ids constantly, and so do the component's, and
+ * a guard that banned discussing the problem would be uncomfortable enough to
+ * get deleted. That exemption is also the residual: a comment cannot render,
+ * so nothing is lost, but `// eslint` games aside, a maintainer who wants to
+ * smuggle a string past this can still assemble it from parts — which is what
+ * the rendered closed world is for.
+ */
+export function assertNoForeignProfileId(source?: string): void {
+  const sf = sourceFile(source);
+  const allowed = new Set<string>(REGISTRY_ADVERTISABLE_PROFILES);
+  let scanned = 0;
+
+  const check = (text: string, where: ts.Node): void => {
+    scanned += 1;
+    for (const m of text.matchAll(PROFILE_ID_SHAPE)) {
+      if (!allowed.has(m[0])) {
+        fail(
+          `names the profile id \`${m[0]}\` in a string literal ` +
+            `(\`${where.getText(sf).slice(0, 60)}\`). Only the seven advertisable ids may appear ` +
+            'in this component\'s source. Copy naming an id no registry may advertise is #95, ' +
+            'and four of round 11\'s five injections were exactly this: a hand-written sentence ' +
+            'bound to a name, rendered from a coordinate no fixture visits',
+        );
+      }
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      check(node.text, node);
+    } else if (ts.isTemplateExpression(node)) {
+      check(node.head.text, node);
+      for (const span of node.templateSpans) check(span.literal.text, node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+
+  // ANTI-VACUITY. A walk that stopped finding literals would pass on anything.
+  // The component demonstrably contains string literals — every `className` is
+  // one — so finding none means this is looking at the wrong nodes.
+  if (scanned < 5) {
+    fail(
+      `found only ${scanned} string literals in the component — it has many more, so this walk ` +
+        'is looking at the wrong nodes and is passing vacuously',
+    );
+  }
 }
 
 /**
@@ -996,13 +1231,23 @@ export function advertisableIdsInComponent(): string[] {
  * Fails closed: a spread, a computed key, an accessor, a shorthand, a
  * non-string key or a non-string `title` throws rather than being skipped.
  */
+export const RUN_ON_READ = [
+  assertModuleShape,
+  assertNoCopyOutsideTable,
+  assertNoRuntimeCopyForms,
+  assertNoAlternateDisclosureChannel,
+  assertGlossChokePoint,
+  assertGlossIsGated,
+  assertNoForeignProfileId,
+] as const;
+
 export function profileCopyTable(): { entries: Map<string, string>; tables: number } {
-  assertModuleShape();
-  assertNoCopyOutsideTable();
-  assertNoRuntimeCopyForms();
-  assertNoAlternateDisclosureChannel();
-  assertGlossChokePoint();
-  assertGlossIsGated();
+  // Iterated rather than called one by one, and EXPORTED, because round 11
+  // found that dropping two of these call sites was a silent, green edit —
+  // `mock-data.test.ts` reads this table for the data half of #95 and would
+  // quietly have lost those bounds. A list can be asserted non-empty and
+  // asserted to contain each guard; six statements cannot.
+  for (const guard of RUN_ON_READ) guard();
   const sf = sourceFile();
   const table = copyTableNode(sf);
   const entries = new Map<string, string>();

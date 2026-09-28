@@ -34,6 +34,7 @@ import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
 } from '../support/advertisable-profiles';
+import * as PCT from '../support/profile-copy-table';
 import {
   profileCopyTable,
   assertModuleShape,
@@ -649,7 +650,13 @@ describe('the dead tooltip copy is gone', () => {
     // an empty `disclosing`, and set-equality against an empty ADVERTISABLE
     // would be true.
     expect(disclosing).toHaveLength(ADVERTISABLE.length);
-  });
+    // The probe renders `PROBES.length * REGISTRIES.length` cards one at a
+    // time and measures ~2.7s unloaded; it crossed vitest's 5s default and went
+    // red once under CPU contention from a parallel suite. A wide matrix is the
+    // point of this test, so it gets a timeout it cannot plausibly reach rather
+    // than fewer coordinates — a red here has to mean the card disclosed the
+    // wrong thing, not that the machine was busy.
+  }, 60_000);
 
   it('pins the adversarial id universe, so the probe above cannot be narrowed to the easy cases', () => {
     // `PROBES` was the one array here with no anti-vacuity pin, while
@@ -870,8 +877,25 @@ describe('the rendered card is a closed world over its fixture', () => {
    */
   const REGISTRIES: KnownRegistry[] = [
     REGISTRY_B,
-    { ...REGISTRY_B, authority: 'registry-a.playground.local', eventCount: 0 },
-    { ...REGISTRY_B, baseUrl: null as unknown as string, eventCount: 1234567 },
+    {
+      ...REGISTRY_B,
+      authority: 'registry-a.playground.local',
+      eventCount: 0,
+      // ROUND 11's B2: `firstSeen` was held CONSTANT across every fixture, and
+      // a row gated on `registry.firstSeen > '2026-09-01'` was therefore never
+      // rendered. It died only incidentally, because the prose walk happened to
+      // see the comparison's string operand; the same gate written against a
+      // NUMBER walked through. A field no fixture varies is a coordinate the
+      // closed world does not visit, whatever its docblock says.
+      firstSeen: '2020-01-01T00:00:00.000Z',
+      lastSeen: '2020-01-02T00:00:00.000Z',
+    },
+    {
+      ...REGISTRY_B,
+      baseUrl: null as unknown as string,
+      eventCount: 1234567,
+      firstSeen: '2099-12-31T00:00:00.000Z',
+    },
   ];
 
   const CAPABILITY_SHAPES: RegistryCapabilities[] = [
@@ -897,6 +921,43 @@ describe('the rendered card is a closed world over its fixture', () => {
       anonymous_public_reads: false,
       limits: { ...MOCK_CAPABILITIES.b.limits, max_payload_bytes: 2048 },
     },
+    // ROUND 11's B2, the other half. `max_search_limit` and
+    // `max_embedded_bytes` were identical in every shape, and the escape was
+    // `capabilities.limits.max_search_limit > 500` — an ordinary registry
+    // configuration value, not an exotic one. The `varies EVERY field` test
+    // below is what keeps this from regressing by inspection.
+    {
+      ...MOCK_CAPABILITIES.b,
+      registry_did: 'did:web:registry-c.playground.local',
+      supported_signature_algorithms: ['Ed25519'],
+      limits: {
+        ...MOCK_CAPABILITIES.b.limits,
+        max_search_limit: 1000,
+        max_embedded_bytes: 4096,
+      },
+    },
+  ];
+
+  /**
+   * The SECOND axis of the prop space, and round 11's B1.
+   *
+   * `capabilities` is optional. Not one test in the repo rendered the card
+   * without it, so the whole `{capabilities && …}` branch — and everything
+   * outside it — was unvisited by the closed world, while the docblock above
+   * said "a string that is not derivable from the fixture cannot reach the
+   * screen". A `<div className="metric-row">` naming `acdp-log-witness`,
+   * rendered under `{!capabilities && …}`, passed 963/963.
+   *
+   * It is not an exotic coordinate. `app/registries/page.tsx:20-23` builds
+   * `capsByHost` from two React Query results and indexes it by short
+   * authority, so `undefined` is what every card gets on first paint, what any
+   * card gets when either query errors, and what an observed registry that is
+   * neither `registry-a` nor `registry-b` gets always — a case that page's own
+   * comment anticipates. It is the first thing an operator sees.
+   */
+  const CAPABILITY_AXIS: (RegistryCapabilities | undefined)[] = [
+    undefined,
+    ...CAPABILITY_SHAPES,
   ];
 
   /** Every non-empty text node under `el`, trimmed. */
@@ -911,26 +972,77 @@ describe('the rendered card is a closed world over its fixture', () => {
   }
 
   /**
-   * Every attribute that ANNOUNCES text: `title`, `alt`, `placeholder` and
-   * every `aria-*` that carries a string rather than a token.
+   * Attributes that carry NO operator-facing text — presentation, geometry and
+   * structure. EVERYTHING ELSE is treated as carrying text and must be
+   * licensed.
    *
-   * `alt` is on the list because round 9's gate got a sentence onto the card
-   * through it with everything green, and `assertNoAlternateDisclosureChannel`
-   * covered only `aria-*` and `data-*`. An `alt` is announced by a screen
-   * reader and rendered as visible text when the image fails, which is exactly
-   * the property that argument used to put `aria-label` on the list.
+   * ── The inversion, and why round 11 forced it ────────────────────────
+   *
+   * This was a list of announcing attributes: `title`, `alt`, `placeholder`,
+   * `aria-*`. Under a docblock that said "Every attribute that ANNOUNCES
+   * text". It is an ENUMERATION OF AN OPEN SET under a closed-set claim, which
+   * is the single defect this branch has now rediscovered in eleven
+   * consecutive rounds — and round 11 walked through it with
+   *
+   *   <input readOnly className="metric-val"
+   *          value="acdp-log-witness: log witness cosignatures (RFC-ACDP-0015)" />
+   *
+   * added UNCONDITIONALLY to the card body. `value` renders as visible text
+   * and is announced; it is not a text node, so `textNodes()` missed it; it
+   * was not on the list, so `announced()` missed it. 963/963 green. `srcDoc`,
+   * `download`, `label`, `abbr` and `aria-errormessage` are all the same
+   * shape, and enumerating them would leave the next one.
+   *
+   * So the allow-list is the NON-text side, which really is closed and really
+   * is short: the card renders `class`, `style`, `title`, and the SVG
+   * presentation attributes its two icons set. A maintainer who adds an
+   * attribute that carries text must now either license its value from the
+   * fixture or add its name here, in a diff, with a reason.
+   */
+  const NON_TEXT_ATTRS = new Set([
+    'class',
+    'style',
+    'id',
+    'role',
+    'tabindex',
+    // `aria-hidden` announces nothing by definition — that is its entire job.
+    'aria-hidden',
+    // SVG: `lucide-react` icons and `StatusDot`.
+    'xmlns',
+    'width',
+    'height',
+    'viewbox',
+    'fill',
+    'stroke',
+    'stroke-width',
+    'stroke-linecap',
+    'stroke-linejoin',
+    'd',
+    'points',
+    'cx',
+    'cy',
+    'r',
+    'x',
+    'y',
+    'x1',
+    'y1',
+    'x2',
+    'y2',
+    'rx',
+    'ry',
+    'transform',
+  ]);
+
+  /**
+   * Every attribute value on the card that is not structural — which is what
+   * the card ANNOUNCES or SHOWS through an attribute rather than a text node.
    */
   function announced(el: HTMLElement): string[] {
     const out: string[] = [];
     for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
       for (const a of node.attributes) {
-        const name = a.name.toLowerCase();
-        const isAnnouncing =
-          name === 'title' ||
-          name === 'alt' ||
-          name === 'placeholder' ||
-          (name.startsWith('aria-') && name !== 'aria-hidden');
-        if (isAnnouncing && a.value.trim()) out.push(a.value.trim());
+        if (NON_TEXT_ATTRS.has(a.name.toLowerCase())) continue;
+        if (a.value.trim()) out.push(a.value.trim());
       }
     }
     return out;
@@ -945,9 +1057,8 @@ describe('the rendered card is a closed world over its fixture', () => {
    * only be permitted by being one of the card's labels or by being something
    * the caller actually passed in.
    */
-  function allowedText(r: KnownRegistry, c: RegistryCapabilities): Set<string> {
-    const kb = String(Math.round(c.limits.max_payload_bytes / 1024));
-    return new Set<string>([
+  function allowedText(r: KnownRegistry, c: RegistryCapabilities | undefined): Set<string> {
+    const base = [
       ...CARD_LABELS,
       String(r.authority),
       r.baseUrl ?? '—',
@@ -956,16 +1067,24 @@ describe('the rendered card is a closed world over its fixture', () => {
       // any call.
       formatNumber(r.eventCount),
       timeAgo(r.lastSeen),
+    ];
+    // With no capabilities the card renders strictly less — so the licence is
+    // strictly smaller, and the `!capabilities` branch cannot borrow a string
+    // the capabilities branch would have made legal.
+    if (!c) return new Set<string>(base);
+    return new Set<string>([
+      ...base,
       c.acdp_version,
       c.supported_signature_algorithms.join(', '),
       ...c.supported_signature_algorithms,
       ...c.profiles,
-      kb,
+      String(Math.round(c.limits.max_payload_bytes / 1024)),
     ]);
   }
 
   /** And everything it is allowed to ANNOUNCE: a gloss, for an id it advertises. */
-  function allowedAnnounced(c: RegistryCapabilities): Set<string> {
+  function allowedAnnounced(c: RegistryCapabilities | undefined): Set<string> {
+    if (!c) return new Set<string>();
     // Read through `profileCopyTable()` — the PARSED copy table — rather than
     // by importing `PROFILE_INFO`, which is not exported, and rather than by
     // hand-listing the seven glosses here. A hand list would be a second copy
@@ -1010,37 +1129,155 @@ describe('the rendered card is a closed world over its fixture', () => {
     }
   }
 
+  const coord = (r: KnownRegistry, c: RegistryCapabilities | undefined) =>
+    `registry ${r.authority}, ${c ? `${c.profiles.length} profiles` : 'NO capabilities'}`;
+
   it('renders no text node that its fixture does not license', () => {
     let rendered = 0;
+    let withoutCaps = 0;
     for (const r of REGISTRIES) {
-      for (const c of CAPABILITY_SHAPES) {
+      for (const c of CAPABILITY_AXIS) {
         cleanup();
         const { container } = render(<RegistryCard registry={r} capabilities={c} />);
-        expectAllTextLicensed(
-          container,
-          allowedText(r, c),
-          `registry ${r.authority}, ${c.profiles.length} profiles`,
-        );
+        expectAllTextLicensed(container, allowedText(r, c), coord(r, c));
         rendered += 1;
+        if (!c) withoutCaps += 1;
       }
     }
     // Anti-vacuity: the matrix actually ran, and ran wide.
-    expect(rendered).toBe(REGISTRIES.length * CAPABILITY_SHAPES.length);
+    expect(rendered).toBe(REGISTRIES.length * CAPABILITY_AXIS.length);
     expect(rendered).toBeGreaterThan(15);
+    // …and it visited the half of the prop space that had never been rendered.
+    // Named separately rather than folded into the product, because the
+    // product grew for other reasons too and would have hidden its loss.
+    expect(withoutCaps, 'the `capabilities: undefined` arm is unvisited again').toBe(
+      REGISTRIES.length,
+    );
   });
 
   it('announces no string its fixture does not license, through ANY attribute', () => {
     for (const r of REGISTRIES) {
-      for (const c of CAPABILITY_SHAPES) {
+      for (const c of CAPABILITY_AXIS) {
         cleanup();
         const { container } = render(<RegistryCard registry={r} capabilities={c} />);
-        expectAllAnnouncedLicensed(
-          container,
-          allowedAnnounced(c),
-          `${c.profiles.length} profiles`,
-        );
+        expectAllAnnouncedLicensed(container, allowedAnnounced(c), coord(r, c));
       }
     }
+  });
+
+  it('the non-text allow-list is a CLOSED list, pinned member by member', () => {
+    // ROUND 12's G30. Adding `value` to `NON_TEXT_ATTRS` was green: nothing in
+    // the fixture carries a `value`, so the widening had no subject — and
+    // `value` is precisely the attribute whose absence from the OLD (positive)
+    // list let round 11's M4 put a whole unlicensed sentence on the card.
+    //
+    // Inverting the list made it closed in principle. Pinning it makes it
+    // closed in fact: the only way to license another attribute is a diff to
+    // both places, which is the diff a reviewer is supposed to read. Every
+    // member below is either structural (announces nothing) or SVG geometry.
+    expect([...NON_TEXT_ATTRS].sort()).toEqual(
+      [
+        'aria-hidden',
+        'class',
+        'cx',
+        'cy',
+        'd',
+        'fill',
+        'height',
+        'id',
+        'points',
+        'r',
+        'role',
+        'rx',
+        'ry',
+        'stroke',
+        'stroke-linecap',
+        'stroke-linejoin',
+        'stroke-width',
+        'style',
+        'tabindex',
+        'transform',
+        'viewbox',
+        'width',
+        'x',
+        'x1',
+        'x2',
+        'xmlns',
+        'y',
+        'y1',
+        'y2',
+      ].sort(),
+    );
+    // The four that carry text and must never be on it, named so that a
+    // widening cannot pass by looking plausible: each of these is an escape the
+    // gate has actually landed on this branch.
+    for (const announcing of ['value', 'alt', 'title', 'aria-label', 'placeholder']) {
+      expect(NON_TEXT_ATTRS.has(announcing), `\`${announcing}\` announces text`).toBe(false);
+    }
+  });
+
+  it('the matrix keeps the SHAPES that are there for a reason', () => {
+    // A shape can be deleted silently: `rendered > 15` still holds at 3x6, and
+    // `varies every field` still holds if another shape happens to vary the
+    // same field. The three below are not there for variance — each is a
+    // structural case whose absence removes a whole branch from the render.
+    expect(CAPABILITY_SHAPES.length, 'a capability shape was deleted').toBe(8);
+    expect(REGISTRIES.length, 'a registry fixture was deleted').toBe(3);
+    // Zero profiles: the map renders nothing, so anything still on screen came
+    // from somewhere other than a chip.
+    expect(CAPABILITY_SHAPES.some((c) => c.profiles.length === 0)).toBe(true);
+    // All seven: the widest legal advertisement, and the only way
+    // `acdp-registry-federated` renders at all.
+    expect(
+      CAPABILITY_SHAPES.some((c) => c.profiles.length === REGISTRY_ADVERTISABLE_PROFILES.length),
+    ).toBe(true);
+    // An id with no copy: the fallback, and the shape an index gate keys on.
+    expect(
+      CAPABILITY_SHAPES.some((c) =>
+        c.profiles.some((p) => !(REGISTRY_ADVERTISABLE_PROFILES as readonly string[]).includes(p)),
+      ),
+    ).toBe(true);
+    // Both arms of the anonymous-reads ternary.
+    expect(new Set(CAPABILITY_SHAPES.map((c) => c.anonymous_public_reads)).size).toBe(2);
+  });
+
+  it('the matrix VARIES every field of both props', () => {
+    // ROUND 11's B2, as a guard rather than as three more fixtures.
+    //
+    // Round 8 found three fields held constant and the escape used one of
+    // them. They were varied; three DIFFERENT fields were still constant, and
+    // round 11's escape used one of those. Adding fixtures fixes the instance;
+    // this fixes the class, by making "a field nothing varies" a red test.
+    //
+    // A constant field is a coordinate the closed world never visits, and the
+    // docblock above claims it visits all of them.
+    const leaves = (o: unknown, prefix = ''): Array<[string, string]> => {
+      if (o === null || typeof o !== 'object') return [[prefix, JSON.stringify(o) ?? 'undefined']];
+      if (Array.isArray(o)) return [[prefix, JSON.stringify(o)]];
+      return Object.entries(o as Record<string, unknown>).flatMap(([k, v]) =>
+        leaves(v, prefix ? `${prefix}.${k}` : k),
+      );
+    };
+    const constantFields = (objs: unknown[]): string[] => {
+      const byPath = new Map<string, Set<string>>();
+      for (const o of objs) {
+        for (const [path, val] of leaves(o)) {
+          if (!byPath.has(path)) byPath.set(path, new Set());
+          byPath.get(path)!.add(val);
+        }
+      }
+      return [...byPath].filter(([, vals]) => vals.size < 2).map(([path]) => path);
+    };
+
+    expect(constantFields(REGISTRIES), 'these registry fields never vary').toEqual([]);
+    expect(
+      constantFields(CAPABILITY_SHAPES),
+      'these capability fields never vary',
+    ).toEqual([]);
+    // Anti-vacuity on the detector itself: it must be able to SAY a field is
+    // constant, or the two assertions above pass by finding nothing.
+    expect(constantFields([{ a: 1, b: 1 }, { a: 1, b: 2 }])).toEqual(['a']);
+    expect(constantFields([{ n: { deep: 'x' } }, { n: { deep: 'x' } }])).toEqual(['n.deep']);
   });
 
   it('GUARDS THE GUARD: both checks REJECT a card that says something unlicensed', () => {
@@ -1085,6 +1322,19 @@ describe('the rendered card is a closed world over its fixture', () => {
     container.querySelector('.card-body')!.appendChild(aria);
     expect(() => expectAllAnnouncedLicensed(container, allowedA, 'injected aria-label')).toThrow();
     aria.remove();
+
+    // And `value` on a read-only input — round 11's M4 verbatim, the escape
+    // that beat the positive allow-list this guard replaced. It renders as
+    // VISIBLE text and is announced, and it is not a text node, so it is the
+    // one case where the announced half is the only half that can catch it.
+    const valued = document.createElement('input');
+    valued.readOnly = true;
+    valued.setAttribute('value', 'acdp-log-witness: log witness cosignatures (RFC-ACDP-0015)');
+    container.querySelector('.card-body')!.appendChild(valued);
+    expect(() => expectAllAnnouncedLicensed(container, allowedA, 'injected value')).toThrow();
+    // …and the text half is blind to it, which is the whole reason M4 shipped.
+    expectAllTextLicensed(container, allowedT, 'injected value');
+    valued.remove();
 
     // And back to clean, so the injections really were the cause.
     expectAllTextLicensed(container, allowedT, 'restored');
@@ -1147,7 +1397,7 @@ describe('the rendered card is a closed world over its fixture', () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════
-// GUARDS ON THE GUARDS (round 10).
+// GUARDS ON THE GUARDS (rounds 10 and 12).
 //
 // Round 9's gate emptied eight of this file's instruments one at a time and the
 // whole suite stayed green for every one: the JSX-child-literal branch of the
@@ -1160,11 +1410,23 @@ describe('the rendered card is a closed world over its fixture', () => {
 // source that already satisfies it, so an emptied guard and a passing guard are
 // indistinguishable.
 //
-// What follows exercises each instrument against input that MUST be rejected.
-// It does not make any of them adequate — the rendered closed world above is
-// the guarantee for what appears, and `assertGlossIsGated` for what stops
-// appearing. It makes "someone emptied it" a red test rather than a silent
-// change, which is the only thing a vacuity pin can do.
+// ROUND 12 CORRECTION. The header above said "round 10" and the paragraph below
+// said this section "exercises each instrument" — both were written when the
+// four hand-written rejection tests were all there was. Round 11 then counted
+// the instruments: the hand-written four covered 8 of ~14, and four guards had
+// no rejecting subject at all. The `GUARDS` table further down is what actually
+// makes "each" true, and it is true only because a missing entry is now a
+// compile error rather than a claim in a comment. The four tests immediately
+// below predate it and overlap it; they are kept because each pins something
+// the table cannot — a BRANCH of a walk, the contents of a list, the text of a
+// pinned expression — and deleting them was measured green in round 9.
+//
+// So: what follows exercises the instruments this file's guards are BUILT from,
+// and the `GUARDS` table exercises every exported guard itself. Neither makes
+// any of them adequate — the rendered closed world above is the guarantee for
+// what appears, and `assertGlossIsGated` for what stops appearing. Together
+// they make "someone emptied it" a red test rather than a silent change, which
+// is the only thing a vacuity pin can do.
 // ══════════════════════════════════════════════════════════════════════
 describe('the source guards are not vacuous', () => {
   it('the prose walk REJECTS a label that is missing from the permitted set', () => {
@@ -1217,7 +1479,21 @@ describe('the source guards are not vacuous', () => {
     for (const [mod, names] of Object.entries(ALLOWED_IMPORTS)) {
       expect(names.length, `\`${mod}\` allows no named binding, which reads as a wildcard`).toBeGreaterThan(0);
     }
-    // And the binding that actually carries copy risk is NOT on it.
+    // ROUND 11: the two lines below used to be the whole of it — a DENYLIST of
+    // two names, under a test titled "is not a wildcard". Adding any third
+    // binding to any entry was green. A denylist of two is a wildcard with two
+    // holes in it.
+    //
+    // So the table is pinned EXACTLY. It is four modules and six bindings; it
+    // has not changed in eleven rounds; and the one thing it must never do is
+    // grow without anyone reading the diff, because each new binding is a
+    // module that may carry copy.
+    expect(ALLOWED_IMPORTS).toEqual({
+      '@/components/ui/status-dot': ['StatusDot'],
+      '@/components/ui/badge': ['Badge'],
+      '@/lib/utils/format': ['formatNumber', 'timeAgo'],
+      '@/lib/types': ['KnownRegistry', 'RegistryCapabilities'],
+    });
     expect(bindings).not.toContain('PROFILE_GLOSS');
     expect(bindings).not.toContain('PROFILE_INFO');
   });
@@ -1312,6 +1588,11 @@ describe('the source guards are not vacuous', () => {
         '<span dangerouslySetInnerHTML={{ __html: "acdp-producer" }} />',
       ],
     ];
+    // The array can be EMPTIED, and a `for` over `[]` runs no assertions at
+    // all — round 11 measured exactly that. Pinned to its length, and the
+    // canonical coverage now lives in the derived table at the end of this
+    // file, which asserts every guard has at least one rejecting subject.
+    expect(CHANNELS.length, 'the channel table emptied out').toBe(5);
     for (const [name, jsx] of CHANNELS) {
       expect(
         () =>
@@ -1355,5 +1636,351 @@ describe('the source guards are not vacuous', () => {
     // populated table without either bound being consulted, which is the fact
     // the paragraph above depends on.
     expect(profileCopyTable().entries.size).toBe(REGISTRY_ADVERTISABLE_PROFILES.length);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// EVERY guard, against a subject it MUST reject.
+//
+// Round 11's B5, B6 and B7, and they are one finding with three faces.
+//
+// The describe above is titled "the source guards are not vacuous" and its
+// own comment said "What follows exercises EACH INSTRUMENT against input that
+// MUST be rejected." It exercised eight of about fourteen. The six it did not
+// were individually disable-able with the whole suite green — including
+// `assertGlossChokePoint`, `assertModuleShape`, `assertNoCopyOutsideTable`,
+// and the `GLOSS_RETURN_EXPRESSION` comparison that `profile-copy-table.ts`
+// calls "the only instrument" defending the suppression direction.
+//
+// The two self-tests that DID cover the pinned expressions covered them in the
+// wrong direction: they asserted properties of the CONSTANT (non-empty, no
+// whitespace) and never fed a subject that violates it, so they proved the
+// string was well-formed and nothing about whether any code compares against
+// it. Injecting into the expected side is the mistake this repo has now made
+// in three separate PRs.
+//
+// ── Why a TABLE, and why its coverage is derived ─────────────────────
+//
+// A hand-written list of self-tests is the same open enumeration as a
+// hand-written list of forbidden phrasings: it is complete on the day it is
+// written and silently incomplete afterwards. So the set of guards this table
+// must cover is read off the MODULE'S OWN EXPORTS. Adding an `assert*` export
+// without a rejecting subject is a failing test, not an oversight somebody has
+// to notice in review.
+//
+// Each entry also asserts the guard ACCEPTS the real component, so a guard
+// that has been made to throw unconditionally — which would pass every
+// rejection case — is red too.
+// ══════════════════════════════════════════════════════════════════════
+describe('every source guard is exercised against a subject it must reject', () => {
+  /** A module-scope assignment: `assertModuleShape`'s stated subject. */
+  const BARE_EXPRESSION = `
+    const PROFILE_INFO = { 'acdp-registry-core': { title: 'x' } };
+    PROFILE_INFO['acdp-registry-core'] = { title: 'y' };
+    function RegistryCard() { return <span>x</span>; }
+  `;
+
+  /** A second copy table inside the component: `assertNoCopyOutsideTable`'s. */
+  const COPY_OUTSIDE_TABLE = `
+    const PROFILE_INFO = { 'acdp-registry-core': { title: 'x' } };
+    function RegistryCard() {
+      const local = { title: 'log witness cosignatures' };
+      return <span title={local.title}>x</span>;
+    }
+  `;
+
+  /** Two `title` attributes: `assertGlossChokePoint`'s. */
+  const TWO_TITLES = `
+    const PROFILE_INFO = { 'acdp-registry-core': { title: 'x' } };
+    function RegistryCard() {
+      return <div title="one"><span title="two">x</span></div>;
+    }
+  `;
+
+  /** A JSX spread, which can introduce `title` with no attribute node. */
+  const JSX_SPREAD = `
+    const PROFILE_INFO = { 'acdp-registry-core': { title: 'x' } };
+    function RegistryCard({ extra }: { extra: object }) {
+      return <span {...extra}>x</span>;
+    }
+  `;
+
+  /** `glossFor` with its membership gate removed. */
+  const UNGATED_GLOSS = `
+    function glossFor(p: string) {
+      return PROFILE_INFO[p as AdvertisableProfileId];
+    }
+  `;
+
+  /** `glossFor` returning something other than the pinned lookup. */
+  const SUPPRESSING_GLOSS = `
+    function glossFor(p: string) {
+      if (!(ADVERTISABLE_PROFILE_IDS as readonly string[]).includes(p)) return undefined;
+      return window.location.hostname.endsWith('.prod') ? undefined : PROFILE_INFO[p as AdvertisableProfileId];
+    }
+  `;
+
+  /** A second `PROFILE_INFO` read outside `glossFor`. */
+  const SECOND_LOOKUP = `
+    function glossFor(p: string) {
+      if (!(ADVERTISABLE_PROFILE_IDS as readonly string[]).includes(p)) return undefined;
+      return PROFILE_INFO[p as AdvertisableProfileId];
+    }
+    function RegistryCard() {
+      const x = (PROFILE_INFO as Record<string, { title: string }>)['acdp-registry-core'];
+      return <span>{x.title}</span>;
+    }
+  `;
+
+  /** No `capabilities.profiles.map` at all: the map guard's anti-vacuity. */
+  const NO_MAP = `
+    function RegistryCard() { return <span>x</span>; }
+  `;
+
+  /** The index parameter, bound again. */
+  const INDEXED_CALLBACK = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string, i: number) => {
+        const info = glossFor(p);
+        return <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>{p}</span>;
+      })}</>;
+    }
+  `;
+
+  /** `info` computed from something other than the profile id. */
+  const IMPURE_INFO = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string) => {
+        const info = glossFor(p) ?? { title: 'log witness cosignatures' };
+        return <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>{p}</span>;
+      })}</>;
+    }
+  `;
+
+  /**
+   * ROUND 11's B3, verbatim: the tooltip dropped behind a condition no fixture
+   * satisfies. `glossFor` is untouched, exactly one `title` attribute survives
+   * the count, and every render probe is satisfied.
+   */
+  const CONDITIONAL_SUPPRESSION = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string) => {
+        const info = glossFor(p);
+        if (capabilities.limits.max_search_limit > 500) {
+          return <span key={p} className={info?.accent ? 'chip ok' : 'chip'}>{p}</span>;
+        }
+        return <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>{p}</span>;
+      })}</>;
+    }
+  `;
+
+  /** A gloss rendered as the chip's own CHILD — visible body copy. */
+  const GLOSS_AS_CHILD = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string) => {
+        const info = glossFor(p);
+        return <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>{info?.title}</span>;
+      })}</>;
+    }
+  `;
+
+  /** ROUND 11's B4 and B8: an id no registry may advertise, named in a literal. */
+  const FOREIGN_ID = `
+    const a = 'one'; const b = 'two'; const c = 'three'; const d = 'four';
+    const witnessNote = 'acdp-log-witness — append-only log witness cosignatures (RFC-ACDP-0015)';
+    function RegistryCard() { return <span className="metric-val">{witnessNote}</span>; }
+  `;
+
+  /** The same id carried by an `<input value>` — round 11's M4. */
+  const FOREIGN_ID_IN_VALUE = `
+    const a = 'one'; const b = 'two'; const c = 'three'; const d = 'four';
+    function RegistryCard() {
+      return <input readOnly value="acdp-consumer: a consumer of contexts (not a registry)" />;
+    }
+  `;
+
+  const CLEAN_TSX = 'export function RegistryCard() { return <span>x</span>; }';
+
+  type Case = { label: string; source: string };
+
+  /**
+   * The names of the guards, taken from the module's own exports BY THE TYPE
+   * SYSTEM rather than by a runtime filter.
+   *
+   * ROUND 12: the runtime derivation below (`Object.keys(PCT).filter(…)`) was
+   * the only thing making the table cover every guard, and loosening its
+   * assertion to `expect.arrayContaining([])` was green — a coverage check is
+   * an assertion like any other, and an assertion cannot guard itself without
+   * regress. So coverage is a `Record<GuardName, …>` obligation instead: a
+   * missing entry is TS2741 and an extra one TS2353, both of which `npm run
+   * typecheck` fails on. The runtime assertion stays as a second opinion, but
+   * it is no longer the guarantee.
+   */
+  type GuardName = Extract<keyof typeof PCT, `assert${string}`>;
+
+  /**
+   * One entry per exported `assert*`. The `not.toThrow()` at the end of the
+   * loop says the guard must pass the REAL component — every one of them must,
+   * and asserting it is what makes a guard rewritten to `throw`
+   * unconditionally fail rather than sail through every rejection case below.
+   */
+  const GUARDS: Record<GuardName, { run: (source?: string) => void; rejects: Case[] }> = {
+    assertModuleShape: {
+      run: (src) => PCT.assertModuleShape(src),
+      rejects: [
+        { label: 'a module-scope assignment', source: BARE_EXPRESSION },
+        {
+          label: 'an unlisted import',
+          source: `import { anything } from 'some-other-module';\n${CLEAN_TSX}`,
+        },
+        { label: 'a namespace import', source: `import * as fmt from '@/lib/utils/format';\n${CLEAN_TSX}` },
+        { label: 'no PROFILE_INFO at all', source: CLEAN_TSX },
+      ],
+    },
+    assertNoCopyOutsideTable: {
+      run: (src) => PCT.assertNoCopyOutsideTable(src),
+      rejects: [{ label: 'a second copy table in the component', source: COPY_OUTSIDE_TABLE }],
+    },
+    assertNoRuntimeCopyForms: {
+      run: (src) => PCT.assertNoRuntimeCopyForms(src),
+      rejects: PCT.PROHIBITED_RUNTIME_FORMS.map((form) => ({
+        label: form,
+        // Built FROM the guard's own list, so a form removed from it is a
+        // missing case here rather than a silently untested one.
+        source: `export const X = ${form.includes('(') ? form : `${form}({}, {})`};`,
+      })),
+    },
+    assertNoAlternateDisclosureChannel: {
+      run: (src) => PCT.assertNoAlternateDisclosureChannel(src),
+      rejects: [
+        { label: 'alt', source: `export function R() { return <img alt="acdp-log-witness x" />; }` },
+        { label: 'placeholder', source: `export function R() { return <input placeholder="acdp-consumer" />; }` },
+        { label: 'aria-label', source: `export function R() { return <span aria-label="acdp-consumer">x</span>; }` },
+        { label: 'data-*', source: `export function R() { return <span data-profile="acdp-log-witness">x</span>; }` },
+        {
+          label: 'dangerouslySetInnerHTML',
+          source: `export function R() { return <span dangerouslySetInnerHTML={{ __html: 'x' }} />; }`,
+        },
+      ],
+    },
+    assertGlossChokePoint: {
+      run: (src) => PCT.assertGlossChokePoint(src),
+      rejects: [
+        { label: 'two title attributes', source: TWO_TITLES },
+        { label: 'a JSX spread', source: JSX_SPREAD },
+      ],
+    },
+    assertGlossIsGated: {
+      run: (src) => PCT.assertGlossIsGated(src),
+      rejects: [
+        { label: 'the membership gate removed', source: UNGATED_GLOSS },
+        { label: 'a host-conditional suppression in the return', source: SUPPRESSING_GLOSS },
+        { label: 'a second PROFILE_INFO lookup site', source: SECOND_LOOKUP },
+        { label: 'no glossFor at all', source: CLEAN_TSX },
+      ],
+    },
+    assertGlossIsPureOfId: {
+      run: (src) => PCT.assertGlossIsPureOfId(src),
+      rejects: [
+        { label: 'no profiles map at all', source: NO_MAP },
+        { label: 'the index parameter bound', source: INDEXED_CALLBACK },
+        { label: 'an impure `info` initialiser', source: IMPURE_INFO },
+        { label: 'a conditional return that drops the tooltip', source: CONDITIONAL_SUPPRESSION },
+        { label: 'the gloss rendered as the chip child', source: GLOSS_AS_CHILD },
+      ],
+    },
+    assertNoProseOutsideLabelTable: {
+      run: (src) => PCT.assertNoProseOutsideLabelTable(CARD_LABELS, src),
+      rejects: [
+        {
+          label: 'unlisted prose',
+          source: `export function R() { return <span>Log witness cosignatures are recorded here.</span>; }`,
+        },
+        { label: 'a file with no JSX at all (vacuity)', source: 'export const X = 1;' },
+      ],
+    },
+    assertNoForeignProfileId: {
+      run: (src) => PCT.assertNoForeignProfileId(src),
+      rejects: [
+        { label: 'a non-advertisable id in a string literal', source: FOREIGN_ID },
+        { label: 'the same id in an `<input value>`', source: FOREIGN_ID_IN_VALUE },
+        {
+          label: 'the same id in a template literal',
+          source:
+            "const a='1'; const b='2'; const c='3'; const d='4';\n" +
+            'export const X = `see ${a} acdp-log-witness notes`;',
+        },
+        { label: 'a file with almost no literals (vacuity)', source: 'export const X = 1;' },
+      ],
+    },
+  };
+
+  it('the table covers EVERY exported guard, derived from the module', () => {
+    // The anti-drift mechanism's second opinion. A new `assert*` export with no
+    // rejecting subject fails at COMPILE time — `GUARDS` is a
+    // `Record<GuardName, …>` and TS refuses a literal with a missing or an
+    // extra key — so this assertion is a cross-check on the derivation, not the
+    // guarantee. Round 12 measured that loosening it was green, which is
+    // exactly why the obligation was moved into the type.
+    const exported = Object.keys(PCT)
+      .filter((k) => k.startsWith('assert'))
+      .sort();
+    expect(Object.keys(GUARDS).sort()).toEqual(exported);
+    // …and the list is not empty, which is how an `Object.keys` derivation
+    // goes vacuous.
+    expect(exported.length).toBeGreaterThan(7);
+  });
+
+  it('every guard REJECTS each of its subjects, and ACCEPTS the real component', () => {
+    // Every rejection must be the GUARD's rejection. `.toThrow()` alone accepts
+    // any throw, and round 11's G7b exploited exactly that: with
+    // `assertGlossIsPureOfId`'s `mapCalls.length === 0` vacuity check
+    // short-circuited, `mapCalls[0]` was `undefined` and `call.arguments[0]`
+    // threw a `TypeError` — so the guard's own anti-vacuity pin could be
+    // deleted with this test still green. Requiring `fail()`'s prefix means an
+    // incidental crash no longer counts as a refusal.
+    const said = new RegExp(`^${PCT.GUARD_FAILURE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
+    let cases = 0;
+    for (const [name, guard] of Object.entries(GUARDS)) {
+      expect(guard.rejects.length, `${name} has no rejecting subject`).toBeGreaterThan(0);
+      for (const c of guard.rejects) {
+        expect(() => guard.run(c.source), `${name} ADMITS ${c.label}`).toThrow(said);
+        cases += 1;
+      }
+      // The other direction. Without it, a guard rewritten to `throw` on
+      // everything passes every case above.
+      expect(() => guard.run(), `${name} refuses the real component`).not.toThrow();
+    }
+    // Anti-vacuity on the loop itself: `Object.entries` of an emptied table
+    // runs no assertion at all, and `PROHIBITED_RUNTIME_FORMS` feeds one of the
+    // entries, so the count moves if that list is trimmed too.
+    expect(cases, 'the rejection table lost subjects').toBeGreaterThan(24);
+  });
+
+  it('the read-time guard list is not silently shortened', () => {
+    // `profileCopyTable()` runs a list of guards before trusting the table, and
+    // round 11 measured that DELETING two of those calls was green — which
+    // matters because `mock-data.test.ts` reads that table for the data half of
+    // #95 and would lose those bounds without a red test anywhere.
+    const names = PCT.RUN_ON_READ.map((g) => g.name).sort();
+    expect(names).toEqual(
+      [
+        'assertGlossChokePoint',
+        'assertGlossIsGated',
+        'assertModuleShape',
+        'assertNoAlternateDisclosureChannel',
+        'assertNoCopyOutsideTable',
+        'assertNoForeignProfileId',
+        'assertNoRuntimeCopyForms',
+      ].sort(),
+    );
+    // Every one of them is in the rejection table above, so "runs on read" and
+    // "is known to reject something" are the same set here.
+    for (const g of PCT.RUN_ON_READ) {
+      expect(
+        Object.prototype.hasOwnProperty.call(GUARDS, g.name),
+        `${g.name} runs on every read and has no rejecting subject`,
+      ).toBe(true);
+    }
   });
 });
