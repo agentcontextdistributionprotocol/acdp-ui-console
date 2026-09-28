@@ -101,16 +101,33 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *   - `assertGlossIsPureOfId()` closes it by construction instead: the map
  *     callback is denied the index parameter and `info` may only ever be
  *     `glossFor(p)`, so the gloss is a function of the profile id at every
- *     index and every field value, with nothing enumerated.
- *   - `assertNoProseOutsideLabelTable()` bounds the SET OF STRINGS this card
- *     may render, read from the source rather than the DOM. The render probes
- *     read `.chip` elements; an unconditional text row elsewhere in the card,
- *     naming `acdp-log-witness`, passed every other guard here.
+ *     index and every field value, with nothing enumerated. It now also
+ *     refuses a SECOND `capabilities.profiles.map(...)` — it bound only the
+ *     last one in source order, and an earlier one carrying `i > 2` was green.
+ *   - `assertNoProseOutsideLabelTable()` bounds the STRING LITERALS IN JSX
+ *     CHILD POSITIONS and the `JsxText`, read from the source rather than the
+ *     DOM. It was described here as bounding "the SET OF STRINGS this card may
+ *     render", which it does not: a string reaching the screen through an
+ *     identifier or a function call is invisible to it, and round 9's gate got
+ *     `acdp-log-witness` onto every card that way, twice.
+ *   - the RENDERED closed world (`registry-card-profiles.test.tsx`) is what
+ *     bounds the strings. Over a fixture matrix, every text node and every
+ *     announced attribute must be derivable FROM THE FIXTURE — so it asks what
+ *     is on the screen and never how it got there, and an identifier, a call,
+ *     a second `.map` and an `alt` fail it identically.
  *
- * Their honest residual: no test can quantify over every possible id string, so
- * the probe universe is a sample (the seven, the three forbidden ones, shape
- * variants, and the `Object.prototype` names). That gap is why the type bound
- * and the file bound exist, and why none of them is described as complete.
+ * Their honest residual, and it has two parts:
+ *
+ *   - No test can quantify over every possible id string, so the probe universe
+ *     is a sample (the seven, the three forbidden ones, shape variants, and the
+ *     `Object.prototype` names). That gap is why the type bound and the file
+ *     bound exist, and why none of them is described as complete.
+ *   - SUPPRESSION is not bounded by any render. Copy that stops appearing on a
+ *     deployment the tests do not run on — `glossFor` returning `undefined`
+ *     when `window.location.hostname` ends in `.prod`, say — is invisible to
+ *     every probe here, because jsdom's hostname is `localhost`. That direction
+ *     rests entirely on `assertGlossIsGated` pinning both of `glossFor`'s
+ *     statements, which it did not do until round 10.
  */
 const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },

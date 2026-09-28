@@ -118,7 +118,7 @@ const REGISTRY_CARD_PATH = join(REPO_ROOT, 'components/registries/registry-card.
  * deleted, with the suite green. The module a symbol comes from says nothing
  * about what the symbol is.
  */
-const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
+export const ALLOWED_IMPORTS: Record<string, readonly string[]> = {
   '@/components/ui/status-dot': ['StatusDot'],
   '@/components/ui/badge': ['Badge'],
   '@/lib/utils/format': ['formatNumber', 'timeAgo'],
@@ -138,7 +138,7 @@ const ALLOWED_FUNCTIONS = ['glossFor', 'RegistryCard'];
  * undefined}` went through, which silently dropped every tooltip on every
  * registry but one.
  */
-const GLOSS_EXPRESSION = '{info?.title}';
+export const GLOSS_EXPRESSION = '{info?.title}';
 
 /**
  * The only condition `glossFor` may gate on, whitespace-collapsed.
@@ -149,12 +149,47 @@ const GLOSS_EXPRESSION = '{info?.title}';
  * Guards (1) and (2) in the header above were lost exactly this way: they
  * matched TEXT where the claim is about STRUCTURE.
  */
-const GLOSS_GATE_CONDITION = '!(ADVERTISABLE_PROFILE_IDSasreadonlystring[]).includes(p)';
+export const GLOSS_GATE_CONDITION = '!(ADVERTISABLE_PROFILE_IDSasreadonlystring[]).includes(p)';
 
-function sourceFile(): ts.SourceFile {
+/**
+ * The only expression `glossFor` may RETURN, whitespace-collapsed.
+ *
+ * The gate condition above decides which ids get a gloss; this decides what a
+ * gloss IS. Round 9's gate found the second unbounded while three separate
+ * docblocks said otherwise, and put a hostname check in front of the lookup:
+ * every tooltip on every registry gone in production, every test green,
+ * because jsdom's hostname is `localhost`.
+ *
+ * A render probe cannot reach that, and neither can the rendered closed world
+ * in `registry-card-profiles.test.tsx` — both bound what APPEARS, and this is
+ * copy that stops appearing somewhere they do not run. One allowed spelling is
+ * the only instrument that does.
+ */
+export const GLOSS_RETURN_EXPRESSION = 'PROFILE_INFO[pasAdvertisableProfileId]';
+
+/**
+ * The component's AST — or, when `text` is given, an arbitrary one.
+ *
+ * The override exists ONLY so these guards can be exercised against source
+ * that must fail them, and it is worth the seam. Round 9's gate emptied eight
+ * of them one at a time and the suite stayed green for every one, because each
+ * is only ever run against a file that already satisfies it: an emptied guard
+ * and a working guard are indistinguishable when the input is always clean.
+ *
+ * Three of those emptyings cannot be caught any other way. A multiplicity
+ * check needs a file with two maps; an anti-vacuity check needs a file with no
+ * JSX; an attribute check needs a file with the attribute. None of those is a
+ * state `registry-card.tsx` is ever in, so the only honest self-test is to
+ * hand the guard a different file.
+ *
+ * Production code never passes `text`. `assertModuleShape` and the rest are
+ * called with no argument everywhere outside `registry-card-profiles.test.tsx`'s
+ * "the source guards are not vacuous" block.
+ */
+function sourceFile(text?: string): ts.SourceFile {
   return ts.createSourceFile(
     REGISTRY_CARD_PATH,
-    readFileSync(REGISTRY_CARD_PATH, 'utf8'),
+    text ?? readFileSync(REGISTRY_CARD_PATH, 'utf8'),
     ts.ScriptTarget.Latest,
     /* setParentNodes */ true,
     ts.ScriptKind.TSX,
@@ -358,6 +393,15 @@ export function assertNoCopyOutsideTable(): void {
  * The runtime forms that can attach copy to an object without writing a
  * property into a literal — restored, and this time walking the whole file.
  *
+ * The restoration DROPPED the anti-vacuity pin the original carried
+ * (`expect(PROHIBITED_RUNTIME_FORMS.length).toBeGreaterThan(0)` at `a628b7f`),
+ * and round 8 named that loss without it being fixed. Emptying this list to
+ * `[]` was green through two more rounds — the check then walks the file and
+ * compares every callee against nothing. The pin is back, in
+ * `registry-card-profiles.test.tsx`'s "the prohibited-runtime-form list is not
+ * empty", and it names four entries so a trim cannot pass by leaving the cheap
+ * ones in.
+ *
  * `a628b7f` had exactly this check and the module-scope rewrite deleted it. The
  * measurement is unambiguous: an in-body `Proxy` get-trap synthesising the
  * `acdp-consumer` title was RED at `a628b7f` and GREEN one revision later. That
@@ -369,7 +413,7 @@ export function assertNoCopyOutsideTable(): void {
  * original was missing: a prototype carrying `title` is the same escape with a
  * different verb, and a prototype getter is how round 5's parser was beaten.
  */
-const PROHIBITED_RUNTIME_FORMS = [
+export const PROHIBITED_RUNTIME_FORMS = [
   'Object.assign',
   'Object.create',
   'Object.defineProperty',
@@ -380,8 +424,8 @@ const PROHIBITED_RUNTIME_FORMS = [
   'Proxy',
 ] as const;
 
-export function assertNoRuntimeCopyForms(): void {
-  const sf = sourceFile();
+export function assertNoRuntimeCopyForms(source?: string): void {
+  const sf = sourceFile(source);
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       const callee = node.expression.getText(sf);
@@ -420,12 +464,20 @@ export function assertNoRuntimeCopyForms(): void {
  * at all because a screen reader may not announce it, while an `aria-label` is
  * announced in its place.
  */
-export function assertNoAlternateDisclosureChannel(): void {
-  const sf = sourceFile();
+export function assertNoAlternateDisclosureChannel(source?: string): void {
+  const sf = sourceFile(source);
   const visit = (node: ts.Node): void => {
     if (ts.isJsxAttribute(node)) {
       const name = node.name.getText(sf);
-      if (/^(aria-|data-)/.test(name) || name === 'dangerouslySetInnerHTML') {
+      // `alt` and `placeholder` joined the list in round 10. An `alt` is
+      // announced by a screen reader and rendered as VISIBLE TEXT when the
+      // image fails — which is the exact property this guard's own argument
+      // uses to put `aria-label` on the list, and round 9's gate got a sentence
+      // naming `acdp-log-witness` onto the card through one with everything
+      // green. It is now also caught by the rendered closed world in
+      // `registry-card-profiles.test.tsx`; both are kept, because that one
+      // bounds a FIXTURE-reachable render and this one bounds the file.
+      if (/^(aria-|data-)/.test(name) || name === 'dangerouslySetInnerHTML' || name === 'alt' || name === 'placeholder') {
         fail(
           `renders a \`${name}\` attribute. Copy reaches the operator through it as surely as ` +
             'through `title` — more surely, for a screen-reader user, since a `title` may not ' +
@@ -526,6 +578,46 @@ export function assertGlossIsGated(): void {
     );
   }
 
+  // ── The SECOND statement, which is the one that produces the gloss ──
+  //
+  // Round 9's gate found this unbounded, and the omission was papered over by
+  // `assertGlossIsPureOfId`'s "What it does NOT cover" paragraph, which
+  // deflected to "that is `assertGlossIsGated` and `assertNoCopyOutsideTable`'s
+  // subject". Neither held it: this function pinned statement ONE, and
+  // `assertNoCopyOutsideTable` only sees object literals. Between them the
+  // return expression was free, and this survived with everything green:
+  //
+  //   return typeof window !== 'undefined' &&
+  //     window.location.hostname.endsWith('.prod')
+  //     ? undefined
+  //     : PROFILE_INFO[p as AdvertisableProfileId];
+  //
+  // On the real deployment every profile chip on every registry silently loses
+  // its tooltip. jsdom's hostname is `localhost`, so every render probe in this
+  // repo — including the one that demands a gloss for all seven advertisable
+  // ids — is satisfied, and the RENDERED closed world in
+  // `registry-card-profiles.test.tsx` cannot see it either: that guard bounds
+  // what APPEARS, and this is copy that stops appearing somewhere the tests do
+  // not run.
+  //
+  // SUPPRESSION is a direction this branch explicitly claims to defend —
+  // `GLOSS_EXPRESSION`'s docblock cites a mutation that "silently dropped every
+  // tooltip on every registry but one" as the reason it is pinned so tightly —
+  // so the return expression is pinned the same way the `title` attribute is:
+  // exactly one allowed spelling, compared whitespace-insensitively.
+  const ret = stmts[1];
+  if (!ret || !ts.isReturnStatement(ret) || !ret.expression) {
+    fail("glossFor's second statement is not a `return <expression>;`");
+  }
+  const retText = (ret as ts.ReturnStatement).expression!.getText(sf).replace(/\s+/g, '');
+  if (retText !== GLOSS_RETURN_EXPRESSION) {
+    fail(
+      `glossFor returns \`${retText}\`, but the only allowed lookup is ` +
+        `\`${GLOSS_RETURN_EXPRESSION}\`. Anything else can suppress the gloss on a ` +
+        'condition no test environment reproduces — which is invisible to every render probe',
+    );
+  }
+
   const visit = (node: ts.Node): void => {
     // Unwrap parentheses and `as` before comparing. `(PROFILE_INFO as
     // Record<string, …>)[p]` is the natural way to write a second lookup site
@@ -584,15 +676,58 @@ export function assertGlossIsGated(): void {
  * construction, and every mutation above is a syntax error against this guard
  * rather than a coordinate the probes happened to miss.
  *
+ * ── The seam, and why this paragraph exists ──────────────────────────
+ *
+ * That is true of THE MAP THIS GUARD BINDS. Round 9's gate found it binding
+ * only one — the collector reassigned a single variable, so the LAST
+ * `capabilities.profiles.map(...)` in source order won and an earlier one was
+ * never inspected. A second map placed BEFORE the real one carried `{i > 2 ?
+ * note(q) : null}` with everything green; the identical mutation placed AFTER
+ * it was killed. Order alone decided, which is the signature of a guard that
+ * binds a position rather than a property.
+ *
+ * It now FAILS on multiplicity, the way `copyTableNode` in this file already
+ * refused a second `PROFILE_INFO` initializer. "Bound the expression" only
+ * closes anything if the guard is looking at every expression of that shape,
+ * and a guard that silently picks one of several is an enumeration of one.
+ *
  * ── What it does NOT cover ───────────────────────────────────────────
  *
- * It says nothing about what `glossFor` itself does — that is `assertGlossIsGated`
- * and `assertNoCopyOutsideTable`'s subject — and nothing about the chip's
- * className or its text, which the render probes read.
+ * It says nothing about what `glossFor` itself does, and nothing about the
+ * chip's className or its text, which the render probes read.
+ *
+ * This paragraph used to DEFLECT — "that is `assertGlossIsGated` and
+ * `assertNoCopyOutsideTable`'s subject" — and neither held the claim.
+ * `assertGlossIsGated` pinned `glossFor`'s FIRST statement; `assertNoCopyOutsideTable`
+ * only sees object literals. Between them the return expression was free, and
+ * round 9's gate put a `window.location.hostname.endsWith('.prod')` check in
+ * front of the lookup: every tooltip on every registry gone in production,
+ * every test green. `assertGlossIsGated` now pins the second statement too
+ * (`GLOSS_RETURN_EXPRESSION`), so the deflection is accurate — but a docblock
+ * that points at another guard is only as good as that guard, and pointing is
+ * how this one went a full round without anybody checking.
  */
-export function assertGlossIsPureOfId(): void {
-  const sf = sourceFile();
-  let mapCall: ts.CallExpression | undefined;
+export function assertGlossIsPureOfId(source?: string): void {
+  const sf = sourceFile(source);
+  // EVERY such call, not the last one. This collected into a single variable
+  // and reassigned on each match, so with two `capabilities.profiles.map(...)`
+  // calls in the file the LAST in source order won and the earlier one was
+  // never inspected. Round 9's gate put the round-7/8 index gate back through
+  // exactly that door:
+  //
+  //   {capabilities.profiles.map((q, i) => (
+  //     <span key={'n-' + q} className="did">{i > 2 ? note(q) : null}</span>
+  //   ))}
+  //   {capabilities.profiles.map((p) => { const info = glossFor(p); … })}
+  //
+  // `tsc` clean, `eslint` clean, whole suite green. The IDENTICAL mutation
+  // placed after the real map is killed — order alone decided, which is the
+  // signature of a guard that binds a position rather than a property.
+  //
+  // `copyTableNode` in this same file already refuses a second `PROFILE_INFO`
+  // initializer for the same reason; this is that discipline, applied where it
+  // was missing.
+  const mapCalls: ts.CallExpression[] = [];
   const findMap = (node: ts.Node): void => {
     if (
       ts.isCallExpression(node) &&
@@ -600,13 +735,21 @@ export function assertGlossIsPureOfId(): void {
       node.expression.name.getText(sf) === 'map' &&
       node.expression.expression.getText(sf).replace(/\s+/g, '') === 'capabilities.profiles'
     ) {
-      mapCall = node;
+      mapCalls.push(node);
     }
     ts.forEachChild(node, findMap);
   };
   findMap(sf);
-  if (!mapCall) fail('no `capabilities.profiles.map(...)` found — this guard lost its subject');
-  const call: ts.CallExpression = mapCall;
+  if (mapCalls.length === 0) {
+    fail('no `capabilities.profiles.map(...)` found — this guard lost its subject');
+  }
+  if (mapCalls.length > 1) {
+    fail(
+      `renders ${mapCalls.length} \`capabilities.profiles.map(...)\` calls; this guard bounds the ` +
+        'callback of ONE. A second map is a second, unbounded place to render per-profile copy',
+    );
+  }
+  const call: ts.CallExpression = mapCalls[0];
 
   const cb = call.arguments[0];
   if (!cb || (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb))) {
@@ -651,7 +794,14 @@ export function assertGlossIsPureOfId(): void {
 }
 
 /**
- * Every piece of PROSE the card can render must be in the pinned label list.
+ * Every STRING LITERAL in a JSX child position, and every `JsxText`, must be in
+ * the pinned label list.
+ *
+ * READ THAT HEADLINE CAREFULLY, because it used to say "every piece of PROSE
+ * the card can render" and that is not what this does. The difference is the
+ * whole of round 9's first blocking finding, and it is stated first rather than
+ * buried in a limits section, because the over-claim is what got the gap
+ * accepted.
  *
  * ── The hole this closes ─────────────────────────────────────────────
  *
@@ -678,20 +828,46 @@ export function assertGlossIsPureOfId(): void {
  *
  * Because a render assertion is only as good as its fixtures, and the same
  * round proved prose gated on `registry.lastSeen` never renders under any
- * fixture this suite has. Reading the SOURCE makes fixture coverage irrelevant:
- * a string that is not in the list cannot be in the file, reachable or not.
+ * fixture this suite has. Reading the SOURCE makes fixture coverage irrelevant
+ * FOR THE STRINGS IT READS.
  *
- * ── What it does NOT cover ───────────────────────────────────────────
+ * ── What it does NOT cover, corrected ────────────────────────────────
  *
- * Attribute values, which is deliberate — `className`, `style`, `tone`,
- * `variant` and the rest are not prose, and an allow-list over them went red on
- * legitimate props of `StatusDot` and `Badge` and had to be narrowed. The
- * disclosure channels among them (`title`, `aria-*`, `data-*`) have their own
- * guards above. And it does not read the gloss table's VALUES; those are
- * `profileCopyTable()`'s subject.
+ * 1. ANY STRING THAT REACHES THE SCREEN THROUGH AN IDENTIFIER OR A CALL. This
+ *    walk collects `ts.isStringLiteral` and `ts.isNoSubstitutionTemplateLiteral`
+ *    nodes that sit syntactically in a JSX child position, plus `JsxText`. That
+ *    is all. Round 9's gate went through it twice, `tsc`-clean, `eslint`-clean,
+ *    whole suite green:
+ *
+ *      const WITNESS_NOTE = 'acdp-log-witness — …';
+ *      …
+ *      <span className="metric-val">{WITNESS_NOTE}</span>
+ *
+ *      function witnessNote(): string { return 'acdp-log-witness — …'; }
+ *      …
+ *      <Badge variant="neutral">{witnessNote()}</Badge>
+ *
+ *    The previous version of this section named only attribute values, and the
+ *    headline said "every piece of prose". A reviewer reading either concludes
+ *    the card's rendered text is bounded here. It is not.
+ *
+ *    That direction is closed by the RENDERED closed world in
+ *    `registry-card-profiles.test.tsx` ("the rendered card is a closed world
+ *    over its fixture"), which asks only what is on the screen and never how it
+ *    got there — so an identifier, a call, a second `.map` and a `Proxy` all
+ *    fail it identically. This guard is kept because that one bounds only what
+ *    a FIXTURE can reach, and the two holes are complementary.
+ *
+ * 2. Attribute values, which is deliberate — `className`, `style`, `tone`,
+ *    `variant` and the rest are not prose, and an allow-list over them went red
+ *    on legitimate props of `StatusDot` and `Badge` and had to be narrowed. The
+ *    disclosure channels among them (`title`, `aria-*`, `data-*`, `alt`) have
+ *    their own guards above, and the rendered closed world reads them all.
+ *
+ * 3. The gloss table's VALUES; those are `profileCopyTable()`'s subject.
  */
-export function assertNoProseOutsideLabelTable(allowed: readonly string[]): void {
-  const sf = sourceFile();
+export function assertNoProseOutsideLabelTable(allowed: readonly string[], source?: string): void {
+  const sf = sourceFile(source);
   const permitted = new Set(allowed);
   const seen = new Set<string>();
 
@@ -754,7 +930,19 @@ export function assertNoProseOutsideLabelTable(allowed: readonly string[]): void
   // ANTI-VACUITY. A component that rendered no prose at all — or a walker that
   // stopped finding any — would satisfy every assertion above by finding
   // nothing to check. The card demonstrably shows these.
-  for (const required of ['Event count', 'Profiles', 'Base URL']) {
+  //
+  // FOUR BRANCHES, FOUR REQUIRED STRINGS, and that is the round-10 correction.
+  // The first three are `JsxText`, all reached by the same branch. The walk has
+  // a SECOND branch — the JSX-child string literals — and no required string
+  // reached it, so disabling that branch entirely (`if (false && ts.isJsx…)`)
+  // left the trio satisfied and the whole suite green while half the guard was
+  // dead. `'—'` and `'enabled'` are literals in child positions and nothing
+  // else: they are the branch's witnesses.
+  //
+  // The rule this encodes: an anti-vacuity pin must name a string per BRANCH of
+  // the walk, not per guard. A pin that only exercises the branch that happens
+  // to run first certifies the wrong thing.
+  for (const required of ['Event count', 'Profiles', 'Base URL', '—', 'enabled']) {
     if (!seen.has(required)) {
       fail(
         `the prose walk did not find the label \`${required}\`, which the card definitely ` +

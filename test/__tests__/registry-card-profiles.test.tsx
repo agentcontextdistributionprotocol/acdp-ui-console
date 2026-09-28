@@ -27,6 +27,7 @@
 import { describe, expect, it, afterEach } from 'vitest';
 import { render, cleanup, within } from '@testing-library/react';
 import { RegistryCard } from '@/components/registries/registry-card';
+import { formatNumber, timeAgo } from '@/lib/utils/format';
 import { MOCK_CAPABILITIES } from '@/lib/data/mock-data';
 import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 import {
@@ -44,6 +45,11 @@ import {
   advertisableIdsInComponent,
   assertGlossIsPureOfId,
   assertNoProseOutsideLabelTable,
+  PROHIBITED_RUNTIME_FORMS,
+  ALLOWED_IMPORTS,
+  GLOSS_EXPRESSION,
+  GLOSS_GATE_CONDITION,
+  GLOSS_RETURN_EXPRESSION,
 } from '../support/profile-copy-table';
 
 /**
@@ -53,8 +59,14 @@ import {
  * asking "does this sentence disclose a non-advertisable profile" is an
  * open-world question over English, and eight rounds of answering it with
  * patterns and probes were defeated by a coordinate or a phrasing nobody had
- * enumerated. A closed set has nothing to evade — a string that is not here
- * cannot be in the file, reachable under a fixture or not.
+ * enumerated. A closed set has nothing to evade.
+ *
+ * THE SCOPE, corrected in round 10: this list bounds the string LITERALS that
+ * appear syntactically in JSX child positions, plus the `JsxText`. It does not
+ * bound "every string in the file" — that is what it claimed, and a string
+ * reaching the screen through an identifier or a call is invisible to the
+ * source walk. The RENDERED closed world further down this file is what bounds
+ * the strings, by asking what is on screen rather than how it got there.
  *
  * Adding an entry is the review step. It should be a label a reviewer can point
  * to on the rendered card, not a sentence about a profile.
@@ -790,5 +802,558 @@ describe('every profile the demo advertises has copy for it', () => {
         .find((c) => c.classList.contains('chip'))!;
       expect(chip.getAttribute('title'), `${p} has no tooltip copy`).toBeTruthy();
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// THE RENDERED CLOSED WORLD (round 10).
+//
+// ── Why the source guards were not enough, in the gate's own words ────
+//
+// Round 9 shipped two structural guards: `assertGlossIsPureOfId` (bound the
+// map callback's EXPRESSION) and `assertNoProseOutsideLabelTable` (bound the
+// STRING SET, read from source). Both were right in kind. Both bound a
+// SYNTACTIC FORM rather than a VALUE FLOW, and round 9's gate walked past them
+// three different ways, each `tsc`-clean, `eslint`-clean and green:
+//
+//   N1b  a `const WITNESS_NOTE = 'acdp-log-witness — …'` in the component body,
+//        rendered as `{WITNESS_NOTE}` inside an existing row. The string never
+//        appears in a JSX child position, so the string-set walk never sees it.
+//
+//   N2b  a nested `function witnessNote(): string { return '…' }`, rendered as
+//        `<Badge>{witnessNote()}</Badge>`. Same hole, through a call.
+//
+//   N3b  a SECOND `capabilities.profiles.map(…)` placed BEFORE the real one,
+//        with `{i > 2 ? note(q) : null}`. `assertGlossIsPureOfId` binds the
+//        LAST such call in the file, so the earlier one is unexamined and
+//        round 7/8's index gate is live again. The identical mutation placed
+//        AFTER the real map is killed — order alone decided.
+//
+// Each rendered tooltip-grade copy naming `acdp-log-witness` — the id
+// `acdp-registry-server/src/main.rs:417-424` refuses to boot on — on every
+// registry card, through the loudest channel there is: visible body text.
+//
+// ── What this does instead ────────────────────────────────────────────
+//
+// It stops asking HOW a string got to the screen and asks only WHAT is on it.
+// Over a fixture matrix, every text node the card renders and every announced
+// attribute it sets must be DERIVABLE FROM THE FIXTURE — a label from the
+// pinned list, a value the fixture supplied, or a gloss from the copy table for
+// an id the fixture actually advertises.
+//
+// A string that is not derivable from the fixture cannot reach the screen,
+// whatever expression produced it. An identifier, a call, a second `.map`, a
+// `Proxy` get-trap, an `alt` attribute, a template literal: all of them fail
+// identically here, because none of them can make the rendered text match a set
+// computed from the input.
+//
+// ── What it does NOT cover, stated plainly ────────────────────────────
+//
+// SUPPRESSION. This guard bounds what appears; it cannot see copy that
+// silently STOPS appearing on a deployment the test does not run on. Round 9's
+// gate proved that too: making `glossFor`'s second statement return `undefined`
+// when `window.location.hostname.endsWith('.prod')` drops every tooltip on
+// every registry in production, and jsdom's hostname is `localhost`, so every
+// render probe in this file — including the one that demands a gloss for all
+// seven advertisable ids — is satisfied. That direction is `assertGlossIsGated`
+// and `assertGlossExpressionIsExactly`'s subject, and only theirs.
+//
+// And it bounds only what a FIXTURE can reach. Copy behind a condition no
+// fixture satisfies is invisible to it — which is why the source-level guards
+// above are kept rather than replaced.
+// ══════════════════════════════════════════════════════════════════════
+describe('the rendered card is a closed world over its fixture', () => {
+  /**
+   * The fixture matrix. Wide on purpose: the guard is only as strong as the
+   * states a render can reach, and every previous escape on this branch lived
+   * at a coordinate the then-current fixtures did not visit.
+   */
+  const REGISTRIES: KnownRegistry[] = [
+    REGISTRY_B,
+    { ...REGISTRY_B, authority: 'registry-a.playground.local', eventCount: 0 },
+    { ...REGISTRY_B, baseUrl: null as unknown as string, eventCount: 1234567 },
+  ];
+
+  const CAPABILITY_SHAPES: RegistryCapabilities[] = [
+    MOCK_CAPABILITIES.a,
+    MOCK_CAPABILITIES.b,
+    // Zero profiles — the map renders nothing, so anything still on screen came
+    // from somewhere other than a chip.
+    { ...MOCK_CAPABILITIES.b, profiles: [] },
+    // One.
+    { ...MOCK_CAPABILITIES.b, profiles: ['acdp-registry-core'] },
+    // All seven, which is both the widest legal advertisement and the only way
+    // `acdp-registry-federated` renders at all.
+    { ...MOCK_CAPABILITIES.b, profiles: [...REGISTRY_ADVERTISABLE_PROFILES] },
+    // An id with no copy — the fallback, and the shape an index gate keys on.
+    {
+      ...MOCK_CAPABILITIES.b,
+      profiles: [...REGISTRY_ADVERTISABLE_PROFILES, 'acdp-registry-quantum'],
+    },
+    // Anonymous reads off, and a different payload size, so both arms of each
+    // ternary are visited.
+    {
+      ...MOCK_CAPABILITIES.b,
+      anonymous_public_reads: false,
+      limits: { ...MOCK_CAPABILITIES.b.limits, max_payload_bytes: 2048 },
+    },
+  ];
+
+  /** Every non-empty text node under `el`, trimmed. */
+  function textNodes(el: HTMLElement): string[] {
+    const out: string[] = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = (n.textContent ?? '').trim();
+      if (t) out.push(t);
+    }
+    return out;
+  }
+
+  /**
+   * Every attribute that ANNOUNCES text: `title`, `alt`, `placeholder` and
+   * every `aria-*` that carries a string rather than a token.
+   *
+   * `alt` is on the list because round 9's gate got a sentence onto the card
+   * through it with everything green, and `assertNoAlternateDisclosureChannel`
+   * covered only `aria-*` and `data-*`. An `alt` is announced by a screen
+   * reader and rendered as visible text when the image fails, which is exactly
+   * the property that argument used to put `aria-label` on the list.
+   */
+  function announced(el: HTMLElement): string[] {
+    const out: string[] = [];
+    for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
+      for (const a of node.attributes) {
+        const name = a.name.toLowerCase();
+        const isAnnouncing =
+          name === 'title' ||
+          name === 'alt' ||
+          name === 'placeholder' ||
+          (name.startsWith('aria-') && name !== 'aria-hidden');
+        if (isAnnouncing && a.value.trim()) out.push(a.value.trim());
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Everything the card is allowed to SAY, computed from the fixture it was
+   * given.
+   *
+   * This is the whole instrument. The set is not a list someone maintains
+   * alongside the component — it is derived from the inputs, so a string can
+   * only be permitted by being one of the card's labels or by being something
+   * the caller actually passed in.
+   */
+  function allowedText(r: KnownRegistry, c: RegistryCapabilities): Set<string> {
+    const kb = String(Math.round(c.limits.max_payload_bytes / 1024));
+    return new Set<string>([
+      ...CARD_LABELS,
+      String(r.authority),
+      r.baseUrl ?? '—',
+      // `formatNumber` and `timeAgo` are the card's two formatters; their
+      // OUTPUT is allowed, which is a much narrower permission than allowing
+      // any call.
+      formatNumber(r.eventCount),
+      timeAgo(r.lastSeen),
+      c.acdp_version,
+      c.supported_signature_algorithms.join(', '),
+      ...c.supported_signature_algorithms,
+      ...c.profiles,
+      kb,
+    ]);
+  }
+
+  /** And everything it is allowed to ANNOUNCE: a gloss, for an id it advertises. */
+  function allowedAnnounced(c: RegistryCapabilities): Set<string> {
+    // Read through `profileCopyTable()` — the PARSED copy table — rather than
+    // by importing `PROFILE_INFO`, which is not exported, and rather than by
+    // hand-listing the seven glosses here. A hand list would be a second copy
+    // of the table that drifts; the parse is the same source of truth the
+    // structural guards use.
+    const { entries } = profileCopyTable();
+    return new Set<string>(
+      c.profiles.map((p) => entries.get(p)).filter((t): t is string => typeof t === 'string'),
+    );
+  }
+
+  /**
+   * The assertion itself, NAMED — so it can be exercised against a DOM that
+   * must fail it.
+   *
+   * Inlined in the loop, disabling it (`true || allowed.has(t)`) is a silent,
+   * green edit: nothing else in the suite notices, because every other guard
+   * here reads the source rather than the render. Measured. A guard whose
+   * failure mode is "somebody deletes it" needs the deletion to be red, and
+   * the only way to get that is to call it somewhere it must throw.
+   */
+  function expectAllTextLicensed(container: HTMLElement, allowed: Set<string>, where: string) {
+    for (const t of textNodes(container)) {
+      expect(
+        allowed.has(t),
+        `the card rendered ${JSON.stringify(t)}, which nothing in its fixture licenses (${where})`,
+      ).toBe(true);
+    }
+  }
+
+  function expectAllAnnouncedLicensed(
+    container: HTMLElement,
+    allowed: Set<string>,
+    where: string,
+  ) {
+    for (const a of announced(container)) {
+      expect(
+        allowed.has(a),
+        `the card announced ${JSON.stringify(a)} through an attribute, which nothing in its ` +
+          `fixture licenses (${where})`,
+      ).toBe(true);
+    }
+  }
+
+  it('renders no text node that its fixture does not license', () => {
+    let rendered = 0;
+    for (const r of REGISTRIES) {
+      for (const c of CAPABILITY_SHAPES) {
+        cleanup();
+        const { container } = render(<RegistryCard registry={r} capabilities={c} />);
+        expectAllTextLicensed(
+          container,
+          allowedText(r, c),
+          `registry ${r.authority}, ${c.profiles.length} profiles`,
+        );
+        rendered += 1;
+      }
+    }
+    // Anti-vacuity: the matrix actually ran, and ran wide.
+    expect(rendered).toBe(REGISTRIES.length * CAPABILITY_SHAPES.length);
+    expect(rendered).toBeGreaterThan(15);
+  });
+
+  it('announces no string its fixture does not license, through ANY attribute', () => {
+    for (const r of REGISTRIES) {
+      for (const c of CAPABILITY_SHAPES) {
+        cleanup();
+        const { container } = render(<RegistryCard registry={r} capabilities={c} />);
+        expectAllAnnouncedLicensed(
+          container,
+          allowedAnnounced(c),
+          `${c.profiles.length} profiles`,
+        );
+      }
+    }
+  });
+
+  it('GUARDS THE GUARD: both checks REJECT a card that says something unlicensed', () => {
+    // The escapes, injected into a real rendered card rather than described.
+    // `expectAllTextLicensed` and `expectAllAnnouncedLicensed` must throw on
+    // each — disabling either loop's condition is otherwise a green edit, and
+    // was measured as one.
+    cleanup();
+    const c = MOCK_CAPABILITIES.b;
+    const { container } = render(<RegistryCard registry={REGISTRY_B} capabilities={c} />);
+    const allowedT = allowedText(REGISTRY_B, c);
+    const allowedA = allowedAnnounced(c);
+
+    // Clean as rendered…
+    expectAllTextLicensed(container, allowedT, 'clean');
+    expectAllAnnouncedLicensed(container, allowedA, 'clean');
+
+    // …a visible text node naming the id upstream refuses to boot on. This is
+    // N1b and N2b's observable result, whatever expression produced it.
+    const prose = document.createElement('span');
+    prose.textContent = 'acdp-log-witness — append-only log witness cosignatures (RFC-ACDP-0015)';
+    container.querySelector('.card-body')!.appendChild(prose);
+    expect(() => expectAllTextLicensed(container, allowedT, 'injected prose')).toThrow();
+    // …and the announced half is NOT what caught it, so the two are separable.
+    expectAllAnnouncedLicensed(container, allowedA, 'injected prose');
+    prose.remove();
+
+    // …an announced attribute carrying the same sentence. This is P6's `alt`
+    // and P5's second `title`, reduced to what they have in common.
+    const announcedEl = document.createElement('img');
+    announcedEl.setAttribute('alt', 'acdp-log-witness cosignatures (RFC-ACDP-0015)');
+    container.querySelector('.card-body')!.appendChild(announcedEl);
+    expect(() => expectAllAnnouncedLicensed(container, allowedA, 'injected alt')).toThrow();
+    // …and the text half is NOT what caught THAT one.
+    expectAllTextLicensed(container, allowedT, 'injected alt');
+    announcedEl.remove();
+
+    // `aria-label` too, since its whole argument for being on the list is that
+    // it is announced.
+    const aria = document.createElement('span');
+    aria.setAttribute('aria-label', 'acdp-consumer profile');
+    container.querySelector('.card-body')!.appendChild(aria);
+    expect(() => expectAllAnnouncedLicensed(container, allowedA, 'injected aria-label')).toThrow();
+    aria.remove();
+
+    // And back to clean, so the injections really were the cause.
+    expectAllTextLicensed(container, allowedT, 'restored');
+    expectAllAnnouncedLicensed(container, allowedA, 'restored');
+  });
+
+  it('DISCRIMINATES: the card renders and announces something at all', () => {
+    // Without this, both tests above pass on a component that renders nothing —
+    // a universal over an empty set is vacuously true, which is the same defect
+    // class this branch's sibling (#97) exists to remove, one level up.
+    cleanup();
+    const { container } = render(
+      <RegistryCard
+        registry={REGISTRY_B}
+        capabilities={{ ...MOCK_CAPABILITIES.b, profiles: [...REGISTRY_ADVERTISABLE_PROFILES] }}
+      />,
+    );
+    const texts = textNodes(container);
+    expect(texts.length, 'the card rendered no text at all').toBeGreaterThan(12);
+    expect(texts).toContain('Profiles');
+    expect(texts).toContain('acdp-registry-federated');
+    // …and every advertisable id carries a gloss, so the announced check above
+    // is running against a non-empty set.
+    expect(announced(container)).toHaveLength(REGISTRY_ADVERTISABLE_PROFILES.length);
+  });
+
+  it('GUARDS THE GUARD: the closed world REJECTS each escape that beat the source walks', () => {
+    // The three mutations round 9's gate landed, reproduced as RENDERS rather
+    // than as source edits — because what this guard bounds is the rendered
+    // output, and a source edit would be testing the wrong instrument.
+    //
+    // Each string below is one the gate actually got onto the card with the
+    // whole suite green. Every one is now rejected by `allowedText` for the
+    // only reason that matters: nothing in the fixture produced it.
+    const r = REGISTRY_B;
+    const c = MOCK_CAPABILITIES.b;
+    const allowed = allowedText(r, c);
+    for (const escape of [
+      'acdp-log-witness — append-only log witness cosignatures (RFC-ACDP-0015)',
+      'acdp-log-witness — log witness cosignature aggregation (RFC-ACDP-0015)',
+      'acdp-registry-core is a witness-class profile (acdp-log-witness)',
+      'acdp-consumer',
+      'acdp-federated',
+      'Witness',
+    ]) {
+      expect(allowed.has(escape), `the closed world admits ${JSON.stringify(escape)}`).toBe(false);
+    }
+    // …and it genuinely admits what the card legitimately renders, so it is
+    // not rejecting everything.
+    for (const legitimate of ['Profiles', 'Base URL', r.authority, ...c.profiles]) {
+      expect(allowed.has(legitimate), `the closed world refuses ${JSON.stringify(legitimate)}`).toBe(
+        true,
+      );
+    }
+    // The announced set behaves the same way in both directions.
+    const ann = allowedAnnounced(c);
+    expect(ann.has('acdp-log-witness — append-only log witness cosignatures')).toBe(false);
+    expect(ann.size, 'no gloss is licensed at all').toBe(c.profiles.length);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// GUARDS ON THE GUARDS (round 10).
+//
+// Round 9's gate emptied eight of this file's instruments one at a time and the
+// whole suite stayed green for every one: the JSX-child-literal branch of the
+// prose walk, `PROHIBITED_RUNTIME_FORMS`, both of `assertGlossIsPureOfId`'s
+// substantive checks, `assertNoProseOutsideLabelTable`'s permitted-set test,
+// its anti-vacuity trio, and `ALLOWED_IMPORTS`.
+//
+// That is the sixth time a newly-added guard on this branch shipped without a
+// vacuity pin, and the shape is always the same: the guard is exercised only by
+// source that already satisfies it, so an emptied guard and a passing guard are
+// indistinguishable.
+//
+// What follows exercises each instrument against input that MUST be rejected.
+// It does not make any of them adequate — the rendered closed world above is
+// the guarantee for what appears, and `assertGlossIsGated` for what stops
+// appearing. It makes "someone emptied it" a red test rather than a silent
+// change, which is the only thing a vacuity pin can do.
+// ══════════════════════════════════════════════════════════════════════
+describe('the source guards are not vacuous', () => {
+  it('the prose walk REJECTS a label that is missing from the permitted set', () => {
+    // The rejection path, exercised by narrowing the permitted set rather than
+    // by editing the component — so it tests the guard, not the card.
+    expect(() => assertNoProseOutsideLabelTable([])).toThrow();
+
+    // Once per BRANCH of the walk. `Profiles` is `JsxText`; `—` and `enabled`
+    // are string literals in JSX child positions, reached by the other branch.
+    // Disabling that second branch entirely was green before round 10, because
+    // no required string exercised it.
+    for (const dropped of ['Profiles', '—', 'enabled']) {
+      expect(
+        () => assertNoProseOutsideLabelTable(CARD_LABELS.filter((l) => l !== dropped)),
+        `the prose walk does not reach ${JSON.stringify(dropped)}`,
+      ).toThrow();
+    }
+
+    // …and it accepts the real list, so it is not simply throwing always.
+    expect(() => assertNoProseOutsideLabelTable(CARD_LABELS)).not.toThrow();
+  });
+
+  it('the prohibited-runtime-form list is not empty', () => {
+    // The pin this list HAD at `a628b7f`, deleted with the check at `7c92af3`,
+    // and not restored when `8e27c84` restored the check. Round 8 named the
+    // loss; round 9 did not restore it; emptying the list to `[]` was green
+    // through both.
+    //
+    // Without it, `assertNoRuntimeCopyForms` checks nothing and the in-body
+    // `Proxy` get-trap its docblock describes — RED at `a628b7f`, green one
+    // revision later — becomes green again the moment anyone trims the list.
+    expect(PROHIBITED_RUNTIME_FORMS.length).toBeGreaterThan(4);
+    // The four that matter most, named so a trim cannot pass by leaving the
+    // cheap ones in. Each is a way to give an object a `title` with no property
+    // literal for the object walk to find.
+    for (const form of ['Object.assign', 'Object.defineProperty', 'Object.setPrototypeOf', 'Proxy']) {
+      expect(PROHIBITED_RUNTIME_FORMS as readonly string[]).toContain(form);
+    }
+  });
+
+  it('the import allow-list is not a wildcard', () => {
+    // Widening one entry — adding `PROFILE_GLOSS` to `@/lib/utils/format` —
+    // was green, because nothing asserts what the map contains. The map's job
+    // is to stop copy arriving from a module nobody reviewed, so an entry
+    // nobody looks at is the whole failure mode.
+    const bindings = Object.values(ALLOWED_IMPORTS).flat();
+    expect(Object.keys(ALLOWED_IMPORTS).length).toBeGreaterThan(2);
+    expect(bindings.length).toBeGreaterThan(3);
+    // No entry may be an empty list standing in for "anything from here".
+    for (const [mod, names] of Object.entries(ALLOWED_IMPORTS)) {
+      expect(names.length, `\`${mod}\` allows no named binding, which reads as a wildcard`).toBeGreaterThan(0);
+    }
+    // And the binding that actually carries copy risk is NOT on it.
+    expect(bindings).not.toContain('PROFILE_GLOSS');
+    expect(bindings).not.toContain('PROFILE_INFO');
+  });
+
+  it('the three pinned expressions are pinned to something real', () => {
+    // `GLOSS_EXPRESSION`, `GLOSS_GATE_CONDITION` and `GLOSS_RETURN_EXPRESSION`
+    // are compared for exact equality against the component's source. Emptying
+    // any of them turns its comparison into `'' !== ''`, which never fails —
+    // the same vacuity as an emptied list, one level down.
+    //
+    // `GLOSS_RETURN_EXPRESSION` is the one round 10 added: `glossFor`'s second
+    // statement was unbounded while three docblocks said otherwise, and a
+    // hostname check in front of the lookup dropped every tooltip on every
+    // registry in production with every test green.
+    expect(GLOSS_EXPRESSION).toBe('{info?.title}');
+    expect(GLOSS_GATE_CONDITION).toContain('ADVERTISABLE_PROFILE_IDS');
+    expect(GLOSS_GATE_CONDITION).toContain('includes(p)');
+    expect(GLOSS_RETURN_EXPRESSION).toBe('PROFILE_INFO[pasAdvertisableProfileId]');
+    // Whitespace-collapsed, which is what the comparison does to the source —
+    // a spelling with spaces in it could never match and would pin nothing.
+    for (const pinned of [GLOSS_GATE_CONDITION, GLOSS_RETURN_EXPRESSION]) {
+      expect(pinned, 'a pinned expression contains whitespace and can never match').not.toMatch(/\s/);
+      expect(pinned.length).toBeGreaterThan(10);
+    }
+  });
+
+  // ── Guards whose trigger `registry-card.tsx` is never in ──────────────
+  //
+  // A multiplicity check needs a file with two maps; an anti-vacuity check
+  // needs a file with no JSX; an attribute check needs the attribute present.
+  // The component is in none of those states, so running each guard against it
+  // proves only that it does not throw. Each of the three below was emptied and
+  // the whole suite stayed green.
+  //
+  // They are therefore fed a synthetic subject through `sourceFile`'s `source`
+  // override. The strings are small, deliberately minimal components — enough
+  // TSX for the walk to have something to find, and no more.
+
+  const TWO_MAPS = `
+    export function RegistryCard({ capabilities }: { capabilities: any }) {
+      return (
+        <div>
+          {capabilities.profiles.map((q: string, i: number) => (
+            <span key={q}>{i > 2 ? q : null}</span>
+          ))}
+          {capabilities.profiles.map((p: string) => {
+            const info = glossFor(p);
+            return <span key={p} title={info?.title}>{p}</span>;
+          })}
+        </div>
+      );
+    }
+  `;
+
+  it('the map guard REFUSES a second capabilities.profiles.map', () => {
+    // Round 9's escape: the collector reassigned a single variable, so the LAST
+    // map in source order won and an earlier one carrying `{i > 2 ? note(q) :
+    // null}` was never inspected — `tsc` clean, `eslint` clean, suite green.
+    // The identical mutation placed AFTER the real map was killed. Order alone
+    // decided.
+    expect(() => assertGlossIsPureOfId(TWO_MAPS)).toThrow(/2 .*map/i);
+    // …and one map is still accepted, so it is not refusing everything.
+    expect(() => assertGlossIsPureOfId()).not.toThrow();
+  });
+
+  it('the prose walk REFUSES to pass vacuously on a file with no JSX', () => {
+    // The anti-vacuity list can be emptied silently — measured green. Fed a
+    // component that renders nothing, the walk must report that it found none
+    // of the labels the card definitely shows, rather than passing.
+    expect(() =>
+      assertNoProseOutsideLabelTable(CARD_LABELS, 'export const X = 1;'),
+    ).toThrow(/vacuous|did not find/i);
+  });
+
+  it('the alternate-channel guard REFUSES every channel it names', () => {
+    // `alt` and `placeholder` joined the list in round 10 — round 9's gate got a
+    // sentence naming `acdp-log-witness` onto the card through an `alt`, and
+    // this guard covered only `aria-*`, `data-*` and `dangerouslySetInnerHTML`.
+    // Removing any ONE of the five is otherwise completely silent, because the
+    // component contains none of them.
+    //
+    // So each is named and exercised alone. A single combined subject would be
+    // satisfied by any one arm still firing — the same masking that hid a
+    // loosened block equality in PR K.
+    const CHANNELS: ReadonlyArray<readonly [string, string]> = [
+      ['alt', '<img alt="acdp-log-witness cosignatures (RFC-ACDP-0015)" />'],
+      ['placeholder', '<input placeholder="acdp-consumer profile" />'],
+      ['aria-label', '<span aria-label="acdp-consumer profile">x</span>'],
+      ['data-*', '<span data-profile="acdp-log-witness">x</span>'],
+      [
+        'dangerouslySetInnerHTML',
+        '<span dangerouslySetInnerHTML={{ __html: "acdp-producer" }} />',
+      ],
+    ];
+    for (const [name, jsx] of CHANNELS) {
+      expect(
+        () =>
+          assertNoAlternateDisclosureChannel(
+            `export function RegistryCard() { return ${jsx}; }`,
+          ),
+        `the guard admits copy through \`${name}\``,
+      ).toThrow();
+    }
+    // …and a clean file passes, so it is not refusing everything.
+    expect(() =>
+      assertNoAlternateDisclosureChannel('export function RegistryCard() { return <span>x</span>; }'),
+    ).not.toThrow();
+  });
+
+  it('the runtime-forms walk REFUSES each prohibited construct', () => {
+    // The list is pinned non-empty above; this pins that the WALK reading it
+    // still fires. Both can be emptied independently.
+    for (const form of ['Object.assign({}, {})', 'new Proxy({}, {})', 'Object.setPrototypeOf({}, {})']) {
+      expect(
+        () => assertNoRuntimeCopyForms(`export const X = ${form};`),
+        `the walk admits \`${form}\``,
+      ).toThrow();
+    }
+    expect(() => assertNoRuntimeCopyForms('export const X = 1;')).not.toThrow();
+  });
+
+  it('the two guards profileCopyTable() does NOT run still run, here', () => {
+    // `assertNoProseOutsideLabelTable` and `assertGlossIsPureOfId` are not
+    // invoked by `profileCopyTable()` — it calls six of the eight asserts — so
+    // `mock-data.test.ts`, which calls it twice, gets six of the eight bounds.
+    //
+    // Not a defect today: this file calls both directly, above and here. It is
+    // written down and re-asserted because "the helper runs everything" is
+    // exactly the assumption under which deleting a call site would be
+    // invisible, and because a guard with ONE call site is one edit from
+    // having none.
+    expect(() => assertGlossIsPureOfId()).not.toThrow();
+    expect(() => assertNoProseOutsideLabelTable(CARD_LABELS)).not.toThrow();
+    // …and `profileCopyTable()` genuinely does not subsume them: it returns a
+    // populated table without either bound being consulted, which is the fact
+    // the paragraph above depends on.
+    expect(profileCopyTable().entries.size).toBe(REGISTRY_ADVERTISABLE_PROFILES.length);
   });
 });
