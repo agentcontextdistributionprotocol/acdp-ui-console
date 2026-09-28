@@ -6,6 +6,8 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { startRun } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { ErrorDetail } from '@/components/ui/error-panel';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { C } from '@/lib/colors';
 import type { RegistryMode, ScenarioDef } from '@/lib/types';
 
@@ -17,7 +19,22 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [mode, setMode] = useState<RegistryMode>('single');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /**
+   * The THROWN VALUE, not a message derived from it.
+   *
+   * `setError(String(e))` discarded the `ApiError` at the catch, so by render
+   * time there was nothing left to ask about status, service or provenance —
+   * every failure arrived as `ApiError: <the upstream's raw body>` and a
+   * network `TypeError` arrived as `TypeError: Failed to fetch`. Keeping the
+   * value means the message is derived where the copy lives.
+   *
+   * Wrapped in an object rather than stored bare. `useState`'s setter treats a
+   * FUNCTION argument as a functional update, so `setError(e)` would silently
+   * invoke the caught value if it were ever callable — and `setError(() => e)`
+   * is the same trap facing the other way (it stores nothing and schedules the
+   * error as an updater). A wrapper makes the ambiguity unrepresentable.
+   */
+  const [caught, setCaught] = useState<{ err: unknown } | null>(null);
 
   const [prevScenarioId, setPrevScenarioId] = useState(scenario?.id ?? null);
   if (prevScenarioId !== (scenario?.id ?? null)) {
@@ -27,7 +44,7 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
       for (const [k, v] of Object.entries(scenario.default_inputs)) init[k] = String(v ?? '');
       setInputs(init);
       setMode(scenario.registry_mode);
-      setError(null);
+      setCaught(null);
     }
   }
 
@@ -35,7 +52,11 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
 
   const submit = async () => {
     setSubmitting(true);
-    setError(null);
+    // Cleared BEFORE the request, not on success: without this a second attempt
+    // renders the previous failure under a launch that is in flight, and a
+    // success that navigates away leaves it on screen for the frame before the
+    // route changes.
+    setCaught(null);
     try {
       const parsed: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(inputs)) {
@@ -46,7 +67,7 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
       onClose();
       router.push(`/runs/${res.run_id}`);
     } catch (e) {
-      setError(String(e));
+      setCaught({ err: e });
       setSubmitting(false);
     }
   };
@@ -95,9 +116,31 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
         </div>
       </div>
 
-      {error && (
+      {/* The modal STAYS OPEN on failure — `onClose()` runs only after a
+          successful `startRun` — because the operator needs the message beside
+          the form they submitted.
+
+          No `codes` map, and none is possible: this is the only playground
+          mutation, and FastAPI's `HTTPException(404, "unknown scenario: …")`
+          (`acdp-playground/playground/api/runs.py:30`) serialises as
+          `{"detail": …}`, which `parseErrorCode` (`fetcher.ts:10-20`) does not
+          read — it looks for `errorCode` and `error.code`. Every arm this
+          surface can reach is a status arm, so the lead carries all of the
+          specificity, and a 404 gets the one thing the status alone cannot
+          say: it is a deployment mismatch, not a transient.
+
+          Both halves are derived at render from the stored value — the message
+          and the diagnostic. The disclosure is bounded by `.error-detail > pre`
+          (`max-height` + `overflow: auto`), so opening it inside a modal
+          scrolls rather than pushing the footer buttons out of reach, and it
+          renders nothing at all for a non-`ApiError` throw, where there are no
+          upstream bytes to disclose. */}
+      {caught && (
         <div style={{ marginTop: 14, fontSize: 11, color: C.danger, background: 'rgba(240,93,122,0.08)', padding: 10, borderRadius: 8 }}>
-          {error}
+          {operatorErrorMessage(caught.err, 'Could not start this scenario', {
+            notFound: 'no scenario with that id exists on this playground.',
+          })}
+          <ErrorDetail details={errorDiagnostic(caught.err)} />
         </div>
       )}
     </Modal>
