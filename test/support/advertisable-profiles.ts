@@ -65,5 +65,15 @@ export const REGISTRY_ADVERTISABLE_PROFILES = [
  *                      a registry is forbidden to advertise it.
  *   `acdp-federated` — not a spec id at all. The real one is
  *                      `acdp-registry-federated`.
+ *   `acdp-log-witness` — a real spec id that upstream excludes BY NAME
+ *                      (`config.rs:318`: "a witness is NOT a registry"), and
+ *                      the one `acdp-registry-server/src/main.rs:417-424`
+ *                      gives its own bail message to, because "a well-meaning
+ *                      operator confusing 'runs a witness' with 'is a registry'
+ *                      is the most likely mistake here". #95 did not surface it
+ *                      because the demo fixtures never advertised it — but a
+ *                      guard that covers the two ids one issue happened to find
+ *                      and not the one upstream calls most likely is guarding
+ *                      the wrong set.
  */
-export const NOT_ADVERTISABLE = ['acdp-consumer', 'acdp-federated'];
+export const NOT_ADVERTISABLE = ['acdp-consumer', 'acdp-federated', 'acdp-log-witness'];

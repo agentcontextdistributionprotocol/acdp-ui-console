@@ -744,6 +744,38 @@ describe('demo registry profiles are ones a real registry would start with', () 
     }
   });
 
+  it('each tooltip names the RFC the pinned spec assigns that profile', () => {
+    // The version half of every tooltip was cross-checked; the RFC half was
+    // checked only against /RFC-ACDP-\d{4}/, so rewriting `RFC-ACDP-0012` to
+    // `RFC-ACDP-0099` in operator-facing copy left the whole suite green.
+    //
+    // `acdp-spec-pinned/registries/profiles.md` carries the exact mapping, and
+    // the three baseline profiles genuinely share RFC-ACDP-0001 §9.1 — the
+    // later ones cite their own RFC first and RFC-ACDP-0001 §9.1 second, and
+    // the tooltip names the FIRST, which is the one that describes the feature.
+    const PROFILE_RFC: Record<string, string> = {
+      'acdp-registry-core': 'RFC-ACDP-0001',
+      'acdp-registry-discovery': 'RFC-ACDP-0001',
+      'acdp-registry-federated': 'RFC-ACDP-0001',
+      'acdp-registry-receipts': 'RFC-ACDP-0010',
+      'acdp-registry-head-receipts': 'RFC-ACDP-0011',
+      'acdp-registry-transparency-log': 'RFC-ACDP-0012',
+      'acdp-registry-lifecycle': 'RFC-ACDP-0013',
+    };
+    // Pinned both ways, so the table cannot be silently narrowed to whatever
+    // the tooltips happen to say.
+    expect(new Set(Object.keys(PROFILE_RFC))).toEqual(new Set(REGISTRY_ADVERTISABLE_PROFILES));
+
+    const { entries: copy } = profileCopyTable();
+    for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
+      const title = copy.get(p);
+      expect(title, `no copy entry for ${p}`).toBeDefined();
+      const named = /(RFC-ACDP-\d{4})/.exec(title!)?.[1];
+      expect(named, `${p}: tooltip names no RFC at all`).toBeDefined();
+      expect(named, `${p}: tooltip says ${named}, spec says ${PROFILE_RFC[p]}`).toBe(PROFILE_RFC[p]);
+    }
+  });
+
   it('the version comparison is not string comparison', () => {
     // `'0.10.0' > '0.9.0'` is false as strings. Nothing in the fixture reaches
     // double digits today, which is exactly why this would rot unnoticed.

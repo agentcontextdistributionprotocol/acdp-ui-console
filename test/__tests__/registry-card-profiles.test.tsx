@@ -33,11 +33,7 @@ import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
 } from '../support/advertisable-profiles';
-import {
-  profileCopyTable,
-  prohibitedRuntimeFormsUsed,
-  PROHIBITED_RUNTIME_FORMS,
-} from '../support/profile-copy-table';
+import { profileCopyTable, assertModuleShape } from '../support/profile-copy-table';
 
 afterEach(cleanup);
 
@@ -162,11 +158,28 @@ describe('an unknown profile id still reaches the screen', () => {
  * and that is what an operator sees. Two rounds of this gate were lost to
  * source-regex readers that each missed a different subset of those forms.
  */
-function chipFor(profileId: string): HTMLElement {
+/**
+ * The capability fixtures every render probe runs against.
+ *
+ * More than one, deliberately. `MOCK_CAPABILITIES.a` and `.b` differ in
+ * `acdp_version` among other things, and a tooltip fallback gated on that
+ * version disclosed deleted copy on one while staying invisible on the other —
+ * with the full suite green. A probe that renders one fixture bounds one
+ * context, not the component.
+ */
+const CAPABILITY_FIXTURES: RegistryCapabilities[] = [
+  MOCK_CAPABILITIES.b as RegistryCapabilities,
+  MOCK_CAPABILITIES.a as RegistryCapabilities,
+];
+
+function chipFor(
+  profileId: string,
+  capabilities: RegistryCapabilities = MOCK_CAPABILITIES.b as RegistryCapabilities,
+): HTMLElement {
   const { container } = render(
     <RegistryCard
       registry={REGISTRY_B}
-      capabilities={{ ...MOCK_CAPABILITIES.b, profiles: [profileId] } as RegistryCapabilities}
+      capabilities={{ ...capabilities, profiles: [profileId] } as RegistryCapabilities}
     />,
   );
   const chip = [...container.querySelectorAll('.chip')].find((c) => c.textContent === profileId);
@@ -195,6 +208,7 @@ describe('the dead tooltip copy is gone', () => {
     // reported success.
     const { entries, tables } = profileCopyTable();
     const keys = [...entries.keys()];
+    expect(tables, 'exactly one copy table — a second one can shadow the first').toBe(1);
     expect(tables, 'no copy table found — the parser lost its subject').toBeGreaterThan(0);
     expect(new Set(keys)).toEqual(new Set(ADVERTISABLE));
     // Stated separately so a failure names the direction rather than reporting
@@ -212,23 +226,24 @@ describe('the dead tooltip copy is gone', () => {
     // an id changes what this file vouches for — all three were green before
     // this assertion. The same "second copy that may disagree" shape the rest
     // of this file exists to remove, in the file doing the removing.
-    expect(NOT_ADVERTISABLE).toEqual(['acdp-consumer', 'acdp-federated']);
+    expect(NOT_ADVERTISABLE).toEqual(['acdp-consumer', 'acdp-federated', 'acdp-log-witness']);
   });
 
-  it('builds its copy table with plain syntax a parser can account for', () => {
-    // The structural companion to the parse above. `Object.defineProperty` with
-    // `enumerable: false`, a `Proxy` `get` trap and `Object.assign` all put a
-    // tooltip on screen without adding a key any static read can see — two of
-    // them defeat `Object.keys` as well. None of them has a reason to exist in
-    // a file whose entire job is a static lookup table, so their ABSENCE is the
-    // guard, and it is a cheap one with an honest failure mode: a false red
-    // that a human resolves by explaining why the file now needs one.
-    // Detected through the AST, not by scanning text — the docblocks in that
-    // file NAME these forms in prose while explaining why they are forbidden, so
-    // a text scan would fire on the explanation rather than on the problem.
-    expect(prohibitedRuntimeFormsUsed()).toEqual([]);
-    // Anti-vacuity: the detector must actually be looking for something.
-    expect(PROHIBITED_RUNTIME_FORMS.length).toBeGreaterThan(0);
+  it('contains NOTHING at module scope but its imports, the table and the component', () => {
+    // The guard, inverted. Four previous versions hunted for copy and each
+    // missed a construct its author had not anticipated — a second
+    // `Record<string, string>` table, a `Map`, a prototype getter, an aliased
+    // `Object.defineProperty`, and (the one that stung) a plain
+    // `PROFILE_INFO['x'] = { title }` assignment, which the `Object.keys`
+    // version it replaced had caught. A fix that loses coverage is the defect
+    // this file shipped twice.
+    //
+    // So this refuses everything NOT on a short allow-list — any extra
+    // variable, assignment, call, class or import — and an unanticipated
+    // construct is therefore a loud failure rather than a silent pass.
+    // Its limit is stated where it lives: it bounds MODULE scope, and the
+    // render probes below are what bound the component body.
+    expect(() => assertModuleShape()).not.toThrow();
   });
 
   it('renders NO tooltip for either id a real registry refuses to boot with', () => {
@@ -253,10 +268,15 @@ describe('the dead tooltip copy is gone', () => {
     // key the parser cannot see still has to render, and a render this probe
     // does not cover still has to be written into the file.
     //
-    // Its honest limit is its universe — it can only judge ids it renders. So
-    // the universe is every id the pinned spec knows about, plus the two #95
-    // removed, plus names in the shape a future author would plausibly reach
-    // for. An id outside it would escape this probe but not the parser.
+    // Its honest limit is its universe — it can only judge ids it renders —
+    // and that limit is why `assertModuleShape()` exists rather than this probe
+    // alone. It does NOT claim to catch every possible id.
+    //
+    // It renders across SEVERAL capability fixtures, not one. A probe pinned to
+    // a single fixture cannot see copy conditioned on the context: a fallback
+    // gated on `capabilities.acdp_version` disclosed a deleted tooltip on
+    // registry-a while staying invisible on registry-b, and the whole suite
+    // stayed green.
     const PROBES = [
       ...ADVERTISABLE,
       ...NOT_ADVERTISABLE,
@@ -265,14 +285,14 @@ describe('the dead tooltip copy is gone', () => {
       'acdp-registry',
       'acdp-registry-receipts-v2',
       'registry-core',
-      '',
     ];
     const disclosing: string[] = [];
     for (const id of PROBES) {
-      if (id === '') continue; // an empty id renders no chip to read
-      const chip = chipFor(id);
-      if (chip.getAttribute('title') !== null) disclosing.push(id);
-      cleanup();
+      for (const fixture of CAPABILITY_FIXTURES) {
+        const chip = chipFor(id, fixture);
+        if (chip.getAttribute('title') !== null && !disclosing.includes(id)) disclosing.push(id);
+        cleanup();
+      }
     }
     expect(new Set(disclosing)).toEqual(new Set(ADVERTISABLE));
     // Anti-vacuity: a component that had lost every tooltip would also produce

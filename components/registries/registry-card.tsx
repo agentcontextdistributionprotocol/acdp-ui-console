@@ -12,8 +12,9 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
  * The seven keys here are exactly `REGISTRY_ADVERTISABLE_PROFILES`
  * (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`), which
  * is the set a real registry will start with — and "exactly" is enforced, not
- * asserted in prose: `registry-card-profiles.test.tsx` compares
- * `Object.keys(PROFILE_INFO)` to that set.
+ * asserted in prose. How it is enforced is described below, and it is NOT by
+ * reading this object: a guard that did that is what round 3 shipped, and it
+ * is the reason this constant is no longer exported.
  *
  * **This constant is deliberately NOT EXPORTED, and that is a fix, not an
  * oversight.** Three gate rounds were spent here and each one failed
