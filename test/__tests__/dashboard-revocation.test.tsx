@@ -19,9 +19,14 @@ import { render, screen, cleanup } from '@testing-library/react';
 import type { CpDashboardOverview } from '@/lib/types';
 import { dashboardRevocationState } from '@/lib/utils/revocation';
 import {
+  DASHBOARD_CARD,
   DASHBOARD_PROSE,
+  DASHBOARD_REPORTED_TILES,
+  expectedDashboardCardBlocks,
   fullProse,
+  normalize,
   proseKeyFor,
+  squash,
   type ProseKey,
 } from '../support/revocation-prose';
 
@@ -202,8 +207,18 @@ const HEDGE = 'the check is disabled by default';
  *
  * It was two separate inline lists. The pin is only as complete as this list,
  * so the pin also asserts that iterating it reaches every key in
- * `DASHBOARD_PROSE` — a payload dropped from here fails there rather than
- * silently un-checking an arm.
+ * `DASHBOARD_PROSE` — a PROSE payload dropped from here fails there rather
+ * than silently un-checking an arm.
+ *
+ * THE `reported` PAYLOAD IS THE EXCEPTION, and this docblock claimed otherwise
+ * for a round. `reported` has no `DASHBOARD_PROSE` entry (it renders figures,
+ * not a paragraph), so the seen-set assertion cannot notice its absence:
+ * dropping `[SOME, FEATURES]` from this list left the whole suite green. It is
+ * still covered — by the distinctness loop, by two dedicated tests above, and
+ * since round 9 by `pins the reported arm`, which carries its own payload — so
+ * there was no coverage hole, only a docblock overstating what one assertion
+ * reaches. The `pins every block` test asserts the same seen-set, with the same
+ * exception, for the same reason.
  */
 const ARM_PAYLOADS: ReadonlyArray<
   readonly [CpDashboardOverview['keyRevocation'], CpDashboardOverview['features']]
@@ -704,11 +719,17 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(revocationCard().textContent).toContain(HEDGE);
   });
 
-  it('all SIX renderings are DISTINGUISHABLE text', () => {
-    // Four kinds, but six renderings: `unknown` splits three ways on `because`,
-    // and the whole point of that split is that each reads differently — each
-    // says only what holds on its own route. Without this, arms could collapse
-    // onto one paragraph and every test above would still pass in isolation.
+  it('EVERY rendering is DISTINGUISHABLE text', () => {
+    // Four kinds, more renderings: `unknown` splits on `because`, and the whole
+    // point of that split is that each reads differently — each says only what
+    // holds on its own route. Without this, arms could collapse onto one
+    // paragraph and every test above would still pass in isolation.
+    //
+    // The title carried the number "SIX" until round 9. It was wrong from the
+    // commit that added the fourth `because`, while the assertion beneath it
+    // was already `toBe(ARM_PAYLOADS.length)` and therefore right — a title
+    // stating a total the code below derives is a second source of truth that
+    // can only go stale. It is derived here too.
     const texts: string[] = [];
     for (const [k, f] of ARM_PAYLOADS) {
       renderWith(overview({ keyRevocation: k, features: f }));
@@ -744,6 +765,12 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
   // whatever it says. The review moves to that file, where each entry sits
   // beside the evidence that licenses it.
   // ══════════════════════════════════════════════════════════════════
+  // SUBSUMED by `pins every block of every prose arm` (round 9), which reads
+  // the same paragraph as one of its blocks. Kept as the fast, readable signal
+  // — it names the arm that drifted, where a block-list diff reports an array —
+  // and NOT as the guarantee. Loosening its `toBe` to `toContain` is green,
+  // because the whole-card pin catches the same append; that is a fact about
+  // this assertion's redundancy, not about the card being unguarded.
   it('every prose arm renders EXACTLY its pinned text, and no arm is unpinned', () => {
     const seen = new Set<ProseKey>();
     for (const [k, f] of ARM_PAYLOADS) {
@@ -954,4 +981,225 @@ describe('the KPI row makes no health claim', () => {
   // its delta (so the component was not broken) and the other tiles rendering
   // none (so the prop really is gone). Asserting on a component's source
   // spelling to prove a caller changed is the wrong instrument.
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// THE WHOLE CARD, not just its paragraph (round 9).
+//
+// The paragraph pin above is real and holds. Its docblock claimed the card
+// header, the subtitle and the KPI captions were "pinned by their own
+// assertions in the test files". They were not pinned by anything, and the
+// gate proved it with mutations that each left the whole suite green:
+//
+//   · `· this estate is clean` appended to the card subtitle
+//   · round 7's verbatim escape sentence — "no key in this deployment has been
+//     revoked" — appended to the Pre-compromise caption, i.e. printed directly
+//     under the figures, on the one arm that renders figures at all
+//   · the caption `Revoked time unverifiable` rewritten to `Revoked time
+//     verified clean`, inverting the meaning of an amber fail-closed tile
+//   · the fail-closed tile repainted `var(--success)`
+//
+// Every one of those sits an inch from the pin and outside it. So the pin's
+// scope moves to the whole card: title, subtitle, and every block the body
+// renders, equal to an enumerated list in order, with nothing outside it.
+//
+// Two halves, and both are needed. The list equality catches a changed or
+// missing block; the squashed whole-card comparison catches text added
+// somewhere the block selectors do not look, which is how the sharpest of the
+// twelve escapes was written on the sibling surface (a new `<p>` beside an
+// empty state).
+// ══════════════════════════════════════════════════════════════════════
+describe('dashboard — the Key Revocation card renders a CLOSED set of blocks', () => {
+  /**
+   * The card's text, block by block: heading, subtitle, then either the three
+   * KPI tiles or the prose paragraph.
+   *
+   * Read as a LIST so order and count are pinned with the wording. Reading the
+   * card's `textContent` as one string would turn an added caption into a
+   * substring change, which is precisely what nobody noticed.
+   */
+  function cardBlocks(card: HTMLElement): string[] {
+    const head = [...card.querySelectorAll<HTMLElement>('.card-header h2, .card-header .card-sub')];
+    const body = card.querySelector<HTMLElement>('.card-body');
+    expect(body, 'the card renders no .card-body').toBeTruthy();
+    const tiles = [...body!.querySelectorAll<HTMLElement>('.kpi-card')];
+    const bodyBlocks = tiles.length
+      ? tiles
+      : [...body!.querySelectorAll<HTMLElement>('p')];
+    return [...head, ...bodyBlocks].map((n) => normalize(n.textContent));
+  }
+
+  /**
+   * Half one: the blocks are exactly these, in order.
+   *
+   * SPLIT from half two rather than inlined beside it, and the split is not
+   * cosmetic. With both halves in one function, a self-test asserting "this
+   * helper throws on a bad render" is satisfied by EITHER half throwing — so
+   * loosening one is invisible as long as the other still fires. Measured:
+   * that is exactly what happened, and turning the block equality into a
+   * containment stayed green through a guard-the-guard written that way.
+   */
+  function expectBlocksPinned(card: HTMLElement, expected: string[], label?: string) {
+    expect(cardBlocks(card), label).toEqual(expected);
+  }
+
+  /**
+   * Half two: there is NOTHING in the card besides those blocks.
+   *
+   * A bare text node or a `<span>` dropped into the body satisfies half one
+   * completely and is the obvious way to add an unreviewed sentence.
+   */
+  function expectNothingOutside(card: HTMLElement, expected: string[], label?: string) {
+    expect(squash(card.textContent), `${label ?? ''} — text outside the pinned blocks`).toBe(
+      squash(expected.join('')),
+    );
+  }
+
+  function expectPinnedCard(expected: string[], label?: string) {
+    const card = revocationCard();
+    expectBlocksPinned(card, expected, label);
+    expectNothingOutside(card, expected, label);
+  }
+
+  it('pins every block of every prose arm, and nothing else is in the card', () => {
+    const seen = new Set<ProseKey>();
+    for (const [k, f] of ARM_PAYLOADS) {
+      const key = proseKeyFor(dashboardRevocationState(k, f));
+      if (key === null) {
+        cleanup();
+        continue;
+      }
+      seen.add(key);
+      renderWith(overview({ keyRevocation: k, features: f }));
+      expectPinnedCard(expectedDashboardCardBlocks({ key }));
+      cleanup();
+    }
+    // Anti-vacuity: the payload table reaches every pinned arm. Without it,
+    // dropping a payload silently stops checking an arm.
+    expect([...seen].sort()).toEqual((Object.keys(DASHBOARD_PROSE) as ProseKey[]).sort());
+  });
+
+  it('pins the reported arm: three labels, three figures, three captions, in order', () => {
+    // The arm an operator reads when something has actually been FOUND, and
+    // the least-guarded copy on the card before this test existed — the three
+    // captions beside the figures had no positive assertion anywhere.
+    renderWith(
+      overview({
+        keyRevocation: { preCompromise: 9, revokedAtOrAfter: 2, revokedTimeUnverifiable: 1 },
+        features: FEATURES,
+      }),
+    );
+    expectPinnedCard(expectedDashboardCardBlocks({ key: null, counts: ['9', '2', '1'] }));
+  });
+
+  it('pins the reported arm’s ACCENTS, because colour carries meaning on this card', () => {
+    // `lib/utils/revocation.ts` argues the point: pre-compromise is
+    // "historically AUTHORIZED — the opposite of a violation", and this tile
+    // says so in success green while the one beside it fails closed in red.
+    // Repainting the fail-closed tile `var(--success)` was green in the suite.
+    renderWith(
+      overview({
+        keyRevocation: { preCompromise: 9, revokedAtOrAfter: 2, revokedTimeUnverifiable: 1 },
+        features: FEATURES,
+      }),
+    );
+    const accents = [...revocationCard().querySelectorAll<HTMLElement>('.kpi-card')].map((t) =>
+      t.style.getPropertyValue('--kpi-accent'),
+    );
+    expect(accents).toEqual(DASHBOARD_REPORTED_TILES.map((t) => t.accent));
+    // The complement, so "paint everything danger" cannot pass either.
+    expect(new Set(accents).size, 'two tiles share an accent').toBe(accents.length);
+  });
+
+  it('GUARDS THE GUARD: the pin REJECTS an appended clause and a stray element', () => {
+    // Both halves of `expectPinnedCard`, exercised against states that must
+    // fail — because loosening either is silent otherwise. Measured: turning
+    // the block equality into a containment, and replacing the squash
+    // comparison with a truthiness check, each left the whole suite green.
+    //
+    // The subject here is the HELPER, not two literals: a test that compares
+    // two hand-written arrays proves something about `toEqual`, not about the
+    // assertion the pin actually makes.
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    const key: ProseKey = 'checked-clean';
+
+    // It passes as rendered…
+    expectPinnedCard(expectedDashboardCardBlocks({ key }));
+
+    // …rejects a block list differing by one appended clause, in the direction
+    // the escape actually runs: extra text in what the CARD renders, not in
+    // what the test expects. A test that appends to the expected list proves
+    // only that `toEqual` distinguishes two arrays; it passes unchanged when
+    // the assertion is loosened to admit appends, which is the loosening being
+    // guarded against.
+    //
+    // A `<p>`, because `cardBlocks` reads `p` on the prose arms — so this
+    // lands INSIDE the block list and is caught by its equality. It is the
+    // exact shape of the sharpest escape found on the sibling surface: a new
+    // paragraph beside an existing one.
+    const extraBlock = document.createElement('p');
+    extraBlock.textContent = 'No key in this deployment has been revoked.';
+    revocationCard().querySelector('.card-body')!.appendChild(extraBlock);
+    expect(() =>
+      expectBlocksPinned(revocationCard(), expectedDashboardCardBlocks({ key })),
+    ).toThrow();
+    extraBlock.remove();
+
+    // …and the OTHER half rejects text added outside the elements the block
+    // selectors read, which a block-list equality cannot see at all.
+    //
+    // Each half is exercised ALONE. Calling the combined helper would let
+    // either one's throw satisfy the assertion, so a loosening of one stays
+    // green while the other covers for it — which is how the first version of
+    // this guard-the-guard passed over a loosened block equality.
+    const stray = document.createElement('span');
+    stray.textContent = 'The entire fleet is clean.';
+    revocationCard().querySelector('.card-body')!.appendChild(stray);
+    expect(() =>
+      expectNothingOutside(revocationCard(), expectedDashboardCardBlocks({ key })),
+    ).toThrow();
+
+    // And the normalisers really normalise rather than returning their input —
+    // an identity `squash` makes the second half compare two equal strings
+    // whatever the card holds.
+    expect(squash('a b\n c')).toBe('abc');
+    expect(normalize('a  b\n c')).toBe('a b c');
+  });
+
+  it('GUARDS THE GUARD: the demoted lint still rejects something', () => {
+    // `assertNoUnscopedUniversal` is a lint in front of the pin, by its own
+    // docblock. A lint that has been quietly emptied is worse than no lint:
+    // it reads as cover. Turning its body into a no-op left the whole suite
+    // green, because every call site passes text that already satisfies it.
+    //
+    // So it is exercised against a string that must fail and one that must
+    // pass. This does NOT make it a proof — it cannot read English, and the
+    // pin above is the guarantee — it only makes "someone emptied it" a red
+    // test instead of a silent change.
+    expect(() => assertNoUnscopedUniversal('Nothing in the deployment is revoked.')).toThrow();
+    expect(() => assertNoUnscopedUniversal('Every event was checked.')).toThrow();
+    // …and the ALLOWED denial, which is the exemption that makes the lint
+    // untrustworthy on its own and must therefore keep working.
+    expect(() =>
+      assertNoUnscopedUniversal(
+        'It does not follow that every event in the window was checked.',
+      ),
+    ).not.toThrow();
+  });
+
+  it('GUARDS THE GUARD: the pinned tile table is three distinct, non-empty entries', () => {
+    // An emptied or collapsed table satisfies the pin against a card that
+    // rendered nothing, or the same caption three times.
+    expect(DASHBOARD_REPORTED_TILES).toHaveLength(3);
+    for (const t of DASHBOARD_REPORTED_TILES) {
+      expect(t.label.length, 'an empty tile label').toBeGreaterThan(0);
+      expect(t.hint.length, `\`${t.label}\` has no caption`).toBeGreaterThan(20);
+    }
+    expect(new Set(DASHBOARD_REPORTED_TILES.map((t) => t.hint)).size).toBe(3);
+    expect(new Set(DASHBOARD_REPORTED_TILES.map((t) => t.label)).size).toBe(3);
+    // The subtitle is not empty either — an emptied `DASHBOARD_CARD.sub` would
+    // pin a card that rendered no subtitle at all.
+    expect(DASHBOARD_CARD.sub.length).toBeGreaterThan(80);
+    expect(DASHBOARD_CARD.title).toBe('Key Revocation');
+  });
 });

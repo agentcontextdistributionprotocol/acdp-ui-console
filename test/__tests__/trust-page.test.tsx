@@ -10,7 +10,19 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { CpRun, RunTrustSummary } from '@/lib/types';
 import type { TrustOverview } from '@/lib/hooks/use-trust';
-import { TRUST_KPI_HINT, TRUST_VIOLATIONS_SUB, TRUST_EMPTY } from '../support/revocation-prose';
+import {
+  TRUST_EMPTY,
+  TRUST_KPI_CARDS,
+  TRUST_KPI_HINT,
+  TRUST_SECTION,
+  TRUST_VIOLATIONS_SUB,
+  TRUST_VIOLATIONS_TITLE,
+  expectedTrustViolationsBlocks,
+  normalize,
+  squash,
+  trustRevokedHint,
+  trustViolationsSub,
+} from '../support/revocation-prose';
 
 const useTrust = vi.fn();
 vi.mock('@/lib/hooks/use-trust', async (orig) => ({
@@ -620,5 +632,294 @@ describe('/trust — the deployment revocation flag', () => {
     const text = container.textContent ?? '';
     expect(text).not.toContain('switched off');
     expect(text).toContain('1 revoked across 1 run');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// THE WHOLE SURFACE, not just the empty states (round 9).
+//
+// `/trust`'s pins covered the Revoked-events caption, the violations
+// subtitle's revocation clause and the two empty states. Everything else on the
+// surface was open, and the gate walked through seven places at once — each
+// mutation applied alone, each leaving the whole suite green:
+//
+//   · `· this estate is clean` appended to the page's section subtitle
+//   · `· no key in this deployment has been revoked` appended to the
+//     Historical KPI caption
+//   · a caption added to the Flagged-events KPI, which has none:
+//     "Everything else in this deployment bound cleanly"
+//   · `· nothing else in this estate is revoked` appended to the Revoked-events
+//     caption on its REPORTED arm, which the existing pin does not cover
+//   · `· every receipt in this deployment is clean` appended to the violations
+//     subtitle — past the clause pin, which is a `toContain` on one fragment
+//   · the pre-compromise clause inverted to "(revoked keys, violations)",
+//     and separately deleted outright
+//   · a whole `<p>No key in this deployment has been revoked.</p>` inside the
+//     violations CardBody, rendering in one paint with "No audited run reached
+//     this view · Nothing here has been checked, so nothing here can be
+//     reported clean"
+//
+// The last is round 6's blocking finding reconstructed verbatim. It was
+// possible because every pin was a `toContain` on a fragment, and a fragment
+// match cannot see what is beside it.
+//
+// So the KPI row and the violations card are pinned as CLOSED BLOCK LISTS:
+// every label, figure and caption in order, and nothing outside them.
+// ══════════════════════════════════════════════════════════════════════
+describe('/trust — the KPI row and the violations card are a CLOSED set of blocks', () => {
+  const RUN2 = [{ runId: 'run-quiet', trust: trust() }];
+  const NONE2 = { revocationReportedRuns: 0 };
+
+  /** Each KPI card's text, in DOM order: label, figure, caption (if any). */
+  function kpiBlocks(container: HTMLElement): string[] {
+    const grid = container.querySelector<HTMLElement>('.kpi-grid');
+    expect(grid, 'no .kpi-grid — the scope of this guard is gone').toBeTruthy();
+    return [...grid!.querySelectorAll<HTMLElement>('.kpi-card')].map((c) =>
+      normalize(c.textContent),
+    );
+  }
+
+  function violationsCard(container: HTMLElement): HTMLElement {
+    const el = [...container.querySelectorAll<HTMLElement>('.card')].find(
+      (c) => c.querySelector('h2')?.textContent === TRUST_VIOLATIONS_TITLE,
+    );
+    expect(el, 'no Trust violations card').toBeTruthy();
+    return el!;
+  }
+
+  function violationsBlocks(card: HTMLElement): string[] {
+    const head = [...card.querySelectorAll<HTMLElement>('.card-header h2, .card-header .card-sub')];
+    const empty = card.querySelector<HTMLElement>('.empty-state');
+    expect(empty, 'the violations card is not in an empty state').toBeTruthy();
+    // `EmptyState` renders an icon followed by a `<div>` per string, so its
+    // element children below the icon ARE the title and the description. Read
+    // separately rather than as one joined string, because an appended
+    // sentence has to land in a block that then differs — a join would hide a
+    // third `<div>` inside a longer string.
+    const parts = [...empty!.children].filter(
+      (c): c is HTMLElement => c instanceof HTMLElement && c.tagName !== 'svg'.toUpperCase(),
+    );
+    return [...head, ...parts].map((n) => normalize(n.textContent));
+  }
+
+  it('pins every KPI card: five labels, five figures, and captions only where there are captions', () => {
+    // Three of the five carry NO caption, and that absence is pinned — a
+    // caption appearing where there was none is how one of the seven escapes
+    // was written, and an absence is invisible to every `toContain` on the
+    // page.
+    const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
+    const blocks = kpiBlocks(container);
+    expect(blocks).toEqual([
+      normalize('Verified' + '0'),
+      normalize('Historical' + '0' + 'Valid, signed by a retired key (§9)'),
+      normalize('Flagged events' + '0'),
+      normalize('Revoked events' + '—' + TRUST_KPI_HINT['on-with-runs']),
+      normalize('No receipt' + '0'),
+    ]);
+    // The card labels and their order, stated against the shared table so the
+    // literal list above cannot drift from it.
+    expect(TRUST_KPI_CARDS.map((c) => c.label)).toEqual([
+      'Verified',
+      'Historical',
+      'Flagged events',
+      'Revoked events',
+      'No receipt',
+    ]);
+  });
+
+  it('pins the Revoked-events card on its REPORTED arm, which no pin reached', () => {
+    // The arm that renders a FIGURE. Its caption states how much of the view
+    // the number covers, and appending "nothing else in this estate is revoked"
+    // to it was green.
+    const { container } = renderWith(
+      overview(
+        [{ runId: 'r0', trust: trust({ revoked: [revocation('revoked_at_or_after')], keyRevocationRevokedAtOrAfter: 1 }) }],
+        { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1, flaggedEvents: 0 },
+        FEATURES_ON,
+      ),
+    );
+    const revoked = kpiBlocks(container)[3];
+    expect(revoked).toBe(normalize('Revoked events' + '1' + trustRevokedHint(1, 1)));
+  });
+
+  it('pins the whole violations card in both empty states, and nothing else is in it', () => {
+    for (const [label, runs, totals, empty, clause] of [
+      // `revocationReportedRuns: 0` with the check ON is the not-reported
+      // clause; one reporting run switches it to the figures.
+      ['no runs', [], NONE2, 'no-runs', TRUST_VIOLATIONS_SUB['not-reported']],
+      ['no violations', RUN2, { revocationReportedRuns: 1 }, 'no-violations', '0 revoked across 0 runs'],
+    ] as const) {
+      cleanup();
+      const { container } = renderWith(overview([...runs], totals, FEATURES_ON));
+      const card = violationsCard(container);
+      const sub = trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: clause,
+        preCompromiseEvents: 0,
+      });
+      const expected = expectedTrustViolationsBlocks({ sub, empty, runs: runs.length });
+      expectPinnedViolations(card, expected, label);
+    }
+  });
+
+  /**
+   * The pin, both halves, as ONE named assertion so it can be exercised
+   * against states that must fail.
+   *
+   * 1. the blocks are exactly these, in order — wording, structure, count
+   * 2. the card contains NOTHING ELSE — which is the half that catches an
+   *    element added beside the empty state, and is how round 6's blocking
+   *    finding was reconstructed verbatim while every guard stayed green
+   */
+  function expectBlocksPinned(card: HTMLElement, expected: string[], label?: string) {
+    expect(violationsBlocks(card), label).toEqual(expected);
+  }
+
+  function expectNothingOutside(card: HTMLElement, expected: string[], label?: string) {
+    expect(squash(card.textContent), `${label ?? ''} — text outside the pinned blocks`).toBe(
+      squash(expected.join('')),
+    );
+  }
+
+  /**
+   * The two halves are SEPARATE functions, and the split is not cosmetic: a
+   * self-test asserting "this helper throws on a bad render" is satisfied by
+   * either half throwing, so loosening one is invisible while the other still
+   * fires. Measured — turning the block equality into a containment stayed
+   * green through a guard-the-guard written the other way.
+   */
+  function expectPinnedViolations(card: HTMLElement, expected: string[], label?: string) {
+    expectBlocksPinned(card, expected, label);
+    expectNothingOutside(card, expected, label);
+  }
+
+  it('GUARDS THE GUARD: the violations pin REJECTS an appended clause and a stray element', () => {
+    // Loosening either half is silent otherwise — measured: turning the block
+    // equality into a containment, and replacing the squash comparison with a
+    // truthiness check, each left the whole suite green. The subject is the
+    // HELPER, not two literals.
+    cleanup();
+    const { container } = renderWith(overview([], NONE2, FEATURES_ON));
+    const card = violationsCard(container);
+    const sub = trustViolationsSub({
+      flaggedEvents: 0,
+      flaggedRuns: 0,
+      revocationClause: TRUST_VIOLATIONS_SUB['not-reported'],
+      preCompromiseEvents: 0,
+    });
+    const expected = expectedTrustViolationsBlocks({ sub, empty: 'no-runs', runs: 0 });
+
+    // It passes as rendered…
+    expectPinnedViolations(card, expected);
+
+    // …rejects extra text in what the CARD renders, in the direction the
+    // escape actually runs. Appending to the EXPECTED list proves only that
+    // `toEqual` distinguishes two arrays: it passes unchanged when the
+    // assertion is loosened to admit appends, which is the loosening being
+    // guarded against.
+    //
+    // Inside `.empty-state` first, where `violationsBlocks` reads — so this
+    // lands in the block list and is caught by its equality.
+    const extraBlock = document.createElement('div');
+    extraBlock.textContent = 'No key in this deployment has been revoked.';
+    card.querySelector('.empty-state')!.appendChild(extraBlock);
+    expect(() => expectBlocksPinned(card, expected)).toThrow();
+    extraBlock.remove();
+
+    // …and an element added BESIDE the empty state, which the block selectors
+    // do not read at all. This is round 6's blocking finding in miniature: a
+    // deployment-wide all-clear rendered in the same paint as "nothing here
+    // has been checked, so nothing here can be reported clean".
+    //
+    // Each half is exercised ALONE, for the reason given on
+    // `expectPinnedViolations`.
+    const stray = document.createElement('p');
+    stray.textContent = 'Nothing in this deployment binds badly.';
+    card.querySelector('.card-body')!.appendChild(stray);
+    expect(() => expectNothingOutside(card, expected)).toThrow();
+  });
+
+  it('pins the pre-compromise clause of the subtitle, in both directions', () => {
+    // Inverting it to "(revoked keys, violations)" states the precise falsehood
+    // `lib/utils/revocation.ts` exists to prevent — pre-compromise events are
+    // historically AUTHORIZED — and both inverting it and deleting it outright
+    // were green before this test.
+    cleanup();
+    const { container } = renderWith(
+      overview(RUN2, { revocationReportedRuns: 1, preCompromiseEvents: 4 }, FEATURES_ON),
+    );
+    const sub = normalize(
+      violationsCard(container).querySelector<HTMLElement>('.card-sub')?.textContent,
+    );
+    expect(sub).toBe(
+      trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: '0 revoked across 0 runs',
+        preCompromiseEvents: 4,
+      }),
+    );
+    // DISCRIMINATES: with none, the clause is absent entirely rather than
+    // rendered as a zero.
+    cleanup();
+    const { container: c2 } = renderWith(
+      overview(RUN2, { revocationReportedRuns: 1, preCompromiseEvents: 0 }, FEATURES_ON),
+    );
+    const sub2 = normalize(
+      violationsCard(c2).querySelector<HTMLElement>('.card-sub')?.textContent,
+    );
+    expect(sub2).not.toContain('pre-compromise');
+    expect(sub2).toBe(
+      trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: '0 revoked across 0 runs',
+        preCompromiseEvents: 0,
+      }),
+    );
+  });
+
+  it('pins the page’s section subtitle', () => {
+    const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
+    const el = container.querySelector<HTMLElement>('.section-title .sub');
+    expect(el, 'no section subtitle').toBeTruthy();
+    expect(normalize(el!.textContent)).toBe(TRUST_SECTION.sub);
+    expect(normalize(container.querySelector('.section-title h1')?.textContent)).toBe(
+      TRUST_SECTION.title,
+    );
+  });
+
+  it('GUARDS THE GUARD: the demoted lint still rejects something', () => {
+    // `assertNamesNoCause` is a lint in front of the pin, by its own docblock
+    // — four conjunctions and a noun phrase, which round 7 walked past four
+    // times. Turning its body into a no-op left the whole suite green, because
+    // every call site passes text that already satisfies it. A lint that has
+    // been quietly emptied reads as cover, so "someone emptied it" is a red
+    // test here rather than a silent change.
+    //
+    // This is not a proof that the lint is adequate. It is not adequate; the
+    // block pins above are the guarantee.
+    expect(() =>
+      assertNamesNoCause('No audited run reached this view because the sweep is off'),
+    ).toThrow();
+    expect(() =>
+      assertNamesNoCause('No audited run reached this view, due to the receipt audit'),
+    ).toThrow();
+    expect(() =>
+      assertNamesNoCause(TRUST_EMPTY['no-runs'].title + TRUST_EMPTY['no-runs'].description),
+    ).not.toThrow();
+  });
+
+  it('GUARDS THE GUARD: the pinned KPI table is five distinct, ordered entries', () => {
+    expect(TRUST_KPI_CARDS).toHaveLength(5);
+    expect(new Set(TRUST_KPI_CARDS.map((c) => c.label)).size).toBe(5);
+    // Exactly one card carries a fixed caption and one carries a varying one;
+    // the other three carry none. An emptied table, or one that gave every
+    // card a caption, would pin a row this page does not render.
+    expect(TRUST_KPI_CARDS.filter((c) => c.hint === null)).toHaveLength(3);
+    expect(TRUST_SECTION.sub.length).toBeGreaterThan(40);
+    expect(squash('a b\n c')).toBe('abc');
+    expect(normalize('a  b\n c')).toBe('a b c');
   });
 });

@@ -236,28 +236,40 @@ export default function DashboardPage() {
  * classified", never "nothing is revoked". The window picker can change the
  * answer, so a deployment-level claim would be unwarranted from the same data.
  *
- * `unknown` renders THREE ways, one per `because`, and only `no-flags` keeps the
- * old prose with its "disabled by default" hedge. That route is a control plane
+ * `unknown` renders one way per `because`, and only `no-flags` keeps the old
+ * prose with its "disabled by default" hedge. That route is a control plane
  * predating acdp-control-plane#178, where nothing has told us whether the check
  * runs — so the hedge is still the honest thing to say there, and confining it
  * to that route is what lets every other rendering stop saying it.
  *
- * The other two say only what holds on their own route: `flag-on-no-counters`
- * may state that the deployment reports the check as on (it does — `=== true`),
- * and `flag-unreadable` may state only that the flag could not be read, since
- * on that route the counters may be absent or present-and-zero and the flag
- * says nothing either way. Round 2 of this change's gate found the merged
- * version stating the first arm's cause over the second's, which is the defect
- * this whole file exists to remove.
+ * The others say only what holds on their own route: `flag-on-no-counters` may
+ * state that the deployment reports the check as on (it does — `=== true`);
+ * `flag-unreadable` may state only that the flag could not be read, since on
+ * that route the counters may be absent or present-and-zero and the flag says
+ * nothing either way; `counters-partial` may state only that the payload is
+ * incomplete, which is a fact about the payload and says nothing about the
+ * flag. Round 2 of this change's gate found a merged version stating the first
+ * arm's cause over the second's, which is the defect this whole file exists to
+ * remove.
  *
- * SIX renderings, four states. That is deliberate: `unknown` is one state
- * about one thing we do not know, split three ways only by what may honestly be
- * said ABOUT not knowing. The six are: the `.kpi-grid` for `reported`, one
- * paragraph each for `checked-clean` and `disabled`, and one for each of the
- * three `because` values. Counted here because an earlier version of this line
- * said five, which invites the next reader to conclude an arm is dead and
- * merge it — which is precisely how the over-claiming `flags-disagree` copy
- * came to be written.
+ * ONE RENDERING PER ARM, and no total is written here.
+ *
+ * `unknown` is one state about one thing we do not know, split only by what may
+ * honestly be said ABOUT not knowing: the `.kpi-grid` for `reported`, one
+ * paragraph each for `checked-clean` and `disabled`, and one for each `because`
+ * value.
+ *
+ * An earlier version of this line DID carry a total, and got it wrong twice —
+ * "five" when there were six (round 3's gate), then "SIX ... three `because`
+ * values" when the fourth `because` had just landed in the same commit (round
+ * 8's). Both times the argument for writing the number down was that a stale
+ * count invites the next reader to conclude an arm is dead and merge it, which
+ * is how the over-claiming `flags-disagree` copy came to be written. The count
+ * was itself the thing going stale, twice, so it is gone: the arms are
+ * enumerated in `lib/utils/revocation.ts`'s union, `DASHBOARD_PROSE` is keyed
+ * off that union so `tsc` refuses a missing one, and
+ * `dashboard-revocation.test.tsx` asserts every key of that table is reached by
+ * a render. Three derived checks and no hand-written total.
  */
 function RevocationBody({ state }: { state: DashboardRevocationState }) {
   if (state.kind === 'reported') {
@@ -335,8 +347,10 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
     );
   }
 
-  // `unknown`, whose three reasons license different explanations. Only
+  // `unknown`, whose `because` values license different explanations. Only
   // `no-flags` may keep the original hedge — see `dashboardRevocationState`.
+  // No count here either: this line said "three" for the whole commit that
+  // added the fourth.
   if (state.because === 'flag-on-no-counters') {
     return (
       <p style={prose}>

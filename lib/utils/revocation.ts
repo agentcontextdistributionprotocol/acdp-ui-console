@@ -395,11 +395,22 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *                    stronger reading outright); it is the definition that
  *                    keeps lagging, and the definition is where the next
  *                    consumer reads the meaning from.
- *   `unknown`        we cannot tell — for one of THREE reasons, carried on the
- *                    arm as `because`, because they license different copy.
- *                    (Enumerated below. This line said "two" for one commit
- *                    after the third was added, contradicting its own list
- *                    twenty lines further down.)
+ *   `unknown`        we cannot tell — for one of the reasons enumerated
+ *                    below, carried on the arm as `because`, because they
+ *                    license different copy.
+ *
+ *                    NO NUMBER HERE, deliberately, and that is the third
+ *                    correction to this one line. It said "two" for one commit
+ *                    after the third `because` was added, contradicting its own
+ *                    list twenty lines further down; round 8's gate returned a
+ *                    blocking finding on it; the commit that fixed that added a
+ *                    FOURTH `because` and left "THREE" standing here, in this
+ *                    line and in five others. A count written in prose beside a
+ *                    list that already carries it is a second source of truth
+ *                    that only ever goes stale, and a stale one invites the
+ *                    next reader to conclude an arm is dead and merge it —
+ *                    which is precisely how the over-claiming `flags-disagree`
+ *                    copy came to be written. Count the list.
  *
  * The `because` split exists for a defect the first gate round on this change
  * found. The `unknown` arm inherited the old prose verbatim, hedge included —
@@ -424,23 +435,28 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *                                    the copy on the flag-derived arms rather
  *                                    than being explained by them.
  *
- * FOUR, and the seventh gate round on this change is why the fourth exists.
- * `flag-on-no-counters` was widened to catch `{}` and swallowed partial triples
- * with it, so its sentence — "sent no counters at all, not even zeros" —
- * rendered over payloads that had sent a zero. The suite pinned that sentence
- * positively, so it enforced the false claim instead of catching it. A `because`
- * value must name a fact that holds on EVERY route that carries it; widening a
- * route without re-reading its copy is how that invariant keeps breaking.
+ * The list has grown twice, both times because a value named a fact that did
+ * NOT hold on every route carrying it — which is the one invariant a `because`
+ * has to satisfy.
  *
- * Three, not two, and the second gate round on this change is why. A single
- * `flags-disagree` value collapsed the last two, and the copy written for it
- * described only the first: it said the deployment "says the check is enabled
- * but sent no counters at all", which on the `flag-unreadable` route is false
- * twice over — the deployment said nothing readable about the check, and the
- * counters may well have arrived as zeros. Rendering one route's cause over
- * another's is the same defect this split was introduced to remove, one level
- * down. A `because` value must name a fact that holds on every route that
- * carries it.
+ * `counters-partial` (seventh gate round): `flag-on-no-counters` had been
+ * widened to catch `{}` and swallowed partial triples with it, so its sentence
+ * — "sent no counters at all, not even zeros" — rendered over payloads that had
+ * sent a zero. The suite pinned that sentence positively, so it enforced the
+ * false claim instead of catching it.
+ *
+ * `flag-unreadable` (second gate round): a single `flags-disagree` value
+ * collapsed it with `flag-on-no-counters`, and the copy written for the pair
+ * described only the latter — it said the deployment "says the check is enabled
+ * but sent no counters at all", which on the unreadable route is false twice
+ * over: the deployment said nothing readable about the check, and the counters
+ * may well have arrived as zeros. Rendering one route's cause over another's is
+ * the same defect this split was introduced to remove, one level down.
+ *
+ * Widening a route without re-reading its copy is how the invariant keeps
+ * breaking, and it is why the pin in `test/support/revocation-prose.ts` keys
+ * its table off this union: a new value fails to typecheck there until its copy
+ * is written.
  *
  * `null` counters WITH `keyRevocationCheck === true` is a combination upstream
  * cannot produce — both derive from the same config value

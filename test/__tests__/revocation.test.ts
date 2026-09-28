@@ -24,6 +24,7 @@ import {
   type RevocationEntry,
 } from '@/lib/utils/revocation';
 import type { CpDashboardFeatures, DashboardRevocation } from '@/lib/types';
+import { ALL_BECAUSE } from '../support/revocation-prose';
 
 function entry(status: string, eventId = status): RevocationEntry {
   return {
@@ -370,14 +371,17 @@ describe('dashboardRevocationState', () => {
     expect(dashboardRevocationState(null, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
   });
 
-  it('distinguishes WHY it is unknown, because the three license different copy', () => {
+  it('distinguishes WHY it is unknown, because each licenses different copy', () => {
     // The gate's second finding, then its second round's first finding. The arm
     // first inherited the pre-#178 hedge ("the check is disabled by default")
     // on the argument that it IS a pre-#178 backend — true of one route only.
     // Splitting it in two was not enough either: the merged
     // flag-says-on/flag-unreadable reason carried copy describing the first,
     // which is false on the second. A `because` names a fact that holds on
-    // EVERY route carrying it, so there are three.
+    // EVERY route carrying it, and each time a route was found carrying copy
+    // that did not hold on all of it, the union grew. The count is therefore
+    // NOT written here — see `ALL_BECAUSE`, and the assertion at the end of
+    // this test that uses it.
     expect(dashboardRevocationState(CLEAN, undefined)).toEqual({
       kind: 'unknown',
       because: 'no-flags',
@@ -410,16 +414,40 @@ describe('dashboardRevocationState', () => {
       because: 'flag-unreadable',
     });
 
-    // All three are reachable, so no arm is dead code. Read through a narrowing
-    // helper rather than asserting on literals, so this fails if any two routes
-    // ever start returning the same reason.
+    // A PARTIAL triple: some counters arrived and some did not. A fact about
+    // the payload, so it is read before any flag — the flag-derived arms all
+    // say something the partial payload falsifies, and this route exists so
+    // none of them has to be stretched to cover it. It had no assertion in
+    // this file at all until round 9; its routing was covered only through the
+    // render tests, which is why the three stale "three"s here went unnoticed.
+    expect(dashboardRevocationState({ revokedAtOrAfter: 3 } as never, ALL_ON)).toEqual({
+      kind: 'unknown',
+      because: 'counters-partial',
+    });
+    // …and it does not fork on the flag, because it is not about the flag.
+    for (const f of [undefined, ALL_ON, { ...ALL_ON, keyRevocationCheck: false }, stringy]) {
+      expect(
+        dashboardRevocationState({ revokedAtOrAfter: 3 } as never, f as CpDashboardFeatures),
+      ).toEqual({ kind: 'unknown', because: 'counters-partial' });
+    }
+
+    // EVERY reason is reachable, so no arm is dead code — and the expected set
+    // is DERIVED from the union rather than counted by hand. This assertion was
+    // `expect(new Set(reasons).size).toBe(3)`, and the 3 went stale in the
+    // commit that added the fourth value: a completeness claim one short of the
+    // union it described, asserted as a hard number, in the test file for the
+    // module whose whole subject is claims that reach past their evidence.
+    //
+    // Read through a narrowing helper rather than asserting on literals, so it
+    // also fails if any two routes ever start returning the same reason.
     const reasonOf = (x: DashboardRevocationState) => (x.kind === 'unknown' ? x.because : null);
     const reasons = [
       reasonOf(dashboardRevocationState(CLEAN, undefined)),
       reasonOf(dashboardRevocationState(null, ALL_ON)),
       reasonOf(dashboardRevocationState(CLEAN, stringy)),
+      reasonOf(dashboardRevocationState({ revokedAtOrAfter: 3 } as never, ALL_ON)),
     ];
-    expect(new Set(reasons).size).toBe(3);
+    expect(new Set(reasons)).toEqual(new Set(ALL_BECAUSE));
     expect(reasons).not.toContain(null);
   });
 
