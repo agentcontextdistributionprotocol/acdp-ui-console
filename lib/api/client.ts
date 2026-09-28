@@ -864,7 +864,14 @@ export async function listLogWitnessAlerts(
   const path = `/registries/log-witness/alerts${includeAcknowledged ? '?includeAcknowledged=true' : ''}`;
   if (demoMode) {
     const all = demoAlertStore();
-    const data = includeAcknowledged ? all : all.filter((r) => r.acknowledgedAt === null);
+    // COPIED on read, like `listEnrollments`. The filtered branch already hands
+    // back a fresh array, but the unfiltered one used to hand the store itself
+    // into React Query's cache — so a consumer that mutated a row would edit
+    // the demo fixture for every later read. No consumer does today; the whole
+    // point of a demo store is that a future one might, and the sibling
+    // function this one claims parity with has always copied.
+    const rows = all.map((r) => ({ ...r }));
+    const data = includeAcknowledged ? rows : rows.filter((r) => r.acknowledgedAt === null);
     // `total` tracks the rows actually returned, which is what upstream does:
     // it counts the filtered result, not the table.
     return delay({ data, total: data.length });

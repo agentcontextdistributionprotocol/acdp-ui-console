@@ -255,7 +255,11 @@ describe('proxy route — route allow-list', () => {
       {
         method: 'GET',
         path: ['registries', 'registry-a.example.com', 'log-witness', 'ack'],
-        why: 'the admin acknowledgement sibling is deliberately not proxied',
+        // Was "deliberately not proxied", which stopped being true when #84's
+        // ack landed: the path IS allow-listed, as a POST. The case is still
+        // exactly right — it is the GET-on-a-write-path guard — but the reason
+        // read as a claim about the route table that the route table refutes.
+        why: 'the acknowledgement sibling is a POST; allow-listing it must not make it readable',
       },
       {
         method: 'GET',
@@ -353,6 +357,26 @@ describe('proxy route — route allow-list', () => {
         method: 'POST',
         path: ['registries', 'log-witness', 'ack'],
         why: 'the collection level has no ack; this is the alerts route mis-spelled',
+      },
+      // The two LITERAL segments. Round 1 of this PR's gate measured the four
+      // cases above and found that neither literal was pinned by any of them:
+      // loosening `ack` to `[^/]+`, and loosening `log-witness` to `[^/]+`,
+      // each left the whole suite green. The second is the worse of the two —
+      // it allow-lists `POST /registries/<anything>/<anything>/ack` through the
+      // perimeter WITH the injected control-plane bearer attached. The ALERTS
+      // block above names exactly this mutation class for its own middle
+      // segment and adds a case for it; this pattern shipped without the
+      // equivalent, which is the "fixed on one arm, not its neighbour" shape
+      // this worklist keeps producing.
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness', 'advance-cursor'],
+        why: 'the last segment is the LITERAL ack; no other verb under log-witness is proxied',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'enrollments', 'ack'],
+        why: 'the third segment is the LITERAL log-witness; ack is not a generic sub-resource verb',
       },
     ];
     for (const { method, path, why } of cases) {

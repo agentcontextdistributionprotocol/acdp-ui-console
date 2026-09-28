@@ -578,6 +578,27 @@ describe('listLogWitnessAlerts (demo)', () => {
     const times = dated.map((r) => Date.parse(r.at as string));
     expect(times).toEqual([...times].sort((a, b) => b - a));
   });
+
+  it('copies on read, so a consumer cannot edit the demo fixture', async () => {
+    // `demoAlertStore`'s docblock claims parity with `demoEnrollmentStore`,
+    // which copies on read (`listEnrollments`). This one handed the store's own
+    // rows straight into React Query's cache on the unfiltered branch, so a
+    // consumer that mutated a row would have edited the fixture for every later
+    // read in the session. Nothing mutates one today — the point of a demo
+    // store is that something might, and the claimed sibling has always copied.
+    //
+    // The filtered branch already returned a fresh ARRAY, which is why this was
+    // invisible: the objects inside it were still shared.
+    const first = await listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    const target = first.data[0];
+    const originalReason = target.reason;
+    target.reason = 'mutated_by_a_consumer';
+    const second = await listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
+    expect(second.data[0].reason).toBe(originalReason);
+    // …and the two reads really did hand back distinct objects, not the same
+    // one twice.
+    expect(second.data[0]).not.toBe(target);
+  });
 });
 
 describe('acknowledgeLogWitnessAlert (demo)', () => {

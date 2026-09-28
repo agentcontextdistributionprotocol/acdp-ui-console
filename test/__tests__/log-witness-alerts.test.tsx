@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, within, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
+import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { LogWitnessAlertRow } from '@/lib/types';
 
 // The mock FORWARDS ITS ARGUMENTS. A zero-arg passthrough would make every
@@ -56,6 +57,18 @@ function row(over: Partial<LogWitnessAlertRow> = {}): LogWitnessAlertRow {
     ...over,
   };
 }
+
+/**
+ * The two empty-state titles, shared so a rename cannot empty a guard.
+ *
+ * Two `queryByText('No alert is currently recorded')` assertions spent a commit
+ * pinning a string the component no longer rendered — the component's own edit
+ * renamed it, and nothing connected the two. A guard asserting the ABSENCE of
+ * text is exactly the kind that goes vacuous silently, so its subject has to be
+ * the same object the positive assertions use.
+ */
+const EMPTY_TITLE_ALL = 'No alert is recorded at all';
+const EMPTY_TITLE_FILTERED = 'No unacknowledged alert is recorded';
 
 let queryClient: QueryClient;
 
@@ -96,6 +109,10 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   useLogWitnessAlerts.mockReset();
+  // The store is a module-level Zustand singleton and persists across tests in
+  // a file. One test sets `demoMode` to assert the write reads it; leaving that
+  // set would change the default every test after it sees.
+  usePreferencesStore.setState({ demoMode: true });
 });
 
 describe('witness alert worklist — every reason is readable as text', () => {
@@ -235,7 +252,7 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
     const text = section().textContent ?? '';
     // The title is a function of the filter too — "at all" is only sayable
     // because the default listing includes acknowledged rows.
-    expect(screen.getByText('No alert is recorded at all')).toBeInTheDocument();
+    expect(screen.getByText(EMPTY_TITLE_ALL)).toBeInTheDocument();
     expect(text).not.toMatch(/healthy/i);
     expect(text).not.toMatch(/all (logs|registries) (are )?(ok|fine|verified)/i);
     expect(text).not.toMatch(/no (problems|issues)\b/i);
@@ -245,8 +262,64 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
 
   it('DISCRIMINATES: a populated worklist renders no empty state', () => {
     renderWith({ data: rows([row()]) });
-    expect(screen.queryByText('No alert is currently recorded')).toBeNull();
+    expect(screen.queryByText(EMPTY_TITLE_ALL)).toBeNull();
+    expect(screen.queryByText(EMPTY_TITLE_FILTERED)).toBeNull();
     expect(section().querySelectorAll('tbody tr')).toHaveLength(1);
+  });
+
+  // ── The FILTERED arm. It shipped with nothing asserting it at all: four
+  // mutations — making the title constant across arms, making the description
+  // constant, replacing the filtered description with the full one, and giving
+  // the filtered arm the full arm's title — all survived the whole suite. The
+  // commit that added it claimed "both arms are asserted".
+  //
+  // The arm is only reachable through the toggle, which is why it was missed:
+  // `renderWith` fixes the hook's return, so the copy changes but the data does
+  // not — exactly the state an operator reaches by filtering an empty list.
+  it('the FILTERED empty state says which listing produced the emptiness', () => {
+    renderWith({ data: rows([]) });
+    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    const text = section().textContent ?? '';
+    expect(screen.getByText(EMPTY_TITLE_FILTERED)).toBeInTheDocument();
+    expect(screen.queryByText(EMPTY_TITLE_ALL)).toBeNull();
+    // It must say that acknowledged alerts exist as a category and are being
+    // withheld HERE — the whole difference between the two arms.
+    expect(text).toMatch(/UNACKNOWLEDGED/);
+    expect(text).toMatch(/acknowledged alerts are still alerts and are hidden in this view/i);
+    // And it keeps the never-witnessed caveat, which is true of both arms.
+    expect(text).toMatch(/never witnessed/i);
+    // The same prohibitions as the default arm: a filtered emptiness is even
+    // further from an all-clear than a full one.
+    expect(text).not.toMatch(/healthy/i);
+    expect(text).not.toMatch(/no (problems|issues)\b/i);
+  });
+
+  it('DISCRIMINATES: the two empty arms do not share a title OR a description', () => {
+    // The mutation that survived was "make the copy constant across arms",
+    // which every single-arm assertion passes. This is the pair that cannot.
+    renderWith({ data: rows([]) });
+    const full = section().textContent ?? '';
+    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    const filtered = section().textContent ?? '';
+    expect(filtered).not.toBe(full);
+    expect(EMPTY_TITLE_FILTERED).not.toBe(EMPTY_TITLE_ALL);
+    // Not merely different somewhere — different in the sentence that states
+    // the SCOPE, which is the one a reader draws the conclusion from.
+    expect(full).toMatch(/acknowledged or not/i);
+    expect(filtered).not.toMatch(/acknowledged or not/i);
+  });
+
+  it('the card subtitle changes with the view too, so the card cannot contradict itself', () => {
+    // It said "acknowledged alerts stay listed until the condition clears" in
+    // both views. In the filtered one that rendered directly above an empty
+    // state saying they "are hidden in this view" — two adjacent elements of
+    // one card asserting opposite things about the same rows.
+    renderWith({ data: rows([]) });
+    expect(section().textContent).toMatch(/acknowledged alerts stay listed until the condition clears/i);
+    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    const filtered = section().textContent ?? '';
+    expect(filtered).toMatch(/acknowledged alerts are filtered out of this view/i);
+    expect(filtered).not.toMatch(/acknowledged alerts stay listed until the condition clears/i);
   });
 });
 
@@ -306,15 +379,36 @@ describe('witness alert worklist — the error copy blames nothing it cannot rea
 
   it('never renders the empty state and an error together', () => {
     // A failed fetch has zero rows, so a naive `rows.length === 0` would render
-    // "No alert is currently recorded" underneath the error — claiming an
-    // all-clear from a request that never answered.
+    // the empty state underneath the error — claiming an all-clear from a
+    // request that never answered.
+    //
+    // ASSERTED THROUGH THE SHARED CONSTANTS, not a literal. These two tests
+    // spent a commit asserting the absence of `'No alert is currently
+    // recorded'`, a string the component had been edited to stop rendering —
+    // so both were tautologies over text nothing could produce, and dropping
+    // `!alerts.error` / `!alerts.isLoading` from the guard was measured green
+    // against the whole 1074-test suite. The constants are what stop a rename
+    // from emptying a guard silently: a rename that misses them fails the
+    // positive tests above instead of quietly passing here.
     renderWith({ error: new ApiError(500, 'boom', 'control-plane', '/x') });
-    expect(screen.queryByText('No alert is currently recorded')).toBeNull();
+    expect(screen.queryByText(EMPTY_TITLE_ALL)).toBeNull();
+    expect(screen.queryByText(EMPTY_TITLE_FILTERED)).toBeNull();
+    expect(section().textContent).not.toMatch(/never witnessed/i);
   });
 
   it('never renders the empty state while still loading', () => {
     renderWith({ isLoading: true });
-    expect(screen.queryByText('No alert is currently recorded')).toBeNull();
+    expect(screen.queryByText(EMPTY_TITLE_ALL)).toBeNull();
+    expect(screen.queryByText(EMPTY_TITLE_FILTERED)).toBeNull();
+    expect(section().textContent).not.toMatch(/never witnessed/i);
+  });
+
+  it('DISCRIMINATES: the same zero-row payload with neither flag DOES render it', () => {
+    // Without this the two guards above pass against a component that renders
+    // no empty state under any condition.
+    renderWith({ data: rows([]) });
+    expect(screen.getByText(EMPTY_TITLE_ALL)).toBeInTheDocument();
+    expect(section().textContent).toMatch(/never witnessed/i);
   });
 });
 
@@ -624,16 +718,53 @@ describe('witness alert worklist — the confirm says what an ack is NOT', () =>
     expect(text).toMatch(/not a person/i);
   });
 
-  it('states the resurfacing rule — a REPEAT of the same reason stays hidden', async () => {
+  it('states the resurfacing rule, and states it for the view it is shown over', async () => {
     // The trap: an operator acks a root mismatch, the log keeps being detected
-    // with the same reason every poll, and the row never comes back. Upstream
-    // resets `acknowledgedAt` only when the REASON changes.
+    // with the same reason every poll, and the row never announces itself
+    // again. Upstream resets `acknowledgedAt` only when the REASON changes.
+    //
+    // The fact is about the ack; the CONSEQUENCE is about the view, and this
+    // bullet asserted the filtered view's consequence unconditionally. Written
+    // when the default listing was unacknowledged-only, it survived the default
+    // being flipped and then told an operator, on the default screen, that the
+    // row "leaves this worklist" and "stays hidden until you use Show
+    // acknowledged above" — while the row stayed, nothing was hidden, and the
+    // control it named was labelled "Hide acknowledged". Three false claims on
+    // the one control that writes.
     renderWith({ data: rows([row()]) });
     openConfirm();
-    const text = dialog().textContent ?? '';
-    expect(text).toMatch(/different/i);
-    expect(text).toMatch(/same/i);
-    expect(text).toMatch(/stays hidden/i);
+    const shown = dialog().textContent ?? '';
+    expect(shown).toMatch(/different/i);
+    expect(shown).toMatch(/same/i);
+    // Default view: the row STAYS, and the dialog must not send the operator to
+    // a control that is not on screen.
+    expect(shown).toMatch(/stays<?\/?\w*>? in this worklist|\bstays\b.{0,40}in this worklist/i);
+    expect(shown).not.toMatch(/stays hidden/i);
+    expect(shown).not.toMatch(/use Show acknowledged above/i);
+    expect(screen.queryByRole('button', { name: 'Show acknowledged' })).toBeNull();
+
+    // Filtered view: the row DOES leave this view, the control IS on screen,
+    // and the dialog says both.
+    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    openConfirm();
+    const filtered = dialog().textContent ?? '';
+    expect(filtered).toMatch(/leaves this view/i);
+    expect(filtered).toMatch(/does not leave the worklist/i);
+    expect(filtered).toMatch(/stays hidden from this view/i);
+    expect(filtered).toMatch(/Show acknowledged/);
+    expect(screen.getByRole('button', { name: 'Show acknowledged' })).toBeInTheDocument();
+  });
+
+  it('DISCRIMINATES: the two arms of that bullet are different text', () => {
+    // A constant bullet across both views is what shipped, so a single-arm
+    // assertion cannot be the guard here.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const shown = dialog().textContent ?? '';
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    openConfirm();
+    expect(dialog().textContent).not.toBe(shown);
   });
 
   it('names the authority and its current reason in the dialog', async () => {
@@ -642,6 +773,19 @@ describe('witness alert worklist — the confirm says what an ack is NOT', () =>
     const text = dialog().textContent ?? '';
     expect(text).toContain('registry-c.playground.local');
     expect(text).toContain('Tree size went backwards');
+  });
+
+  it('captions the dialog with the FULL authority, not the short form', async () => {
+    // Deliberate, and unpinned: truncating the title to `shortAuthority` left
+    // the suite green because the assertion above is satisfied by the body
+    // paragraph alone. `shortAuthority` cuts at the first dot, so
+    // `registry-a.corp.example` and `registry-a.playground.local` would be
+    // captioned identically — on the one control on this page that writes.
+    renderWith({ data: rows([row({ authority: 'registry-a.corp.example' })]) });
+    openConfirm('registry-a.corp.example');
+    const heading = within(dialog()).getByRole('heading');
+    expect(heading.textContent).toBe('Acknowledge registry-a.corp.example');
+    expect(heading.textContent).not.toBe('Acknowledge registry-a');
   });
 });
 
@@ -680,12 +824,47 @@ describe('witness alert worklist — the ack control does not pretend to know th
     const btn = screen.getByRole('button', { name: /re-acknowledge/i });
     expect(btn).toBeInTheDocument();
     expect(btn).not.toBeDisabled();
+    // The VISIBLE TEXT, not only the accessible name. `getByRole(… name)` reads
+    // `aria-label`, so only the label was pinned: regressing the rendered word
+    // back to a constant "Acknowledge" left the suite green, producing a
+    // label-in-name mismatch (WCAG 2.5.3 — a speech-input user saying the
+    // visible word activates nothing) and removing the affordance this arm
+    // exists for.
+    expect(btn.textContent).toBe('Re-acknowledge');
   });
 
   it('DISCRIMINATES: an open row says “Acknowledge”, not “Re-acknowledge”', () => {
     renderWith({ data: rows([row({ acknowledgedAt: null })]) });
     expect(screen.queryByRole('button', { name: /re-acknowledge/i })).toBeNull();
-    expect(screen.getByRole('button', { name: /acknowledge registry-c/i })).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: /acknowledge registry-c/i });
+    expect(btn).toBeInTheDocument();
+    expect(btn.textContent).toBe('Acknowledge');
+  });
+
+  it('passes the CURRENT demo-mode flag to the write, not a hardcoded one', async () => {
+    // Unpinned: hardcoding `demoMode: false` at the only call site left the
+    // suite green. Demo mode is the DEFAULT product configuration
+    // (`NEXT_PUBLIC_ACDP_UI_DEMO_MODE` defaults true), so that mutation makes
+    // the console issue a real network POST — a write — from a build whose
+    // whole premise is that it talks to nothing.
+    acknowledgeLogWitnessAlert.mockResolvedValue(undefined);
+    usePreferencesStore.setState({ demoMode: true });
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalled());
+    expect(acknowledgeLogWitnessAlert).toHaveBeenCalledWith('registry-c.playground.local', true);
+
+    // DISCRIMINATES: and it really is read from the store rather than being a
+    // hardcoded `true`.
+    cleanup();
+    acknowledgeLogWitnessAlert.mockClear();
+    usePreferencesStore.setState({ demoMode: false });
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalled());
+    expect(acknowledgeLogWitnessAlert).toHaveBeenCalledWith('registry-c.playground.local', false);
   });
 });
 
@@ -720,14 +899,64 @@ describe('witness alert worklist — the two designed failure paths', () => {
     confirmAck();
     await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
     expect(dialog().textContent).not.toMatch(/could not record/i);
-    // The table is now stale in the operator's favour, so it is refetched.
-    await waitFor(() =>
-      expect(
-        invalidate.mock.calls.some((c) =>
-          JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'),
-        ),
-      ).toBe(true),
+
+    // THE REFETCH HAPPENS ON CLOSE, NOT ON ARRIVAL, and this test asserted the
+    // opposite for a commit. Invalidating inside `onError` destroyed the
+    // explanation it was there to support: a 404 means upstream already ran
+    // `advanceCursor`, so the row is gone from both listings, the refetch
+    // emptied `rows`, the parent's `rows.find(...)` went null, and this dialog
+    // unmounted before the operator could read any of it. The three assertions
+    // in this block passed only because the hook is mocked with a constant —
+    // they described a state unreachable in production on the one path that
+    // produces it.
+    const isAlertsKey = () =>
+      invalidate.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'));
+    expect(isAlertsKey()).toBe(false);
+    // …and the dialog is still standing, which is the point.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(isAlertsKey()).toBe(true));
+  });
+
+  it('DISCRIMINATES: a 403 does NOT refetch, on close or otherwise', async () => {
+    // The sibling that keeps the assertion above from passing on a component
+    // that simply never refetches. A 403 changed nothing upstream, so the read
+    // would only repeat itself.
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(403, JSON.stringify({ message: 'admin-only' }), 'control-plane', '/x', true),
     );
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/refused it/i));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(
+      invalidate.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts')),
+    ).toBe(false);
+  });
+
+  it('an UNSTAMPED 403 on the ack does NOT get the admin-scope copy either', async () => {
+    // The missing half of the pair. The read path has both (`fromUpstream`
+    // true and false); the ack path shipped with only the stamped half, so
+    // regressing `isUpstreamForbidden(mut.error)` to a bare `status === 403`
+    // killed nothing — measured green against the whole suite.
+    //
+    // It matters here more than on the read path: the proxy's own allow-list
+    // mints a 403 for a malformed authority without ever reaching the control
+    // plane, and telling the operator to widen the deployment key's scope in
+    // response would send them to change a credential over a path typo.
+    acknowledgeLogWitnessAlert.mockRejectedValue(
+      new ApiError(403, JSON.stringify({ message: 'nope' }), 'control-plane', '/x'),
+    );
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/could not record the acknowledgement/i));
+    const text = dialog().textContent ?? '';
+    expect(text).not.toMatch(/admin scope|admin key|grant .* admin/i);
+    expect(text).not.toMatch(/refused it/i);
   });
 
   it('withdraws the confirm action once the alert is gone', async () => {

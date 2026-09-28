@@ -147,9 +147,14 @@ const ACK_ALREADY_RESOLVED =
  */
 function AcknowledgeDialog({
   row,
+  showAcknowledged,
   onClose,
 }: {
   row: LogWitnessAlertRow;
+  // Which listing the table behind this dialog is showing. The third fact
+  // below is about what the operator will SEE after confirming, and that
+  // depends on the view — it is not a property of the ack.
+  showAcknowledged: boolean;
   onClose: () => void;
 }) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
@@ -160,23 +165,32 @@ function AcknowledgeDialog({
       queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
       onClose();
     },
-    onError: (error) => {
-      // A 404 is the alert having resolved underneath us, so the table is now
-      // stale in the operator's favour. Refetch on that path only — a 403
-      // changed nothing upstream and a refetch would just repeat the read.
-      if (error instanceof ApiError && error.status === 404) {
-        queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
-      }
-    },
   });
 
   const resolved = mut.error instanceof ApiError && mut.error.status === 404;
   const forbidden = isUpstreamForbidden(mut.error);
 
+  // The 404 refetch happens on the way OUT, not on arrival.
+  //
+  // Invalidating inside `onError` destroyed the very explanation it was there
+  // to support. A 404 means upstream already ran `advanceCursor`, so the row is
+  // gone from BOTH listings; the refetch emptied `rows`, the parent's
+  // `rows.find(...)` went null, and this dialog unmounted before painting —
+  // taking ACK_ALREADY_RESOLVED, the relabelled Close and the withdrawn confirm
+  // button with it. The operator watched a row vanish from a dishonesty
+  // worklist with no account of why, which is worse than the stale table this
+  // path exists to correct. Gate round 1 proved it with a rendered probe: the
+  // dialog was present before the refetch and absent after, while the control
+  // 403 case (row stays) kept it.
+  const close = () => {
+    if (resolved) queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
+    onClose();
+  };
+
   return (
     <Modal
       open
-      onClose={onClose}
+      onClose={close}
       // The FULL authority, matching the table beneath it. `shortAuthority`
       // truncates at the first dot, so a confirm dialog for
       // `registry-a.corp.example` would be captioned identically to one for
@@ -184,7 +198,7 @@ function AcknowledgeDialog({
       title={`Acknowledge ${row.authority}`}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={close}>
             {/* "Close" rather than "Cancel" once the alert turned out to be
                 gone: there is nothing left to cancel, and offering to cancel an
                 action that already cannot happen is a false choice. */}
@@ -214,12 +228,35 @@ function AcknowledgeDialog({
             It does <strong>not clear the alert</strong> and does not touch the retained head. The
             authority stays alerted until the control plane witnesses a consistent checkpoint again.
           </li>
-          <li>
-            The row leaves this worklist by default. A later detection with a{' '}
-            <strong>different</strong> reason brings it back; a repeat of the{' '}
-            <strong>same</strong> reason does <strong>not</strong> — so an unchanged, ongoing
-            detection stays hidden until you use <em>Show acknowledged</em> above.
-          </li>
+          {/* A function of the VIEW, because the sentence is about what the
+              operator will see next and that is not a property of the ack.
+              A single sentence shipped here saying the row "leaves this
+              worklist by default … stays hidden until you use Show
+              acknowledged above" — written when the default listing WAS
+              unacknowledged-only. After the default flipped, all three of its
+              claims were false on the screen it was rendered over: the row
+              does not leave, nothing is hidden, and the control it names is
+              labelled "Hide acknowledged". The one control on this page that
+              writes was telling the operator a still-alerting authority would
+              disappear, and sending them to press a button that is not
+              there. */}
+          {showAcknowledged ? (
+            <li>
+              The row <strong>stays</strong> in this worklist — this view lists acknowledged alerts
+              too, and the <em>State</em> column will read <em>Acknowledged</em>. A later detection
+              with a <strong>different</strong> reason resets that marker; a repeat of the{' '}
+              <strong>same</strong> reason does <strong>not</strong>, so an unchanged, ongoing
+              detection will not announce itself again.
+            </li>
+          ) : (
+            <li>
+              The row leaves <strong>this view</strong>, which is filtered to unacknowledged
+              alerts — it does not leave the worklist. A later detection with a{' '}
+              <strong>different</strong> reason brings it back here; a repeat of the{' '}
+              <strong>same</strong> reason does <strong>not</strong> — so an unchanged, ongoing
+              detection stays hidden from this view until you use <em>Show acknowledged</em> above.
+            </li>
+          )}
         </ul>
         {resolved && <ErrorPanel message={ACK_ALREADY_RESOLVED} />}
         {forbidden && (
@@ -258,16 +295,25 @@ function AcknowledgeDialog({
  * head of the list is not necessarily the most recent alert, and nothing here
  * reads position 0 as "latest".
  *
- * **The worklist asks for ACKNOWLEDGED ROWS TOO, and that is load-bearing.**
- * Upstream, acknowledging an alert does not resolve it: `acknowledgeAlert`
- * writes `acknowledgedAt`/`acknowledgedBy` and leaves `alerted = true`; the row
- * only leaves when the underlying condition clears via `advanceCursor`.
- * Acknowledgement is a "someone has seen this" marker, not a fix. Asking for
- * the default unacknowledged-only listing would therefore hide still-outstanding
- * split-view and root-rewrite detections from the one screen built to surface
- * them — and would do it precisely for the alerts a human already touched —
- * while the empty state below claimed there were none. That is why the `State`
- * column exists and why both of its values are reachable here.
+ * **The worklist asks for ACKNOWLEDGED ROWS BY DEFAULT, and that is
+ * load-bearing.** Upstream, acknowledging an alert does not resolve it:
+ * `acknowledgeAlert` writes `acknowledgedAt`/`acknowledgedBy` and leaves
+ * `alerted = true`; the row only leaves when the underlying condition clears
+ * via `advanceCursor`. Acknowledgement is a "someone has seen this" marker, not
+ * a fix. Defaulting to the unacknowledged-only listing would therefore hide
+ * still-outstanding split-view and root-rewrite detections from the one screen
+ * built to surface them — and would do it precisely for the alerts a human
+ * already touched — while the empty state below claimed there were none. That
+ * is why the `State` column exists and why both of its values are reachable
+ * here.
+ *
+ * The filtered listing is still one click away, because "what has nobody looked
+ * at yet" is a real triage question. It is a VIEW, not the screen's claim: every
+ * piece of copy that describes what is on screen — the card subtitle, the empty
+ * state, and the confirm dialog's third fact — is a function of the flag, so
+ * neither view can be read as making the other's claim. Adding a surface here
+ * that says "no alerts" without saying which listing produced that is the
+ * defect this arrangement exists to prevent.
  *
  * The error copy is deliberately the GENERIC panel. Unlike `/auth/revocations`,
  * this endpoint carries no admin guard upstream (`registries.controller.ts` has
@@ -305,9 +351,18 @@ export function LogWitnessAlerts() {
           <ScrollText size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
           Witness alert worklist
         </h2>
+        {/* The third clause is a function of the flag. It read "acknowledged
+            alerts stay listed until the condition clears" in both views, and
+            in the filtered one it rendered directly above an empty state
+            saying acknowledged alerts "are hidden in this view" — the card
+            contradicting itself in two adjacent elements. The upstream fact it
+            states is true either way; what changes is whether THIS LISTING is
+            showing them, which is the part an operator reads it for. */}
         <span className="card-sub">
-          Durable transparency-log detections · one row per alerting authority ·
-          acknowledged alerts stay listed until the condition clears
+          Durable transparency-log detections · one row per alerting authority ·{' '}
+          {showAcknowledged
+            ? 'acknowledged alerts stay listed until the condition clears'
+            : 'acknowledged alerts are filtered out of this view, but stay open until the condition clears'}
         </span>
         <Button
           variant="secondary"
@@ -455,6 +510,7 @@ export function LogWitnessAlerts() {
           <AcknowledgeDialog
             key={confirmRow.authority}
             row={confirmRow}
+            showAcknowledged={showAcknowledged}
             onClose={() => setConfirming(null)}
           />
         )}
