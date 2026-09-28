@@ -411,6 +411,56 @@ describe('witness alert worklist — the State column actually varies', () => {
   });
 });
 
+describe('witness alert worklist — the header row means what the cells hold', () => {
+  it('names all six columns, in the order the cells are rendered', () => {
+    // The whole `<thead>` was unguarded: deleting `<th>State</th>`, or swapping
+    // `Reason` and `Detail` so the detail text sits under a "Reason" heading,
+    // left the entire suite green. On a surface whose stated job is saying
+    // WHICH registry is alerting and WHY, a header that does not match its
+    // column is an operator-visible honesty defect, not a cosmetic one.
+    //
+    // PR G's caption gate checks caption-vs-header; nothing checked
+    // header-vs-cell. This is that check.
+    renderWith({ data: rows([row()]) });
+    const headers = [...section().querySelectorAll('thead th')].map((h) => h.textContent);
+    expect(headers).toEqual([
+      'Authority',
+      'Reason',
+      'Detail',
+      // "environmental" is load-bearing: the counter tracks transport failures
+      // only, so unqualified beside "Root mismatch (split view)" the number
+      // reads as this alert's recurrence count. Pinned so the qualification
+      // cannot quietly revert.
+      'Consecutive environmental failures',
+      'Detected',
+      'State',
+    ]);
+  });
+
+  it('each header sits above the cell that carries that fact', () => {
+    // Header text alone is not enough — it must be above the right column.
+    renderWith({
+      data: rows([
+        row({
+          authority: 'hdr.example.com',
+          reason: 'root_mismatch',
+          detail: { error: 'a readable detail' },
+          consecutiveFailures: 4,
+          acknowledgedAt: null,
+        }),
+      ]),
+    });
+    const headers = [...section().querySelectorAll('thead th')].map((h) => h.textContent ?? '');
+    const cells = [...section().querySelectorAll('tbody tr td')].map((c) => c.textContent ?? '');
+    const at = (name: string) => cells[headers.indexOf(name)];
+    expect(at('Authority')).toBe('hdr.example.com');
+    expect(at('Reason')).toBe('Root mismatch (split view)');
+    expect(at('Detail')).toBe('a readable detail');
+    expect(at('Consecutive environmental failures')).toBe('4');
+    expect(at('State')).toContain('Open');
+  });
+});
+
 describe('witness alert worklist — it says WHICH registry is alerting', () => {
   it('renders the authority in FULL, not truncated at the first dot', () => {
     // N1: the worklist exists to cover authorities the console does not proxy,

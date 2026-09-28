@@ -1386,6 +1386,15 @@ describe('the log-witness alert worklist fixture', () => {
     expect(acked).toHaveLength(1);
     // An acknowledgement without an acknowledger would render a blank "by".
     expect(typeof acked[0].acknowledgedBy).toBe('string');
+    // …and it must look like a KEY FINGERPRINT, not a person. The component
+    // renders this value as "key <value>", so an address here reads as
+    // "key ops@playground.local" — the exact identity claim the control plane
+    // never made, and the one `AcknowledgedCell`'s docblock exists to prevent.
+    // `acknowledgedBy` is `req.actorId ?? 'admin'`, and on the API-key path
+    // `actorId` is `token.slice(0, 8) + '...'`. Asserted because putting the
+    // email back left the entire suite green.
+    expect(acked[0].acknowledgedBy).not.toMatch(/@/);
+    expect(acked[0].acknowledgedBy).toMatch(/^(admin|[A-Za-z0-9_]+\.\.\.)$/);
     // …and the unacknowledged rows must carry neither half, or the UI cannot
     // tell them apart.
     for (const row of MOCK_LOG_WITNESS_ALERTS.filter((r) => r.acknowledgedAt === null)) {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getRegistryCapabilities,
@@ -182,7 +184,7 @@ describe('real-mode proxy paths', () => {
   // upstream parses 'false'.
   it('listLogWitnessAlerts → /registries/log-witness/alerts with NO query string by default', async () => {
     const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
-    await listLogWitnessAlerts({}, false);
+    await listLogWitnessAlerts({ includeAcknowledged: false }, false);
     const url = String(fetchMock.mock.calls[0][0]);
     expect(url).toBe('/api/proxy/control-plane/registries/log-witness/alerts');
     expect(url).not.toContain('?');
@@ -196,12 +198,29 @@ describe('real-mode proxy paths', () => {
     );
   });
 
-  it('listLogWitnessAlerts defaults to the filtered listing when called with no arguments', async () => {
-    // The parameter object itself is optional, so `listLogWitnessAlerts()` has
-    // to be the same request as `listLogWitnessAlerts({})` — otherwise the
-    // default drifts depending on the call shape.
+  it('listLogWitnessAlerts requires BOTH arguments, so neither listing is inherited', async () => {
+    // This test used to assert the opposite — that calling it with no
+    // arguments defaults to the filtered listing. That default quietly
+    // reinstated, one layer below the hook, the defect the hook was changed to
+    // remove: acknowledging an alert does not resolve it upstream, so the
+    // filtered listing hides outstanding detections. `demoMode` defaulting to
+    // `false` was the other half, and it is the one hazard "works with zero
+    // backends" exists to prevent — every other function in `client.ts` takes
+    // it required.
+    //
+    // Asserted through the COMPILER, which is the only thing that can enforce
+    // it at a call site that does not exist yet.
+    const src = readFileSync(join(process.cwd(), 'lib/api/client.ts'), 'utf8');
+    const sig = /export async function listLogWitnessAlerts\(([\s\S]*?)\): Promise/.exec(src)?.[1];
+    expect(sig, 'signature not found').toBeDefined();
+    expect(sig).toContain('includeAcknowledged: boolean');
+    expect(sig).toContain('demoMode: boolean');
+    expect(sig, 'no parameter may carry a default').not.toContain('=');
+  });
+
+  it('listLogWitnessAlerts sends no query string for the filtered listing', async () => {
     const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
-    await listLogWitnessAlerts();
+    await listLogWitnessAlerts({ includeAcknowledged: false }, false);
     expect(fetchMock.mock.calls[0][0]).toBe('/api/proxy/control-plane/registries/log-witness/alerts');
   });
 
@@ -210,14 +229,14 @@ describe('real-mode proxy paths', () => {
     // must relay what upstream sent: deriving `total` here would invent a
     // guarantee the endpoint has not made.
     mockFetch(() => jsonResponse({ data: [{ authority: 'r-c' }], total: 7 }));
-    const res = await listLogWitnessAlerts({}, false);
+    const res = await listLogWitnessAlerts({ includeAcknowledged: false }, false);
     expect(res.total).toBe(7);
     expect(res.data).toHaveLength(1);
   });
 
   it('listLogWitnessAlerts surfaces a 403 as an ApiError', async () => {
     mockFetch(() => upstreamResponse({ errorCode: 'FORBIDDEN', message: 'nope' }, 403));
-    await expect(listLogWitnessAlerts({}, false)).rejects.toMatchObject({
+    await expect(listLogWitnessAlerts({ includeAcknowledged: false }, false)).rejects.toMatchObject({
       status: 403,
       errorCode: 'FORBIDDEN',
     });
@@ -229,7 +248,7 @@ describe('real-mode proxy paths', () => {
     // not there at all. Collapsing one into the other would render the
     // all-clear off the back of a missing route.
     mockFetch(() => upstreamResponse({ errorCode: 'NOT_FOUND' }, 404));
-    await expect(listLogWitnessAlerts({}, false)).rejects.toMatchObject({ status: 404 });
+    await expect(listLogWitnessAlerts({ includeAcknowledged: false }, false)).rejects.toMatchObject({ status: 404 });
   });
 
   it('listEnrollments → reads { data } from /registries/enrollments', async () => {

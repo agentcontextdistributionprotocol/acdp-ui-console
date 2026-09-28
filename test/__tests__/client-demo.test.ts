@@ -544,7 +544,7 @@ describe('listLogWitnessAlerts (demo)', () => {
     expect(acked.length).toBeGreaterThanOrEqual(1);
     expect(acked.length).toBeLessThan(MOCK_LOG_WITNESS_ALERTS.length);
 
-    const def = await listLogWitnessAlerts({}, DEMO);
+    const def = await listLogWitnessAlerts({ includeAcknowledged: false }, DEMO);
     expect(def.data).toHaveLength(MOCK_LOG_WITNESS_ALERTS.length - acked.length);
     expect(def.data.every((r) => r.acknowledgedAt === null)).toBe(true);
 
@@ -556,7 +556,7 @@ describe('listLogWitnessAlerts (demo)', () => {
   });
 
   it('reports `total` as the rows it actually returned, not the table size', async () => {
-    const def = await listLogWitnessAlerts({}, DEMO);
+    const def = await listLogWitnessAlerts({ includeAcknowledged: false }, DEMO);
     expect(def.total).toBe(def.data.length);
     const all = await listLogWitnessAlerts({ includeAcknowledged: true }, DEMO);
     expect(all.total).toBe(all.data.length);

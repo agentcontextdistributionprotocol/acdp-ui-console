@@ -838,9 +838,24 @@ export async function getLogWitness(authority: string, demoMode: boolean): Promi
  * caller must not invent one, and the envelope's `total` is whatever upstream
  * put there rather than a page count.
  */
+/**
+ * BOTH parameters are REQUIRED, with no defaults — unlike the shape this
+ * function shipped with, and deliberately so.
+ *
+ * `demoMode` matches every other function in this file, which take it
+ * required; defaulting it to `false` means a caller who forgets it fires a real
+ * network request while the console is in demo mode, which is the one hazard
+ * `CLAUDE.md`'s "works with zero backends" rule exists to prevent.
+ *
+ * `includeAcknowledged` had a default of `false`, which quietly reinstated one
+ * layer down exactly the defect the hook above was changed to remove:
+ * acknowledging an alert does not resolve it upstream, so the filtered listing
+ * hides outstanding detections, and which listing a caller wants is a judgement
+ * about what it then claims from an empty result. A caller must say.
+ */
 export async function listLogWitnessAlerts(
-  { includeAcknowledged = false }: { includeAcknowledged?: boolean } = {},
-  demoMode = false,
+  { includeAcknowledged }: { includeAcknowledged: boolean },
+  demoMode: boolean,
 ): Promise<LogWitnessAlertsResponse> {
   const path = `/registries/log-witness/alerts${includeAcknowledged ? '?includeAcknowledged=true' : ''}`;
   if (demoMode) {
