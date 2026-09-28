@@ -564,3 +564,151 @@ describe('run-revoked-1: the RFC-ACDP-0014 fixture', () => {
     expect(revokedRun?.trust?.audited ?? 0).toBeGreaterThanOrEqual((revokedRun?.trust?.revoked ?? []).length);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// Demo registries advertise a profile set a real registry would BOOT with (#95).
+//
+// `MOCK_CAPABILITIES.b.profiles` was `['acdp-consumer', 'acdp-federated']`.
+// Both are invalid, in two different ways, and a real `acdp-registry-rs`
+// refuses to start with either — so the console's default mode depicted a
+// registry that cannot exist, and anyone reading the fixture to learn what a
+// profile id looks like learned two wrong ones.
+//
+//   `acdp-consumer`  — a real spec id, but a CONSUMER profile. The doc comment
+//                      on `REGISTRY_ADVERTISABLE_PROFILES` excludes it by name:
+//                      a registry is forbidden to advertise it.
+//   `acdp-federated` — not a spec id at all. The real one is
+//                      `acdp-registry-federated`.
+//
+// The guards below are the ones that would have caught it, and the second is
+// deliberately about the CLASS of drift rather than this instance.
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * A literal mirror of `REGISTRY_ADVERTISABLE_PROFILES` from
+ * `acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340` — the set
+ * `acdp-registry-server/src/main.rs:415-431` enforces at STARTUP, so a registry
+ * advertising anything outside it does not run.
+ *
+ * Mirrored rather than imported on purpose. A cross-repo import is not
+ * available here and would be wrong if it were: this repo must not take a
+ * dependency on a Rust crate's source layout. The cost is that the mirror can
+ * go stale silently, which the length assertion below makes at least visible —
+ * an eighth profile upstream turns this red rather than passing quietly.
+ *
+ * Upstream keeps ITS copy honest with a conformance test
+ * (`registry_advertisable_profiles_matches_spec`) that recomputes the set from
+ * the pinned spec's `registries/profiles.json`. That test is why mirroring the
+ * const is safe: the const cannot drift from the spec without upstream CI
+ * going red first.
+ */
+const REGISTRY_ADVERTISABLE_PROFILES = [
+  'acdp-registry-core',
+  'acdp-registry-discovery',
+  'acdp-registry-federated',
+  'acdp-registry-receipts',
+  'acdp-registry-head-receipts',
+  'acdp-registry-transparency-log',
+  'acdp-registry-lifecycle',
+];
+
+/**
+ * The acdp version each profile first appears in, for the version-coherence
+ * guard. `core`/`discovery`/`federated` are the 0.1.0 baseline; receipts is
+ * RFC-ACDP-0010 at 0.2.0; the three trust profiles are the 0.3.0 set
+ * (RFC-ACDP-0011/0012/0013), as `registry-card.tsx`'s own tooltip copy records.
+ */
+const PROFILE_MIN_VERSION: Record<string, string> = {
+  'acdp-registry-core': '0.1.0',
+  'acdp-registry-discovery': '0.1.0',
+  'acdp-registry-federated': '0.1.0',
+  'acdp-registry-receipts': '0.2.0',
+  'acdp-registry-head-receipts': '0.3.0',
+  'acdp-registry-transparency-log': '0.3.0',
+  'acdp-registry-lifecycle': '0.3.0',
+};
+
+function versionTuple(v: string): number[] {
+  return v.split('.').map((n) => Number(n));
+}
+function atLeast(actual: string, required: string): boolean {
+  const [a, b] = [versionTuple(actual), versionTuple(required)];
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return true;
+}
+
+describe('demo registry profiles are ones a real registry would start with', () => {
+  it('mirrors a seven-entry upstream set', () => {
+    // The length is asserted, not just the contents, because the failure mode
+    // this mirror has is going STALE — an eighth profile added upstream would
+    // otherwise pass here forever while the subset check below quietly stopped
+    // being a real constraint.
+    expect(REGISTRY_ADVERTISABLE_PROFILES).toHaveLength(7);
+    expect(new Set(REGISTRY_ADVERTISABLE_PROFILES).size).toBe(7);
+    // The two ids #95 removed must not be in the mirror either — they are the
+    // exact values a careless "fix" would put back.
+    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-consumer');
+    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-federated');
+  });
+
+  it.each(Object.keys(MOCK_CAPABILITIES))(
+    '%s advertises only advertisable profiles',
+    (authority) => {
+      const caps = MOCK_CAPABILITIES[authority as keyof typeof MOCK_CAPABILITIES];
+      expect(caps.profiles.length).toBeGreaterThan(0);
+      for (const p of caps.profiles) {
+        expect(REGISTRY_ADVERTISABLE_PROFILES, `${authority} advertises ${p}`).toContain(p);
+      }
+    },
+  );
+
+  it('registry-b advertises exactly what the playground configures for it', () => {
+    // Not a taste call. `acdp-playground/config/registry-b.toml:8` is
+    // `["acdp-registry-core", "acdp-registry-discovery"]`, and this demo depicts
+    // that playground — so the set is copied, and copied in order.
+    expect(MOCK_CAPABILITIES.b.profiles).toEqual([
+      'acdp-registry-core',
+      'acdp-registry-discovery',
+    ]);
+  });
+
+  it('keeps registry-b on 0.1.0 and keeps it the simpler peer', () => {
+    // The narrative the invalid ids were there to serve, preserved. B must stay
+    // BELOW A or the demo stops exercising the console's version-aware
+    // surfaces — which is the reason 0.1.0 is deliberate.
+    expect(MOCK_CAPABILITIES.b.acdp_version).toBe('0.1.0');
+    expect(MOCK_CAPABILITIES.b.profiles.length).toBeLessThan(MOCK_CAPABILITIES.a.profiles.length);
+  });
+
+  it('never advertises a profile that postdates its own acdp_version', () => {
+    // The CLASS of drift, not this instance. Adding `acdp-registry-receipts`
+    // to B would pass every assertion above — it is a real, advertisable id —
+    // and still describe an impossible registry, because receipts arrived at
+    // 0.2.0 and B claims 0.1.0.
+    for (const [authority, caps] of Object.entries(MOCK_CAPABILITIES)) {
+      for (const p of caps.profiles) {
+        const min = PROFILE_MIN_VERSION[p];
+        expect(min, `${p} has no minimum version recorded`).toBeDefined();
+        expect(
+          atLeast(caps.acdp_version, min),
+          `${authority} claims acdp ${caps.acdp_version} but advertises ${p} (needs ${min})`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('records a minimum version for every advertisable profile', () => {
+    // Otherwise the guard above silently skips any profile the table forgot.
+    for (const p of REGISTRY_ADVERTISABLE_PROFILES) expect(PROFILE_MIN_VERSION[p]).toBeDefined();
+  });
+
+  it('the version comparison is not string comparison', () => {
+    // `'0.10.0' > '0.9.0'` is false as strings. Nothing in the fixture reaches
+    // double digits today, which is exactly why this would rot unnoticed.
+    expect(atLeast('0.10.0', '0.9.0')).toBe(true);
+    expect(atLeast('0.3.0', '0.3.0')).toBe(true);
+    expect(atLeast('0.1.0', '0.2.0')).toBe(false);
+  });
+});
