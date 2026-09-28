@@ -704,11 +704,37 @@ textarea {
   font-size: 11px;
   color: var(--muted);
   /* `max-width: 220px`, `overflow: hidden` and `text-overflow: ellipsis` were
-     here and were PROVABLY INERT. CSS 2.1 §10.4 leaves `max-width` undefined on
-     a table cell, and auto table layout sizes the column to its content
-     regardless — so no DID was ever truncated and no ellipsis ever rendered.
-     Worse than useless: reading them suggested the overflow problem was already
-     handled, which is part of why it went unfixed.
+     here. They were INERT ON CELLS, and a deliberate widening everywhere else.
+     An earlier draft of this comment said "provably inert" flat out; round 3 of
+     this change's gate measured it and that was false at three sites. Stated
+     precisely, because the difference is the whole behaviour change:
+
+     Twenty-three elements match `.data-table .did`: 18 cells and 5 spans.
+     Twenty of them were unaffected. On `<td class="did">` the rules did
+     nothing — CSS 2.1 §10.4 leaves `max-width` undefined on a table cell, and
+     auto table layout sizes the column to its content regardless, so no DID was
+     ever truncated and no ellipsis ever rendered there. Two of the five spans
+     (`trust/page.tsx`'s two directly inside a `<td>`) are non-replaced INLINE
+     elements, which §10.4 excludes by name, so they were inert too. Reading the
+     rules suggested the overflow problem was handled, which is part of why it
+     went unfixed.
+
+     The remaining three spans are FLEX ITEMS — `trust/page.tsx`'s discrepancy
+     list and both of `run-trust-panel.tsx`'s — and on those they were live. CSS
+     Flexbox §4 blockifies a flex item's `display`; a blockified item is not a
+     non-replaced inline, a table row or a row group, so §10.4 applies and
+     `max-width` took effect. With `overflow: hidden` and the surviving
+     `white-space: nowrap`, CSS-UI §5.2 rendered the ellipsis. Those three spans
+     WERE capped at 220px and are not now.
+
+     That widening is intended, not overlooked. Those spans carry whole ctx_ids
+     and publisher DIDs — the Sources column reaches ~69 characters — and an
+     ellipsis mid-identifier is ambiguous about whether the elision is in the
+     identifier, the same objection this file already records against wrapping.
+     Before this change there was nowhere to put the rest of it. Now the table
+     scrolls, so the full identifier is reachable, and hiding two thirds of an
+     identifier behind a tooltip-less ellipsis is the worse of the two. The cost
+     is a wider column in two tables, paid inside a scroll container.
 
      `white-space: nowrap` STAYS and is now load-bearing. A wrapped DID is
      unreadable and a mid-string break is ambiguous about whether the break is

@@ -10,9 +10,14 @@
 // WHAT THESE TESTS CAN AND CANNOT PROVE. jsdom performs no layout — every
 // element is 0×0, `scrollWidth` equals `clientWidth` always — so nothing here
 // can demonstrate the 400px behaviour. No `playwright` is installed and adding
-// one is out of this plan's scope. So the layout half is a documented MANUAL
-// gate, recorded in `PROGRESS.md`, and these tests pin the three things that are
-// mechanically checkable and that a future edit would silently break:
+// one is out of this plan's scope. So the layout half was a MANUAL gate: the
+// eleven tables were checked by hand at 400px before this shipped. That record
+// lives in the session's working notes, which are gitignored by this repo's
+// convention — so for anyone reading the repo it is not evidence, it is a
+// claim, and it is written here as one. Treat the layout half as unverified by
+// CI and re-check it by hand after any change to `.shell`, `.content` or
+// `.table-scroll`. These tests pin the three things that ARE mechanically
+// checkable and that a future edit would silently break:
 //
 //   1. The STRUCTURE — every `.data-table` really is inside a `TableScroll`, the
 //      container is focusable, and it carries a name a browser will honour.
@@ -200,11 +205,18 @@ describe('the CSS that makes the wrapper do something', () => {
     expect(content).not.toMatch(/overflow-x/);
   });
 
-  it('drops the three inert .did rules and keeps the four real ones', () => {
-    // `max-width: 220px`, `overflow: hidden` and `text-overflow: ellipsis` on a
-    // table cell did nothing: CSS 2.1 §10.4 leaves `max-width` undefined there
-    // and auto table layout sizes the column to content regardless. They were
-    // worse than useless — reading them suggested the overflow was handled.
+  it('drops the three .did rules and keeps the four real ones', () => {
+    // On a table CELL those three did nothing: CSS 2.1 §10.4 leaves `max-width`
+    // undefined there and auto table layout sizes the column to content
+    // regardless. Reading them suggested the overflow was handled.
+    //
+    // The word "inert" used to be in this title and in the CSS comment without
+    // qualification, and round 3 of this change's gate measured it false: three
+    // `.did` spans under `.data-table` are FLEX ITEMS, which CSS Flexbox §4
+    // blockifies, so §10.4 applied and they really were capped and ellipsised.
+    // Dropping the cap on those three is a deliberate widening, not a no-op —
+    // the partition is pinned by the test below, and the reasoning is in
+    // `globals.css` beside the rules.
     const did = rule('.data-table .did');
     expect(did).not.toMatch(/max-width/);
     expect(did).not.toMatch(/overflow/);
@@ -336,7 +348,18 @@ function parseTables(file: string, src: string): ParsedTable[] {
 
 const TABLES = FILES.flatMap((f) => parseTables(f, SOURCES.get(f)!));
 
-describe('every data-table in the repo is wrapped', () => {
+// The names in this block say "every data-table this gate can see", not "every
+// data-table", and round 3's gate is why: three shapes escape discovery and
+// none of them is one the repo currently writes. A `>` inside a className
+// EXPRESSION hides the file (`[^>]` cannot cross it); a SECOND table in an
+// already-discovered file is invisible if any attribute precedes its
+// `className`; and a table with row headers but no `<thead>` never reaches the
+// caption check. Surveyed at the time: of 43 className expressions under `app/`
+// and `components/`, none contains a `>`, none uses `cn(`, and all eleven
+// tables are `<table className=` first with a `<thead>`. So the claim in the
+// docblock — any shape THIS REPO writes — holds; these titles are scoped to
+// match it rather than promising the general case.
+describe('every data-table this gate can see is wrapped', () => {
   it('discovers the call sites rather than being told them', () => {
     // A lower bound, not an equality: a legitimately-wrapped twelfth table must
     // not turn this red. The per-table checks below are what an unwrapped one
@@ -355,7 +378,7 @@ describe('every data-table in the repo is wrapped', () => {
     expect(FILES.some((f) => f.startsWith('components/'))).toBe(true);
   });
 
-  it.each(FILES)('%s wraps each of its tables', (file) => {
+  it.each(FILES)('%s wraps each table this gate parses out of it', (file) => {
     const src = SOURCES.get(file)!;
     const opens = [...src.matchAll(TABLE_OPEN)];
     expect(opens.length).toBeGreaterThan(0);
@@ -408,8 +431,15 @@ describe('every data-table in the repo is wrapped', () => {
 // and over three characters, and TEN of the eleven described columns the table
 // does not have — including `app/security/page.tsx`, whose table is the
 // revocation feed and whose caption called it "Registry signing keys". A caption
-// is read instead of the header row by exactly the users who cannot see the
-// header row, so a wrong one is worse than none.
+// is the table's accessible NAME: a screen reader announces it on entering the
+// table, and still announces each `<th>` per cell in table-navigation mode — it
+// does not replace the header row, and an earlier version of this comment said
+// it did. What it does is tell a non-sighted user what they have arrived at
+// before they navigate a single cell, which is precisely when a wrong one does
+// its damage. The verbosity cost is real and accepted: enumerating columns
+// means the enrollments table announces seven column names on entry. That is
+// the price of a caption a test can check, and the alternative — free prose —
+// is how ten of eleven came to be wrong and stay wrong.
 //
 // THE CAPTION FORMAT IS PART OF THE CONTRACT, deliberately. A caption must read
 // "<name>: <col>, <col> and <col>": a free-prose caption — "the most recent runs
@@ -423,7 +453,7 @@ describe('every data-table in the repo is wrapped', () => {
 // Both directions are asserted, because they fail independently: a caption can
 // omit a real column (incomplete) or name an absent one (false).
 // ══════════════════════════════════════════════════════════════════════
-describe('each caption enumerates its table’s real columns', () => {
+describe('each parsed caption enumerates its table’s real columns', () => {
   it.each(TABLES.map((t, i) => [`${t.file} #${i}`, t] as const))(
     '%s names exactly its <th> set',
     (_id, table) => {
@@ -586,6 +616,114 @@ describe('the run trust panel keeps the spacing it had', () => {
     const groups = container.querySelectorAll('.table-scroll');
     expect(groups).toHaveLength(1);
     expect((groups[0] as HTMLElement).style.marginBottom).toBe('0px');
+  });
+});
+
+describe('which .did elements the dropped cap actually affected', () => {
+  // The claim in `globals.css` is a partition of every element matching
+  // `.data-table .did` into the ones the deleted `max-width`/`overflow`/
+  // `text-overflow` rules could not reach and the three they could. A partition
+  // stated in a comment is a claim nothing checks — which is exactly how the
+  // unqualified "provably inert" survived two gate rounds. So it is enumerated
+  // here from the same sources the wrapper gate walks.
+  //
+  // A FOURTH non-cell `.did` appearing under a `.data-table` should fail this
+  // and be re-derived, not waved through: whether the rules reached it depends
+  // on its display, and the answer is not the same for a cell, an inline span
+  // and a flex item.
+  const CELL = /<td([^>]*?)className="did"/g;
+  const NON_CELL = /<(?!td\b)(\w+)([^>]*?)className="did"/g;
+
+  /**
+   * Every `.did` element in a file that contains a `.data-table`.
+   *
+   * Re-read from disk rather than taken from `SOURCES`, which is whitespace-
+   * collapsed so the wrapper gate survives a reformat — that collapse makes
+   * every match report line 1, and a line number nobody can act on is worse
+   * than none.
+   */
+  function didElements() {
+    const cells: string[] = [];
+    const others: Array<{ file: string; line: number; tag: string }> = [];
+    for (const file of FILES) {
+      const raw = readFileSync(join(process.cwd(), file), 'utf8');
+      for (const m of raw.matchAll(CELL)) cells.push(`${file}:${lineOf(raw, m.index!)}`);
+      for (const m of raw.matchAll(NON_CELL)) {
+        others.push({ file, line: lineOf(raw, m.index!), tag: m[1] });
+      }
+    }
+    return { cells, others };
+  }
+
+  function lineOf(raw: string, index: number): number {
+    return raw.slice(0, index).split('\n').length;
+  }
+
+  it('finds the cells, and they are the bulk of them', () => {
+    const { cells } = didElements();
+    // `max-width` is undefined on a table cell (CSS 2.1 §10.4) and auto table
+    // layout sizes the column to content, so none of these was ever capped.
+    expect(cells.length).toBeGreaterThanOrEqual(18);
+  });
+
+  it('pins the NON-CELL .did elements, which is where the behaviour changed', () => {
+    const { others } = didElements();
+    const ids = others.map((o) => `${o.file}:${o.tag}:${o.line}`).sort();
+    // Seven matches live in table files. Only five of them are inside a
+    // `.data-table` in the DOM — `agents/page.tsx`'s is in the recent-activity
+    // list beside the table and `security/page.tsx`'s is in the JWKS card, so
+    // the selector never reached either. Both are listed so the count is
+    // reproducible from this file rather than taken on trust.
+    expect(ids).toEqual([
+      'app/agents/page.tsx:span:112', // NOT in a table — activity list
+      'app/security/page.tsx:div:199', // NOT in a table — JWKS card
+      'app/trust/page.tsx:span:194', // flex item — WAS capped
+      'app/trust/page.tsx:span:214', // inline in a <td> — inert (§10.4)
+      'app/trust/page.tsx:span:231', // inline in a <td> — inert (§10.4)
+      'components/runs/run-trust-panel.tsx:span:138', // flex item — WAS capped
+      'components/runs/run-trust-panel.tsx:span:185', // flex item — WAS capped
+    ]);
+  });
+
+  it('MEASURES the three that were capped: each is a blockified flex item', () => {
+    // The derivation that matters, taken off the rendered DOM rather than read
+    // off the source. CSS Flexbox §4 blockifies a flex item, and a blockified
+    // box is not a non-replaced inline, a table row or a row group — the three
+    // things CSS 2.1 §10.4 excludes — so `max-width` applied to these and the
+    // ellipsis rendered. jsdom performs no layout, so this asserts the
+    // STRUCTURE the derivation turns on, not a pixel width.
+    // `REVOKED.sources` is empty, and an empty `sources` renders no span at
+    // all — so the default fixture would make this vacuous. One source is what
+    // puts a `span.did` inside the flex column.
+    const { container } = render(
+      <RunTrustPanel
+        trust={summary({
+          revoked: [
+            {
+              ...REVOKED,
+              sources: [
+                { ctxId: 'acdp://registry-a.playground.local/c4f1a2b3', publisher: 'did:web:registry-a.local:agents:cross-a' },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+    const spans = [...container.querySelectorAll('table.data-table span.did')];
+    expect(spans.length).toBeGreaterThanOrEqual(1);
+    for (const span of spans) {
+      const parent = span.parentElement as HTMLElement;
+      expect(parent.style.display).toBe('flex');
+    }
+  });
+
+  it('DISCRIMINATES: a .did that is a table cell is not a flex item', () => {
+    const { container } = render(<RunTrustPanel trust={summary({ revoked: [REVOKED] })} />);
+    const cells = [...container.querySelectorAll('table.data-table td.did')];
+    expect(cells.length).toBeGreaterThanOrEqual(1);
+    for (const cell of cells) {
+      expect((cell.parentElement as HTMLElement).style.display).not.toBe('flex');
+    }
   });
 });
 
