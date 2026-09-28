@@ -893,11 +893,35 @@ export function demoDashboardForWindow(window: string): CpDashboardOverview {
 }
 
 // ── Agents ────────────────────────────────────────────────────────────
+// `/agents` renders an agent's `firstSeen`/`lastSeen` on the SAME card as the
+// list of that agent's own events (`app/agents/page.tsx:88-89` beside `:111`),
+// so the two must not disagree. The invariant, held by `mock-data.test.ts`:
+//
+//   firstSeen <= the agent's earliest event   and   lastSeen >= its latest
+//
+// where "its events" is `MOCK_CONTEXT_EVENTS.filter(e => e.agentId === did)`,
+// which is exactly what `listCpEvents({ agentId })` returns. `contextCount` is
+// NOT part of the invariant — it is a registry-wide total (DID_A publishes 12
+// and appears in one demo event), not a count of the feed.
+//
+// Three rows violated it before this phase, two of them because moving an
+// event is what breaks the other end of the pair:
+//
+//   DID_KEY  — was `iso(140)` on both, the pre-move value of ev-7. The card
+//              read "last active 2 min ago" above an only-event dated ~83 days
+//              back. Now the publish itself, since ev-7 is all this ephemeral
+//              did:key agent ever did (ev-8/ev-9 are the registry's).
+//   DID_SOLO — was `iso(240)`, which ev-10's move to `iso(210)` left 30s in
+//              the agent's own past. Now the retraction, its latest action.
+//   DID_B    — was `iso(21)`, 18s before its own ev-3 publish at `iso(3)`.
+//              PRE-EXISTING, not introduced here; fixed because an exception
+//              list on the guard below would be the laundering pattern this
+//              plan exists to remove.
 export const MOCK_AGENTS: KnownAgent[] = [
   { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
-  { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(21) },
-  { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(240) },
-  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: iso(140), lastSeen: iso(140) },
+  { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(3) },
+  { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(210) },
+  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: ATTESTED_PUBLISHED_TS },
 ];
 
 // ── Registries ────────────────────────────────────────────────────────

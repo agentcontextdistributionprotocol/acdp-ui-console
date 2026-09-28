@@ -18,6 +18,7 @@ import {
   MOCK_ENROLLMENTS,
   MOCK_CAPABILITIES,
   MOCK_SDK_MATRIX,
+  MOCK_AGENTS,
   SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
 import * as MockData from '@/lib/data/mock-data';
@@ -1273,5 +1274,84 @@ describe('ev-1 and ev-2 are a KNOWN, DOCUMENTED exception', () => {
     const arcticReceipt = Date.parse(MockCrypto.MOCK_CRYPTO.arcticSource.registry_receipt.created_at);
     const ev1 = Date.parse(MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-1')!.eventTs);
     expect(Math.abs(ev1 - arcticReceipt)).toBeGreaterThan(DAY_MS);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// An agent's summary row agrees with the agent's own events.
+//
+// The gate on the phase above found `MOCK_AGENTS[DID_KEY]` still carrying
+// `iso(140)` — the value ev-7 had BEFORE this phase moved it onto the receipt
+// clock. `/agents` renders `First seen` / `Last active` directly above that
+// agent's RECENT ACTIVITY list (`app/agents/page.tsx:88-89` and `:111`), so the
+// card claimed the agent was last active two minutes ago immediately above its
+// only recorded activity, dated ~83 days back. That is symptom (1) of #85 —
+// one surface contradicting another about the same fact — created by the fix
+// for symptom (2).
+//
+// The lesson from this phase's earlier gate rounds is that the guard has to
+// cover the CLASS, not the instance: moving ANY event can strand the agent row
+// keyed to it, in either direction. So this derives both ends from the feed
+// rather than pinning literals. Run against the pre-fix fixture it fails on
+// three rows, only one of which was the reported one:
+//
+//   DID_KEY  — lastSeen 7,231,538s AFTER its only event   (the gate's finding)
+//   DID_SOLO — lastSeen 30s BEFORE its latest event       (this phase's ev-10
+//              move; missed by the gate, same defect, same diff)
+//   DID_B    — lastSeen 18s BEFORE its latest event       (pre-existing)
+//
+// `contextCount` is deliberately NOT asserted: it is a registry-wide total, so
+// it neither equals nor bounds the number of demo events.
+// ══════════════════════════════════════════════════════════════════════
+describe('every agent row agrees with that agent’s own event feed', () => {
+  /** Exactly what `listCpEvents({ agentId })` selects (`lib/api/client.ts`). */
+  function eventsOf(did: string) {
+    return MOCK_CONTEXT_EVENTS.filter((e) => e.agentId === did).map((e) => ({
+      id: e.id,
+      ts: Date.parse(e.eventTs),
+    }));
+  }
+
+  const WITH_EVENTS = MOCK_AGENTS.filter((a) => eventsOf(a.agentDid).length > 0);
+
+  it('covers most of the roster, so the per-agent checks are not vacuous', () => {
+    // If a rename silently emptied every filter, the `it.each` below would pass
+    // by iterating over nothing. Measured: 4 of 4 rows carry at least one event.
+    expect(MOCK_AGENTS.length).toBeGreaterThanOrEqual(4);
+    expect(WITH_EVENTS.length).toBe(MOCK_AGENTS.length);
+  });
+
+  it.each(WITH_EVENTS.map((a) => [a.agentDid, a] as const))(
+    '%s: firstSeen <= its earliest event, lastSeen >= its latest',
+    (_did, agent) => {
+      const evs = eventsOf(agent.agentDid);
+      const earliest = Math.min(...evs.map((e) => e.ts));
+      const latest = Math.max(...evs.map((e) => e.ts));
+      const ids = evs.map((e) => e.id).join(', ');
+
+      // `<=` and `>=`, not `<`/`>`: an agent whose only act is one publish has
+      // firstSeen === lastSeen === that event, which is correct, not a defect.
+      expect(
+        Date.parse(agent.firstSeen),
+        `firstSeen postdates ${agent.agentDid}'s earliest event (${ids})`,
+      ).toBeLessThanOrEqual(earliest);
+      expect(
+        Date.parse(agent.lastSeen),
+        `lastSeen predates ${agent.agentDid}'s latest event (${ids})`,
+      ).toBeGreaterThanOrEqual(latest);
+    },
+  );
+
+  it('the ephemeral did:key agent is pinned to the attested publish, not to a literal', () => {
+    // The specific instance the gate caught, asserted against the same source
+    // the event derives from rather than against a copied timestamp — so the
+    // next move of the receipt clock carries this row with it instead of
+    // stranding it again.
+    const key = MOCK_AGENTS.find((a) => a.agentDid.startsWith('did:key:'));
+    expect(key, 'the did:key agent row is what this asserts about').toBeTruthy();
+    const ev7 = MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-7');
+    expect(ev7?.agentId).toBe(key!.agentDid);
+    expect(key!.firstSeen).toBe(ev7!.eventTs);
+    expect(key!.lastSeen).toBe(ev7!.eventTs);
   });
 });
