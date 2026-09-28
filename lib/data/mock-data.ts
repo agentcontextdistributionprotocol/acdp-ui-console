@@ -929,19 +929,32 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
   // choice knowingly made against the facts, which is exactly the kind of thing
   // that should be written down rather than discovered later.
   //
-  // Its `profiles` are NOT evidence for that story and should not be read as
-  // such. `acdp-consumer` is a profile a registry is explicitly forbidden to
-  // advertise, and `acdp-federated` is not a spec profile id at all (the real
-  // one is `acdp-registry-federated`) — a real registry refuses to start with
-  // either. They are demo shorthand that predates this plan. Left alone here
-  // because correcting them is a dataset change with its own blast radius, not
-  // because they are right. Tracked as issue #95.
+  // Its `profiles` ARE now evidence-backed, which they were not before (#95).
+  // They used to read `['acdp-consumer', 'acdp-federated']`: the first is a
+  // profile a registry is explicitly FORBIDDEN to advertise (the doc comment on
+  // `REGISTRY_ADVERTISABLE_PROFILES` excludes it by name) and the second is not
+  // a spec profile id at all — the real one is `acdp-registry-federated`. A
+  // real `acdp-registry-rs` refuses to BOOT with either, so the demo depicted a
+  // registry that could not exist.
+  //
+  // The replacement is copied from the playground this demo depicts rather than
+  // chosen: `acdp-playground/config/registry-b.toml:8` configures exactly
+  // `["acdp-registry-core", "acdp-registry-discovery"]`. That makes it
+  // verifiable instead of a taste call, and it preserves the narrative the old
+  // values were there for — B is still the simpler peer, two profiles against
+  // A's six.
+  //
+  // `acdp_version: '0.1.0'` is unaffected and stays: neither of the two
+  // profiles implies a version above it, so nothing in the set contradicts the
+  // string. (`acdp-registry-receipts` would — see `PROFILE_MIN_VERSION` in
+  // `mock-data.test.ts`, which now asserts that class of drift, not just this
+  // instance.)
   b: {
     acdp_version: '0.1.0',
     registry_did: 'did:web:registry-b.playground.local',
     authority: AUTH_B,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
-    profiles: ['acdp-consumer', 'acdp-federated'],
+    profiles: ['acdp-registry-core', 'acdp-registry-discovery'],
     anonymous_public_reads: true,
     limits: { max_payload_bytes: 1_048_576, max_search_limit: 100, max_embedded_bytes: 65_536 },
   },
