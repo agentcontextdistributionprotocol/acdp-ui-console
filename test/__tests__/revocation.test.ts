@@ -17,7 +17,6 @@ import {
   hasTrustViolation,
   violationCount,
   runRevocationReported,
-  dashboardRevocationReported,
   dashboardRevocationState,
   isKeyRevocationFacet,
   KEY_REVOCATION_TYPE_ALIASES,
@@ -280,20 +279,24 @@ describe('runRevocationReported', () => {
   });
 });
 
-describe('dashboardRevocationReported', () => {
-  it('a pre-Phase-14 backend that omits the field is not-reported', () => {
-    expect(dashboardRevocationReported(undefined)).toBe(false);
-  });
-
-  it('all-zero is not-reported; any non-zero reports', () => {
-    expect(
-      dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 }),
-    ).toBe(false);
-    expect(
-      dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 1 }),
-    ).toBe(true);
-  });
-});
+// MIGRATED, not deleted (#97). `dashboardRevocationReported` no longer exists;
+// each of its two tests maps onto a named `kind` of its replacement, and the
+// mapping is the point of the change:
+//
+//   "a backend that omits the field is not-reported"
+//     -> `dashboardRevocationState(undefined, undefined).kind === 'unknown'`
+//        The old name said "not reported", which the dashboard then rendered as
+//        a claim about the deployment. `unknown` is what the evidence supports.
+//
+//   "all-zero is not-reported; any non-zero reports"
+//     -> all-zero now SPLITS on whether the deployment says it ran the check:
+//        `checked-clean` when it did, `disabled` when it says it did not,
+//        `unknown` when it cannot say. Any non-zero is still `reported`, and is
+//        still reported even when the flags disagree, because a count is
+//        self-evidencing.
+//
+// Every one of those four is asserted in the block above, which is why nothing
+// is lost by this removal.
 
 // ══════════════════════════════════════════════════════════════════════
 // The tri-state that replaces the boolean (#97).

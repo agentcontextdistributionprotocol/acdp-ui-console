@@ -281,40 +281,27 @@ export function runRevocationReported(trust: RunTrustSummary): boolean {
 export type { DashboardRevocation };
 
 /**
- * SUPERSEDED by `dashboardRevocationState` below, and scheduled for removal.
+ * REMOVED with #97: `dashboardRevocationReported`, a type predicate over the
+ * dashboard's revocation counters.
  *
- * It survives this commit for one reason: its only call site is
- * `app/dashboard/page.tsx`, which this phase deliberately does not touch, and a
- * type predicate cannot be deleted before its consumer is rewritten without
- * leaving `tsc` red at the phase boundary. The next phase deletes the predicate,
- * its import, its call site and its tests in the diff that introduces the
- * replacement — which is the only point at which removing it compiles.
+ * It answered "did this window report a classification?" by testing whether any
+ * of the three counters exceeded zero — which cannot tell a deployment that ran
+ * the check and found nothing from one that never looked. That was its whole
+ * failure mode and it is the whole content of #97: a check that IS enabled over
+ * a genuinely clean estate read "not reported" forever.
  *
- * Written as a TYPE PREDICATE so the three KPIs following a true result could
- * read `d.keyRevocation.preCompromise` without asserting past the optional with
- * `!`. `state.kind === 'reported'` narrowing `state.counts` does the same job
- * without the predicate-plus-optional dance, which is why this goes away rather
- * than sitting alongside forever.
+ * It was a type predicate so the three KPIs following a true result could read
+ * `d.keyRevocation.preCompromise` without asserting past the optional with `!`.
+ * `dashboardRevocationState` keeps that property and improves on it —
+ * `state.kind === 'reported'` narrows `state.counts` — so there was nothing left
+ * for the predicate to do that the discriminated union does not do better, and
+ * leaving it exported would have left a second, weaker answer to the same
+ * question available to the next surface that needed one.
  *
- * Its remaining failure mode is exactly the one the explicit flag fixes: a
- * check that IS enabled over a genuinely clean estate reads "not reported"
- * forever, indistinguishable from a deployment that never looked.
- *
- * The parameter accepts `null` as well as `undefined`. That is not a behaviour
- * change — `if (!keyRevocation)` below already handled `null` at runtime — it
- * is the type catching up with the wire, now that `CpDashboardOverview` says
- * `keyRevocation?: DashboardRevocation | null` as upstream actually sends it.
+ * `runRevocationReported` above is a DIFFERENT function over run-scoped data and
+ * is deliberately untouched: there is no `features` equivalent for a single run,
+ * so for one run "all zero" genuinely is all the evidence there is.
  */
-export function dashboardRevocationReported(
-  keyRevocation: DashboardRevocation | null | undefined,
-): keyRevocation is DashboardRevocation {
-  if (!keyRevocation) return false; // pre-Phase-14 backend: genuinely absent
-  return (
-    keyRevocation.preCompromise > 0 ||
-    keyRevocation.revokedAtOrAfter > 0 ||
-    keyRevocation.revokedTimeUnverifiable > 0
-  );
-}
 
 // ── the two spellings of the revocation context type ───────────────────
 //
@@ -403,7 +390,12 @@ export function dashboardRevocationState(
   // say, a non-zero count means the check ran and found that. Checked first so
   // the tile renders figures even against a backend whose `features` is missing
   // or contradicts them.
-  if (keyRevocation && dashboardRevocationReported(keyRevocation)) {
+  if (
+    keyRevocation &&
+    (keyRevocation.preCompromise > 0 ||
+      keyRevocation.revokedAtOrAfter > 0 ||
+      keyRevocation.revokedTimeUnverifiable > 0)
+  ) {
     return { kind: 'reported', counts: keyRevocation };
   }
 

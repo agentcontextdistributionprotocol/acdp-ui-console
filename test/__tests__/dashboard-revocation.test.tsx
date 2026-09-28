@@ -60,7 +60,22 @@ afterEach(() => {
   useDashboard.mockReset();
 });
 
-describe('dashboard — Key Revocation with an all-zero payload', () => {
+// ══════════════════════════════════════════════════════════════════════
+// MIGRATED, not deleted (#97). Every test in the block below predates
+// `features` and passes NO flags, so each one now exercises the `unknown` arm
+// — a control plane predating acdp-control-plane#178, where the old prose
+// (hedge included) is still exactly the honest thing to say. That is the
+// mapping criterion 8 asks for, and it is why these read unchanged:
+//
+//   "all-zero payload renders no figure"      -> kind `unknown`
+//   "one non-zero renders all three figures"  -> kind `reported`
+//   "omitted field lands in the same state"   -> kind `unknown`
+//   "scopes the absence to the WINDOW"        -> kind `unknown`
+//   "counters are window-scoped"              -> kind `reported`
+//
+// The four-arm coverage the flags make possible is the describe that follows.
+// ══════════════════════════════════════════════════════════════════════
+describe('dashboard — Key Revocation with no feature flags (the pre-#178 backend)', () => {
   it('keeps the card but renders NO figure — not even a 0', () => {
     renderWith(
       overview({ keyRevocation: { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 } }),
@@ -122,6 +137,124 @@ describe('dashboard — Key Revocation with an all-zero payload', () => {
     // reading the card cannot infer that; it has to be written down.
     renderWith(overview({ keyRevocation: { preCompromise: 1, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 } }));
     expect(revocationCard().textContent).toContain('a re-audit amending an event older than this window is not reflected here');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The four arms (#97).
+//
+// The card used to have two: figures, or one paragraph of prose. That prose
+// asserted "the check is disabled by default" in EVERY not-reported case, which
+// is simply false whenever the deployment says the check is on — the last
+// surviving could-not-establish claim on this page.
+//
+// The arms must be distinguishable from each other, not merely present, or an
+// operator gains nothing: the whole point is that a clean estate and an
+// unmonitored one stop looking alike.
+// ══════════════════════════════════════════════════════════════════════
+const FEATURES: NonNullable<CpDashboardOverview['features']> = {
+  receiptAudit: true,
+  keyRevocationCheck: true,
+  logWitness: true,
+  logInclusionAudit: true,
+  witnessCosigning: true,
+  witnessQuorum: true,
+};
+const CLEAN = { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 };
+const SOME = { preCompromise: 9, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 };
+
+/** The one phrase that may appear in exactly one arm. */
+const HEDGE = 'the check is disabled by default';
+
+describe('dashboard — Key Revocation says which of four states it is', () => {
+  it('reported: figures, no prose', () => {
+    renderWith(overview({ keyRevocation: SOME, features: FEATURES }));
+    const card = revocationCard();
+    expect([...card.querySelectorAll('.kpi-value')].map((v) => v.textContent)).toEqual(['9', '0', '0']);
+    expect(card.textContent).not.toContain(HEDGE);
+  });
+
+  it('checked-clean: the check RAN and found nothing — a claim the card could not make before', () => {
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    const text = revocationCard().textContent ?? '';
+    expect(text).toContain('Revocation checking ran over this window and classified nothing');
+    expect(revocationCard().querySelectorAll('.kpi-value')).toHaveLength(0);
+    // Window-scoped, not deployment-scoped: the picker can change the answer,
+    // so "nothing is revoked" would be a wider claim than the evidence.
+    expect(text).toContain('this window');
+    expect(text).not.toContain(HEDGE);
+  });
+
+  it('checked-clean never states a DEPLOYMENT-level clean', () => {
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    const text = revocationCard().textContent ?? '';
+    // "this deployment reports the check as enabled" is fine — that IS about
+    // the deployment. What must not appear is a claim that the deployment is
+    // clean, which no window-scoped counter can support.
+    expect(text).not.toMatch(/nothing is revoked/i);
+    expect(text).not.toMatch(/no(thing)? .{0,30}revoked .{0,20}deployment/i);
+  });
+
+  it('disabled: states the fact, without the hedge that made it false', () => {
+    renderWith(
+      overview({ keyRevocation: CLEAN, features: { ...FEATURES, keyRevocationCheck: false } }),
+    );
+    const text = revocationCard().textContent ?? '';
+    expect(text).toContain('Revocation checking is switched off on this deployment');
+    // The distinction the whole issue turns on: nothing MEASURED is not the
+    // same as nothing FOUND.
+    expect(text).toMatch(/nothing was measured/i);
+    expect(text).not.toContain(HEDGE);
+  });
+
+  it('disabled: reached by a null payload too, which is what upstream actually sends', () => {
+    // `dashboard.service.ts:240` emits literal `null` when the check is off.
+    renderWith(overview({ keyRevocation: null, features: { ...FEATURES, keyRevocationCheck: false } }));
+    expect(revocationCard().textContent).toContain('Revocation checking is switched off');
+  });
+
+  it('unknown: and ONLY unknown keeps the hedge', () => {
+    // The pre-#178 backend. Here "the check is disabled by default" is still
+    // true and still load-bearing, because we genuinely cannot tell whether it
+    // ran. The three tests above assert the phrase absent; this one asserts it
+    // present, so the pair cannot both be satisfied by deleting the phrase.
+    renderWith(overview({ keyRevocation: CLEAN, features: undefined }));
+    expect(revocationCard().textContent).toContain(HEDGE);
+  });
+
+  it('all four arms render DISTINGUISHABLE text', () => {
+    // Without this, three arms could collapse onto one paragraph and every
+    // test above would still pass in isolation.
+    const texts: string[] = [];
+    for (const [k, f] of [
+      [SOME, FEATURES],
+      [CLEAN, FEATURES],
+      [CLEAN, { ...FEATURES, keyRevocationCheck: false }],
+      [CLEAN, undefined],
+    ] as const) {
+      renderWith(overview({ keyRevocation: k, features: f }));
+      texts.push(revocationCard().textContent ?? '');
+      cleanup();
+    }
+    expect(new Set(texts).size).toBe(4);
+  });
+
+  it('a non-zero count is REPORTED even when the flag says the check is off', () => {
+    // Self-evidencing. A count means the check ran and found that, whatever the
+    // deployment claims about itself — and rendering "switched off" over live
+    // figures would be the worse error of the two.
+    renderWith(overview({ keyRevocation: SOME, features: { ...FEATURES, keyRevocationCheck: false } }));
+    expect([...revocationCard().querySelectorAll('.kpi-value')].map((v) => v.textContent)).toEqual(['9', '0', '0']);
+  });
+
+  it('a null payload with the check ENABLED is unknown, not clean', () => {
+    // Upstream cannot produce this — both derive from one config value
+    // (`dashboard.service.ts:39` and `:240`) — so it means something is wrong,
+    // and a clean estate must not be asserted from a contradiction.
+    renderWith(overview({ keyRevocation: null, features: FEATURES }));
+    const text = revocationCard().textContent ?? '';
+    expect(text).toContain(HEDGE);
+    expect(text).not.toContain('classified nothing');
   });
 });
 

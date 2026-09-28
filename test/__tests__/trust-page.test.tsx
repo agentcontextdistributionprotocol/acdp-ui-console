@@ -49,7 +49,21 @@ function trust(over: Partial<RunTrustSummary> = {}): RunTrustSummary {
   };
 }
 
-function overview(runs: Array<{ runId: string; trust: RunTrustSummary }>, totals: Partial<TrustOverview['totals']> = {}): TrustOverview {
+/** All six flags on, the shape a post-#178 control plane always sends. */
+const FEATURES_ON: NonNullable<TrustOverview['features']> = {
+  receiptAudit: true,
+  keyRevocationCheck: true,
+  logWitness: true,
+  logInclusionAudit: true,
+  witnessCosigning: true,
+  witnessQuorum: true,
+};
+
+function overview(
+  runs: Array<{ runId: string; trust: RunTrustSummary }>,
+  totals: Partial<TrustOverview['totals']> = {},
+  features: TrustOverview['features'] = FEATURES_ON,
+): TrustOverview {
   return {
     runs: runs.map((r) => ({
       run: { runId: r.runId, startedAt: '2026-09-25T00:00:00.000Z', completedAt: '2026-09-25T00:01:00.000Z' } as unknown as CpRun,
@@ -63,6 +77,7 @@ function overview(runs: Array<{ runId: string; trust: RunTrustSummary }>, totals
     },
     receiptCoverage: [],
     didMethods: [],
+    features,
   };
 }
 
@@ -270,5 +285,83 @@ describe('/trust — a run whose fail-closed verdicts have no per-event detail',
     );
     expect(container.querySelectorAll('tbody tr')).toHaveLength(2);
     expect(screen.queryByText('reported without detail')).not.toBeInTheDocument();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The deployment flag on /trust, and — as importantly — what it must NOT do
+// here (#97).
+//
+// `features` is DEPLOYMENT-scoped; every total on this page is RUN-scoped. A
+// run audited before the flag was flipped keeps `key_revocation_status: 'none'`
+// forever, so `keyRevocationCheck === true` with `revocationReportedRuns === 0`
+// still cannot tell a clean estate from one whose runs predate the check. Only
+// the `false` arm carries information this page may state, which is why the
+// dashboard's `checked-clean` is deliberately NOT extended here.
+// ══════════════════════════════════════════════════════════════════════
+describe('/trust — the deployment revocation flag', () => {
+  const RUN = [{ runId: 'run-quiet', trust: trust() }];
+  const NONE = { revocationReportedRuns: 0 };
+
+  it('says the check is off when the deployment says so', () => {
+    const { container } = renderWith(
+      overview(RUN, NONE, { ...FEATURES_ON, keyRevocationCheck: false }),
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('Revocation checking is switched off on this deployment');
+    expect(text).toContain('nothing was measured');
+    // And the card subtitle agrees with the KPI hint — two strings, one fact.
+    expect(text).toContain('revocation checking off');
+  });
+
+  it('keeps the old not-reported wording when the check IS on', () => {
+    // `true` + zero reporting runs is exactly the ambiguous case. The honest
+    // sentence is the one that was already here.
+    const { container } = renderWith(overview(RUN, NONE, FEATURES_ON));
+    const text = container.textContent ?? '';
+    expect(text).toContain('Not reported by this deployment — no run in this view carried a revocation classification');
+    expect(text).not.toContain('switched off');
+  });
+
+  it('renders NO clean claim for check-on plus zero reporting runs', () => {
+    // The assertion that keeps someone from "improving" this page by copying
+    // the dashboard's `checked-clean` arm across. There is no wording of that
+    // claim this page's data supports.
+    const { container } = renderWith(overview(RUN, NONE, FEATURES_ON));
+    const text = container.textContent ?? '';
+    expect(text).not.toMatch(/classified nothing/i);
+    expect(text).not.toMatch(/checking ran/i);
+    expect(text).not.toMatch(/no(thing)? .{0,30}revoked/i);
+  });
+
+  it('a pre-#178 backend with no features keeps the old wording too', () => {
+    const { container } = renderWith(overview(RUN, NONE, undefined));
+    const text = container.textContent ?? '';
+    expect(text).toContain('Not reported by this deployment');
+    expect(text).not.toContain('switched off');
+  });
+
+  it('reads the flag as === false, never as falsy', () => {
+    // The mirror of the dashboard's discipline. A wire payload with the flag
+    // missing must not read as "the operator turned it off" — that is a claim
+    // about a decision, drawn from an absence.
+    const partial = { ...FEATURES_ON, keyRevocationCheck: undefined } as unknown as TrustOverview['features'];
+    const { container } = renderWith(overview(RUN, NONE, partial));
+    expect(container.textContent).not.toContain('switched off');
+  });
+
+  it('the flag changes nothing once runs DO report', () => {
+    // The `false` arm is about an absence of measurement. Reported figures are
+    // measurement, so they win regardless of what the deployment claims.
+    const { container } = renderWith(
+      overview(
+        [{ runId: 'run-loud', trust: trust({ revoked: [revocation('revoked_at_or_after')], keyRevocationRevokedAtOrAfter: 1 }) }],
+        { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+        { ...FEATURES_ON, keyRevocationCheck: false },
+      ),
+    );
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('switched off');
+    expect(text).toContain('1 revoked across 1 run');
   });
 });

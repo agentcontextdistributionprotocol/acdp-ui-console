@@ -60,8 +60,15 @@ export default function TrustPage() {
     );
   }
 
-  const { runs, totals, receiptCoverage, didMethods } = trust.data;
+  const { runs, totals, receiptCoverage, didMethods, features } = trust.data;
   const t: TrustTotals = totals;
+  // `=== false`, never `!features?.keyRevocationCheck`. The falsy form would
+  // fold "no `features` at all" — a control plane predating
+  // acdp-control-plane#178 — into "the operator turned it off", which is a claim
+  // about a deployment decision drawn from an absence of evidence. That is the
+  // whole defect class #97 exists to remove, and it would be a poor way to
+  // remove it.
+  const revocationCheckOff = features?.keyRevocationCheck === false;
   // A run is a violation if it carries a flagged discrepancy OR a fail-closed
   // revocation verdict. Filtering on `flagged.length` alone dropped revoked-only
   // runs into the "No trust violations" empty state while a
@@ -103,11 +110,27 @@ export default function TrustPage() {
           hint={
             t.revocationReportedRuns > 0
               ? `RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable · across the ${t.revocationReportedRuns} of ${runs.length} runs that reported a classification`
-              : // "in this view", not "in this window": `useTrust` fetches runs
+              : // TWO not-reported strings now, and only the `false` arm is new
+                // (#97). `features.keyRevocationCheck === false` is a fact about
+                // the deployment, so this page may state it — where before it
+                // could only describe the absence.
+                //
+                // The `true` arm deliberately does NOT get a "clean" claim; see
+                // the comment on `TrustOverview.features`. `features` is
+                // deployment-scoped while every total here is run-scoped, so a
+                // run audited before the flag was flipped still carries
+                // `key_revocation_status: 'none'` and reads as not-reported.
+                // `true` + zero reporting runs therefore still cannot tell
+                // "clean" from "predates the flag", and the honest wording is
+                // the one that was already here.
+                //
+                // "In this view", not "in this window": `useTrust` fetches runs
                 // via `listCpRuns({ limit })` with NO window parameter — only
                 // receiptCoverage/didMethods are window-scoped. Saying "window"
-                // would describe a scope this page does not actually apply.
-                'Not reported by this deployment — no run in this view carried a revocation classification'
+                // would describe a scope this page does not apply.
+                revocationCheckOff
+                ? 'Revocation checking is switched off on this deployment — nothing was measured'
+                : 'Not reported by this deployment — no run in this view carried a revocation classification'
           }
         />
         <KpiCard label="No receipt" value={t.noReceipt} accent="var(--muted)" icon={<Fingerprint size={28} />} />
@@ -131,7 +154,9 @@ export default function TrustPage() {
             // Gated on the SAME predicate, so the two can never disagree.
             (t.revocationReportedRuns > 0
               ? `${t.revokedEvents} revoked across ${t.revokedRuns} run${t.revokedRuns === 1 ? '' : 's'}`
-              : 'revocation not reported') +
+              : revocationCheckOff
+                ? 'revocation checking off'
+                : 'revocation not reported') +
             (t.preCompromiseEvents > 0
               ? ` · ${t.preCompromiseEvents} pre-compromise (historically authorized, not violations)`
               : '') +

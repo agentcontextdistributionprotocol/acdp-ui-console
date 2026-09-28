@@ -18,7 +18,8 @@ import { useDashboard } from '@/lib/hooks/use-dashboard';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { useGlobalEvents } from '@/lib/hooks/use-global-events';
 import { formatNumber } from '@/lib/utils/format';
-import { dashboardRevocationReported } from '@/lib/utils/revocation';
+import { dashboardRevocationState } from '@/lib/utils/revocation';
+import type { DashboardRevocationState } from '@/lib/utils/revocation';
 
 // recharts is heavy; keep it out of the initial bundle.
 const BarChartCard = dynamic(
@@ -214,45 +215,101 @@ export default function DashboardPage() {
           right={<ShieldAlert size={18} style={{ color: 'var(--danger)' }} />}
         />
         <CardBody>
-          {/* `dashboardRevocationReported` is a type predicate, so the three
-              KPIs below read `d.keyRevocation.x` with no `!` — the compiler
-              checks the guarantee instead of taking our word for it. */}
-          {dashboardRevocationReported(d.keyRevocation) ? (
-            <div className="kpi-grid">
-              <KpiCard
-                label="Pre-compromise (authorized)"
-                value={formatNumber(d.keyRevocation.preCompromise)}
-                accent="var(--success)"
-                hint="Signed strictly before the compromise boundary — historically authorized"
-              />
-              <KpiCard
-                label="Revoked at/after boundary"
-                value={formatNumber(d.keyRevocation.revokedAtOrAfter)}
-                accent="var(--danger)"
-                hint="Fails closed under the strict profile — not attributable to the producer"
-              />
-              <KpiCard
-                label="Revoked time unverifiable"
-                value={formatNumber(d.keyRevocation.revokedTimeUnverifiable)}
-                accent="var(--warning)"
-                hint="No receipt-attested publish time to compare against the compromise boundary"
-              />
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
-              <strong style={{ color: 'var(--text)' }}>
-                Nothing in this window carried a revocation classification.
-              </strong>
-              <br />
-              No figures are shown rather than zeros: a zero would claim &ldquo;nothing is
-              revoked&rdquo; when it cannot be told apart from never having looked — the check is
-              disabled by default. This is a statement about the selected window, not about the
-              deployment: a different window may well show figures. They appear as soon as
-              anything is classified.
-            </div>
-          )}
+          <RevocationBody state={dashboardRevocationState(d.keyRevocation, d.features)} />
         </CardBody>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * The four things the console can honestly say about key revocation (#97).
+ *
+ * It was a boolean, and the `false` arm asserted "the check is disabled by
+ * default" — which is simply false whenever `features.keyRevocationCheck` is
+ * true, and was the last surviving instance in this file of the class of defect
+ * this plan exists to remove: a sentence that states a cause the console never
+ * established.
+ *
+ * `checked-clean` is the state that did not previously exist. It is a POSITIVE
+ * statement, and it is deliberately WINDOW-scoped: "nothing in this window was
+ * classified", never "nothing is revoked". The window picker can change the
+ * answer, so a deployment-level claim would be unwarranted from the same data.
+ *
+ * `unknown` keeps the old prose verbatim, hedge included. That arm is a control
+ * plane predating acdp-control-plane#178, where we genuinely cannot tell whether
+ * the check ran — so the hedge is still the honest thing to say, and moving it
+ * here is what lets the other three arms stop saying it.
+ */
+function RevocationBody({ state }: { state: DashboardRevocationState }) {
+  if (state.kind === 'reported') {
+    // `state.counts` needs no `!`: the discriminant carries the guarantee that
+    // the old type predicate existed to provide.
+    return (
+      <div className="kpi-grid">
+        <KpiCard
+          label="Pre-compromise (authorized)"
+          value={formatNumber(state.counts.preCompromise)}
+          accent="var(--success)"
+          hint="Signed strictly before the compromise boundary — historically authorized"
+        />
+        <KpiCard
+          label="Revoked at/after boundary"
+          value={formatNumber(state.counts.revokedAtOrAfter)}
+          accent="var(--danger)"
+          hint="Fails closed under the strict profile — not attributable to the producer"
+        />
+        <KpiCard
+          label="Revoked time unverifiable"
+          value={formatNumber(state.counts.revokedTimeUnverifiable)}
+          accent="var(--warning)"
+          hint="No receipt-attested publish time to compare against the compromise boundary"
+        />
+      </div>
+    );
+  }
+
+  const prose = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 } as const;
+
+  if (state.kind === 'checked-clean') {
+    return (
+      <div style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          Revocation checking ran over this window and classified nothing.
+        </strong>
+        <br />
+        This deployment reports the compromise-boundary check as enabled, so the absence of figures
+        is a result rather than a gap: nothing in this window was classified against a revoked key.
+        It is a statement about the selected window and not about the deployment — a longer window
+        may well show figures.
+      </div>
+    );
+  }
+
+  if (state.kind === 'disabled') {
+    return (
+      <div style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          Revocation checking is switched off on this deployment.
+        </strong>
+        <br />
+        No figures are shown because nothing was measured — which is not the same as nothing being
+        found. The control plane reports the compromise-boundary check as disabled, so no window will
+        show figures until it is enabled.
+      </div>
+    );
+  }
+
+  return (
+    <div style={prose}>
+      <strong style={{ color: 'var(--text)' }}>
+        Nothing in this window carried a revocation classification.
+      </strong>
+      <br />
+      No figures are shown rather than zeros: a zero would claim &ldquo;nothing is revoked&rdquo;
+      when it cannot be told apart from never having looked — the check is disabled by default. This
+      is a statement about the selected window, not about the deployment: a different window may
+      well show figures. They appear as soon as anything is classified.
     </div>
   );
 }

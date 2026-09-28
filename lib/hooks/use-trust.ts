@@ -60,6 +60,22 @@ export interface TrustOverview {
   totals: TrustTotals;
   receiptCoverage: NonNullable<CpDashboardOverview['receiptCoverage']>;
   didMethods: NonNullable<CpDashboardOverview['didMethods']>;
+  /**
+   * Which checks the DEPLOYMENT runs (#97). Already on the wire — this hook has
+   * always fetched the overview and discarded everything but the two fields
+   * above — so surfacing it costs one line and no request.
+   *
+   * Deployment-scoped, and that limits what `/trust` may do with it. The
+   * totals beside it are RUN-scoped: a run audited before the flag was flipped
+   * carries `key_revocation_status: 'none'` forever, so
+   * `keyRevocationCheck === true` with `revocationReportedRuns === 0` still
+   * cannot tell "clean" from "predates the flag". Only the `=== false` arm is
+   * safe here, which is why `/trust` gets that arm and not the dashboard's
+   * `checked-clean`.
+   *
+   * `undefined` for a control plane predating acdp-control-plane#178.
+   */
+  features: CpDashboardOverview['features'];
 }
 
 /**
@@ -125,6 +141,10 @@ export function useTrust(window = '24h') {
         totals,
         receiptCoverage: dash.receiptCoverage ?? [],
         didMethods: dash.didMethods ?? [],
+        // NOT defaulted. `?? {}` would be a partial object, and every read of
+        // these flags is `=== true` / `=== false` precisely so that "absent"
+        // stays its own answer rather than collapsing into "off".
+        features: dash.features,
       };
     },
     staleTime: 20_000,
