@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import * as MockCrypto from '@/lib/data/mock-crypto';
 import {
   MOCK_SCENARIOS,
+  MOCK_CONTEXT_EVENTS,
   MOCK_RUNS,
   MOCK_RUN_EVENTS,
   MOCK_LINEAGE,
@@ -879,5 +881,140 @@ describe('MOCK_RUNS reads in time order', () => {
     // have passed while the page silently changed which run it showed.
     const withContexts = MOCK_RUNS.filter((r) => r.contextsCount > 0);
     expect(withContexts[0]?.runId).toBe(LIVE_RUN_ID);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The lifecycle narrative sits on the fixture clock, not on wall-clock now (#85).
+//
+// The attested context's `created_at` is DERIVED from its frozen registry
+// receipt (`MOCK_CRYPTO.attested.registry_receipt.created_at`) because
+// acdp-wasm's `verifyReceipt` cross-checks the two (RFC-ACDP-0010 §8 step 3) —
+// they must be structurally identical, not coincidentally equal. Meanwhile the
+// three events describing that context were dated `iso(140)`, `iso(110)`,
+// `iso(80)` — seconds before NOW. So the feed dated an 81-day-old context to
+// "two minutes ago", and the gap grew by a day every day.
+//
+// WHICH ASSERTION ACTUALLY GATES THIS. A lower bound (`event >= created_at`)
+// does NOT: the defect is that the events were far too RECENT, so `>=` passed
+// before the change and passes after. The gating assertion is the UPPER bound —
+// every one of these events is within 24 hours of the receipt clock — and it is
+// the one that fails on a revert.
+//
+// The pairs are DERIVED from the data rather than listed, so a fourth
+// receipt-bearing context added later is covered without anyone remembering to
+// extend a list.
+// ══════════════════════════════════════════════════════════════════════
+
+const ATTESTED_CTX = `acdp://registry-a.playground.local/5dcdb05d-bfbc-4088-936b-da19eec25319`;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+describe('the attested context and the events describing it share a clock', () => {
+  const receiptTs = Date.parse(MockCrypto.MOCK_CRYPTO.attested.registry_receipt.created_at);
+  const attested = MOCK_CONTEXTS.find((c) => c.body.ctx_id === ATTESTED_CTX)!;
+
+  it('has an attested context whose created_at IS the receipt clock', () => {
+    // The premise everything below rests on. If this derivation were ever
+    // replaced by a literal the receipt cross-check would break, and these
+    // tests would be measuring against the wrong thing while still passing.
+    expect(attested).toBeDefined();
+    expect(Date.parse(attested.body.created_at)).toBe(receiptTs);
+  });
+
+  it('dates every event about it within a day of that clock', () => {
+    // THE GATING ASSERTION. Fails on `iso(140)` / `iso(110)` / `iso(80)`,
+    // which are ~81 days away from the receipt.
+    const referencing = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ATTESTED_CTX);
+    expect(referencing.length).toBe(3);
+    for (const e of referencing) {
+      const drift = Math.abs(Date.parse(e.eventTs) - receiptTs);
+      expect(drift, `${e.id} is ${Math.round(drift / DAY_MS)} days from the receipt clock`).toBeLessThanOrEqual(DAY_MS);
+    }
+  });
+
+  it('never dates an event about it BEFORE it existed', () => {
+    // The lower bound. Not the gate — it already held — but a context
+    // retrieved before it was created is incoherent in the other direction and
+    // costs one line to rule out.
+    for (const e of MOCK_CONTEXT_EVENTS.filter((ev) => ev.ctxId === ATTESTED_CTX)) {
+      expect(Date.parse(e.eventTs)).toBeGreaterThanOrEqual(receiptTs);
+    }
+  });
+
+  it('orders publish < retract < republish strictly', () => {
+    const at = (id: string) => Date.parse(MOCK_CONTEXT_EVENTS.find((e) => e.id === id)!.eventTs);
+    // Strictly: equal timestamps would make the lifecycle order depend on array
+    // position, which is exactly the class of bug Phase 13 fixed next door.
+    expect(at('ev-7')).toBeLessThan(at('ev-8'));
+    expect(at('ev-8')).toBeLessThan(at('ev-9'));
+  });
+
+  it('keeps the two renderings of the same fact byte-identical', () => {
+    // The retract/republish pair exists TWICE: in the events feed, and in the
+    // context's own `registry_state.lifecycle_events`, which
+    // `context-detail.tsx` renders on the same card that shows `created_at`.
+    // Moving only the feed would have traded one visible contradiction for a
+    // subtler one — two surfaces disagreeing about when the same event happened.
+    const lifecycle = attested.registry_state!.lifecycle_events!;
+    const mirror = (type: string) => lifecycle.find((l) => l.event_type === type)!.occurred_at;
+    const feed = (id: string) => MOCK_CONTEXT_EVENTS.find((e) => e.id === id)!.eventTs;
+    expect(mirror('retracted')).toBe(feed('ev-8'));
+    expect(mirror('republished')).toBe(feed('ev-9'));
+  });
+
+  it('derives the dates rather than hardcoding them', () => {
+    // Comments STRIPPED first. The explanatory comment above these values has
+    // to name the date in order to state the rule, so a whole-file grep would
+    // be failed by its own explanation — the same trap this plan hit once
+    // already in the profiles phase.
+    const src = readFileSync(join(process.cwd(), 'lib/data/mock-data.ts'), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toContain('2026-07-06');
+    // And the derivation really is from the receipt, not from a second copy of
+    // the same instant kept somewhere else.
+    expect(code).toContain('MOCK_CRYPTO.attested.registry_receipt.created_at');
+  });
+});
+
+describe('ev-1 and ev-2 are a KNOWN, DOCUMENTED exception', () => {
+  // Not scope-trimming — a structural fact about the dataset.
+  //
+  // `arcticSource` is `LIVE_LINEAGE.nodes[0]`: the LIVE run's own first node.
+  // The live run is `status: 'running'`, started seconds ago. So a run happening
+  // now published a context whose signed `created_at` is 81 days old, and that
+  // contradiction is not in the events feed — it is in the shape of the dataset.
+  //
+  // Moving ev-1/ev-2 onto the fixture clock would make the events feed agree
+  // with the context card while leaving the live run's OWN step timeline
+  // (`MOCK_RUN_EVENTS`) contradicting both: a run that started 24 seconds ago
+  // with steps dated 81 days back. That trades one visible contradiction for a
+  // subtler one, which is the defect class this phase exists to remove.
+  //
+  // The honest fix is to DECOUPLE — the live run should publish a context with
+  // no frozen receipt, and the receipt-bearing `arcticSource` should belong to
+  // an older completed run. That moves LIVE_LINEAGE, MOCK_RUN_EVENTS,
+  // MOCK_CONTEXT_EVENTS, MOCK_CONTEXTS and every trust fixture keyed off
+  // `LIVE_LINEAGE.nodes[0].ctx_id` together, gated by `wasm-fixtures.test.ts`.
+  // Filed as a follow-up rather than attempted inside a timestamps phase.
+  it('still points at the live run’s first node, so the exception cannot widen silently', () => {
+    // Through the EXPORTED surface (`MOCK_LINEAGE[LIVE_RUN_ID]`), which is the
+    // same object as the module-private `LIVE_LINEAGE`. Exporting an internal
+    // just so a test can reach it would widen the module's API for no runtime
+    // consumer.
+    const arctic = MOCK_LINEAGE[LIVE_RUN_ID].nodes[0].ctx_id;
+    for (const id of ['ev-1', 'ev-2']) {
+      const e = MOCK_CONTEXT_EVENTS.find((ev) => ev.id === id)!;
+      expect(e.ctxId, `${id} no longer references the live run's first node`).toBe(arctic);
+      expect(e.runId).toBe(LIVE_RUN_ID);
+    }
+  });
+
+  it('is still on wall-clock time, which is what makes it an exception', () => {
+    // If someone "fixes" these to the receipt clock without doing the decoupling,
+    // this fails and points them at the comment above. The exception is recorded
+    // as a fact, not as an absence.
+    const arcticReceipt = Date.parse(MockCrypto.MOCK_CRYPTO.arcticSource.registry_receipt.created_at);
+    const ev1 = Date.parse(MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-1')!.eventTs);
+    expect(Math.abs(ev1 - arcticReceipt)).toBeGreaterThan(DAY_MS);
   });
 });
