@@ -279,7 +279,13 @@ describe('witness alert worklist — disclosure rules', () => {
     expect(cells).toContain('Consistency proof failed');
   });
 
-  it('renders one row per authority, keyed so two authorities never collapse', () => {
+  it('renders one row per authority', () => {
+    // Deliberately NOT titled "…keyed so two authorities never collapse". The
+    // mutation sweep set every row's React key to the same literal and all 27
+    // tests stayed green: duplicate keys surface during reconciliation, not in
+    // a single static render, so @testing-library cannot see them here. The
+    // key is still right (`row.authority` is the table's primary key upstream),
+    // but this test does not establish that and must not say it does.
     renderWith({
       data: rows([
         row({ authority: 'a.example.com' }),
