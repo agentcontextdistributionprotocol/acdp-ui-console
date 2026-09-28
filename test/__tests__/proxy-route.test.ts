@@ -273,10 +273,25 @@ describe('proxy route — route allow-list', () => {
   // traversal-free shape that only the anchor rejects; `..` would be caught by
   // the dot-segment guard even with the anchor gone, so it is deliberately NOT
   // the case being made here.
+  const ANCHOR_PREFIXES = ['anything', 'v1'];
+
   it('anchors every allow-list pattern at the START of the path', async () => {
     expect(ALLOWED_CASES.length, 'the allow table emptied out').toBeGreaterThan(20);
+    // ANTI-VACUITY on the probe itself, and it is not hypothetical: changing
+    // these two to `['..', '.']` makes every case below pass with the anchors
+    // GONE, because the dot-segment guard refuses the path before the allow
+    // list is ever consulted. The sweep then proves nothing and says so in its
+    // title. The comment above anticipated exactly that; this is the line that
+    // enforces it.
+    for (const prefix of ANCHOR_PREFIXES) {
+      expect(
+        prefix,
+        'a dot-segment or empty prefix is rejected by the path guard before the allow list ' +
+          'is consulted, so this sweep would pass with every pattern unanchored',
+      ).toMatch(/^[a-z][a-z0-9-]*$/);
+    }
     for (const { method, service, path } of ALLOWED_CASES) {
-      for (const prefix of ['anything', 'v1']) {
+      for (const prefix of ANCHOR_PREFIXES) {
         const prefixed = [prefix, ...path];
         const fetchMock = mockFetch(() => upstream());
         const url = `http://localhost/api/proxy/${service}/${prefixed.join('/')}`;

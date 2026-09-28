@@ -191,6 +191,48 @@ export function ackListingConsequence(
 }
 
 /**
+ * Which outcome panel the dialog is showing, if any.
+ *
+ * THE THIRD AXIS, and round 4's gate is why it exists as a named function
+ * instead of three inline conditions.
+ *
+ * `AckStage` and `AckListingConsequence` both model the LISTING. The dialog
+ * also renders an `ErrorPanel` on three mutually exclusive outcomes, and the
+ * copy pin's scenario table had no axis for them at all — so the pin covered
+ * four of seven reachable bodies while its docblock said "every reachable arm".
+ * A fabricated sentence rendered only under `forbidden` passed `tsc`, `eslint`
+ * and all 1103 tests. The state it fabricated into is the worst one available:
+ * on a 403 the control plane has just REFUSED the write, and the sentence said
+ * the acknowledgement was recorded and the alert cleared.
+ *
+ * Deriving it here rather than testing three booleans at the call site is what
+ * makes the axis enumerable: `Object.keys` of a `Record<AckOutcome, …>` cannot
+ * omit a member, so the scenario table can be checked against the union instead
+ * of against a hand-written list that drifts with it.
+ *
+ * The ORDER is written to express intent, not because it decides anything: a
+ * 404 is a statement about the ALERT and outranks a statement about our
+ * permission to write. But the two conditions are mutually exclusive by
+ * construction — `ackStage` returns `resolved` only for `status === 404`, and
+ * `isUpstreamForbidden` requires `status === 403` — so swapping the two lines
+ * is a PROVABLY EQUIVALENT mutation and the tests correctly do not kill it.
+ * Recorded rather than left as an implied claim, because an ordering comment
+ * that sounds load-bearing is how a reader concludes the ordering is tested.
+ *
+ * `isUpstreamForbidden` is deliberately not just `status === 403` — see its own
+ * docblock; a 403 this console minted is not an admin-scope problem, and
+ * telling an operator to go get a key re-scoped for a request that never left
+ * the browser sends them to fix the wrong thing.
+ */
+export type AckOutcome = 'none' | 'already-resolved' | 'forbidden' | 'failed';
+
+export function ackOutcome(stage: AckStage, error: unknown): AckOutcome {
+  if (stage === 'resolved') return 'already-resolved';
+  if (isUpstreamForbidden(error)) return 'forbidden';
+  return error ? 'failed' : 'none';
+}
+
+/**
  * The confirm step (#84).
  *
  * It exists because "acknowledge" is the single most over-read word on this
@@ -305,7 +347,7 @@ function AcknowledgeDialog({
   const stage = ackStage(live, mut.error);
   const resolved = stage === 'resolved';
   const consequence = ackListingConsequence(stage, showAcknowledged);
-  const forbidden = isUpstreamForbidden(mut.error);
+  const outcome = ackOutcome(stage, mut.error);
 
   return (
     <Modal
@@ -408,11 +450,19 @@ function AcknowledgeDialog({
                 acknowledged above" — written when the default listing WAS
                 unacknowledged-only. After the default flipped, all three of its
                 claims were false on the screen it was rendered over: the row
-                does not leave, nothing is hidden, and the control it names is
-                labelled "Hide acknowledged". The one control on this page that
+                does not leave, nothing is hidden, and the control it named did
+                not exist under that name. The one control on this page that
                 writes was telling the operator a still-alerting authority would
                 disappear, and sending them to press a button that is not
                 there.
+
+                Which is why the sentence below names the control by its
+                rendered STATE LABEL and nothing else. Round 4 relabelled that
+                toggle (an action label inverts under `aria-pressed` — see its
+                own comment), and a hand-written control name in a body
+                sentence is exactly the kind of reference that rots silently.
+                `witness-ack-prose.ts` holds the one copy the test compares
+                against, so a relabel that forgets this line fails the pin.
 
                 The third arm is the one round 3 added. Both view arms describe
                 a row that is on screen; when the listing no longer holds it,
@@ -433,7 +483,8 @@ function AcknowledgeDialog({
                 alerts — it does not leave the worklist. A later detection with a{' '}
                 <strong>different</strong> reason brings it back here; a repeat of the{' '}
                 <strong>same</strong> reason does <strong>not</strong> — so an unchanged, ongoing
-                detection stays hidden from this view until you use <em>Show acknowledged</em> above.
+                detection stays hidden from this view until you switch the control above to{' '}
+                <em>Acknowledged shown</em>.
               </li>
             )}
             {consequence === 'already-gone' && (
@@ -445,8 +496,8 @@ function AcknowledgeDialog({
             )}
           </ul>
         )}
-        {resolved && <ErrorPanel message={ACK_ALREADY_RESOLVED} />}
-        {forbidden && (
+        {outcome === 'already-resolved' && <ErrorPanel message={ACK_ALREADY_RESOLVED} />}
+        {outcome === 'forbidden' && (
           <ErrorPanel
             // Acknowledging IS admin-gated upstream (`actorIsAdmin`), unlike
             // reading the worklist. So this is the one place on this card where
@@ -457,7 +508,7 @@ function AcknowledgeDialog({
             details={errorDiagnostic(mut.error)}
           />
         )}
-        {mut.error && !resolved && !forbidden && (
+        {outcome === 'failed' && (
           <ErrorPanel
             message={operatorErrorMessage(mut.error, 'Could not record the acknowledgement')}
             details={errorDiagnostic(mut.error)}
@@ -578,13 +629,35 @@ export function LogWitnessAlerts() {
         </span>
         <Button
           variant="secondary"
-          // `aria-pressed` rather than two different labels: this is one
-          // control with a state, and a button whose accessible name changes
-          // under the cursor is announced as a new control each time.
+          // A STATE label, not an action label, and that is the whole point of
+          // this line.
+          //
+          // It read `Hide acknowledged` / `Show acknowledged` with
+          // `aria-pressed={showAcknowledged}`. `Button` adds no `aria-label`,
+          // so the text IS the accessible name — and the default state
+          // (`showAcknowledged === true`, acknowledged alerts ARE listed)
+          // announced as "Hide acknowledged, toggle button, PRESSED". A screen
+          // reader operator was told the hiding was on while the rows were on
+          // screen; in the other state, "Show acknowledged, not pressed" reads
+          // as hidden too, so they got "hidden" in BOTH states and no state
+          // change at all. On the one screen whose first gate round was about
+          // this worklist silently hiding alerts, that is the same defect in
+          // the announcement layer.
+          //
+          // `aria-pressed` describes whether the thing the name denotes is ON.
+          // A name that denotes an ACTION therefore inverts under it. Every
+          // other `aria-pressed` in this repo is already a state label
+          // (`enrollments.tsx` enabled/disabled, `connection-panel.tsx` "On —
+          // using mock data", `events/page.tsx` Live SSE/Live off) or a static
+          // filter label (`scenarios`, `runs`, `lineage`); this control was the
+          // only action-labelled one.
+          //
+          // What clicking does is not lost: the subtitle immediately to the
+          // left spells out both consequences and changes with the state.
           aria-pressed={showAcknowledged}
           onClick={() => setShowAcknowledged((v) => !v)}
         >
-          {showAcknowledged ? 'Hide acknowledged' : 'Show acknowledged'}
+          {showAcknowledged ? 'Acknowledged shown' : 'Acknowledged hidden'}
         </Button>
       </div>
       <div className="card-body">

@@ -23,14 +23,28 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { LogWitnessAlertRow } from '@/lib/types';
-import type { AckStage, AckListingConsequence } from '@/components/registries/log-witness-alerts';
+import type {
+  AckStage,
+  AckListingConsequence,
+  AckOutcome,
+} from '@/components/registries/log-witness-alerts';
+import {
+  ADMIN_ROUTE_FORBIDDEN,
+  errorDiagnostic,
+  operatorErrorMessage,
+} from '@/lib/utils/api-error-messages';
 import {
   ACK_LISTING,
   ALL_CONSEQUENCES,
+  ALL_FOOTER_STATES,
+  ALL_OUTCOMES,
   ALL_STAGES,
-  expectedAckBlocks,
+  ANNOUNCED_TEXT_ATTRS,
+  expectedAnnounced,
+  expectedDialogBlocks,
   normalize,
   squash,
+  type AckFooterState,
 } from '@/test/support/witness-ack-prose';
 
 // The mock FORWARDS ITS ARGUMENTS. A zero-arg passthrough would make every
@@ -106,6 +120,26 @@ function section(): HTMLElement {
 
 function rows(rs: LogWitnessAlertRow[]) {
   return { data: rs, total: rs.length };
+}
+
+/**
+ * The acknowledged-listing toggle, found by its ROLE STATE rather than by its
+ * text.
+ *
+ * Deliberately NOT `getByRole('button', { name: /acknowledged shown/i })`. The
+ * label is itself under test — it inverted under `aria-pressed` and round 4
+ * changed it — and a locator that hardcodes the label makes every assertion
+ * about the label circular: relabel the control and the locator follows it,
+ * silently, into whatever the new text is.
+ *
+ * `aria-pressed` is the structural fact. It is the only toggle button this card
+ * renders, and the length assertion is what keeps that true: a second one
+ * appearing fails here rather than making this helper pick one at random.
+ */
+function ackToggle(): HTMLElement {
+  const toggles = screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed'));
+  expect(toggles, 'the card no longer renders exactly one toggle button').toHaveLength(1);
+  return toggles[0];
 }
 
 beforeEach(() => {
@@ -287,7 +321,7 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
   // not — exactly the state an operator reaches by filtering an empty list.
   it('the FILTERED empty state says which listing produced the emptiness', () => {
     renderWith({ data: rows([]) });
-    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    fireEvent.click(ackToggle());
     const text = section().textContent ?? '';
     expect(screen.getByText(EMPTY_TITLE_FILTERED)).toBeInTheDocument();
     expect(screen.queryByText(EMPTY_TITLE_ALL)).toBeNull();
@@ -308,7 +342,7 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
     // which every single-arm assertion passes. This is the pair that cannot.
     renderWith({ data: rows([]) });
     const full = section().textContent ?? '';
-    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    fireEvent.click(ackToggle());
     const filtered = section().textContent ?? '';
     expect(filtered).not.toBe(full);
     expect(EMPTY_TITLE_FILTERED).not.toBe(EMPTY_TITLE_ALL);
@@ -325,7 +359,7 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
     // one card asserting opposite things about the same rows.
     renderWith({ data: rows([]) });
     expect(section().textContent).toMatch(/acknowledged alerts stay listed until the condition clears/i);
-    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    fireEvent.click(ackToggle());
     const filtered = section().textContent ?? '';
     expect(filtered).toMatch(/acknowledged alerts are filtered out of this view/i);
     expect(filtered).not.toMatch(/acknowledged alerts stay listed until the condition clears/i);
@@ -657,14 +691,6 @@ function confirmAck() {
   fireEvent.click(within(dialog()).getByRole('button', { name: /^acknowledge$/i }));
 }
 
-/**
- * The dialog's copy, and only the copy — not its chrome.
- *
- * The heading and the footer buttons are pinned by their own tests above
- * (`captions the dialog with the FULL authority`, `withdraws the confirm action
- * once the alert is gone`); this is the body, which is where every sentence the
- * mutation sweep falsified lives.
- */
 function modalBody(): HTMLElement {
   const el = dialog().querySelector('.modal-body');
   expect(el, 'the modal renders no .modal-body').toBeTruthy();
@@ -672,44 +698,117 @@ function modalBody(): HTMLElement {
 }
 
 /**
- * The body's copy blocks, in document order.
+ * The WHOLE dialog's copy blocks, in document order.
  *
- * `p` is the lead sentence, `li` the facts, `.card` the `ErrorPanel` (whose
- * message is its only text when no `details` is passed — the 404 panel passes
- * none). Read as a LIST so order and count are pinned alongside the wording;
- * `textContent` on the body as a whole would concatenate blocks with no
- * separator and turn an added sentence into a substring change.
+ * `h2` is the heading, `p` the lead sentence, `li` the facts, `.card` the
+ * `ErrorPanel` (message, plus `Technical detail` and the upstream bytes when it
+ * is passed `details`), `.modal-footer button` the actions. Read as a LIST so
+ * order and count are pinned alongside the wording; `textContent` on the dialog
+ * as a whole would concatenate blocks with no separator and turn an added
+ * sentence into a substring change.
  *
- * Anything a future edit adds outside these three selectors is caught by the
- * companion assertion in `expectPinnedCopy`, not by this function.
+ * SCOPE — this is the round-4 fix and the reason it is worth a comment. It was
+ * `.modal-body` and `p, li, .card`, under the docblock "the heading and the
+ * footer buttons are pinned by their own tests above". They are — by
+ * assertions that say the heading CONTAINS the authority and the footer
+ * CONTAINS a confirm button, neither of which bounds what else is there. A
+ * `<span>` in the footer reading "The acknowledgement has been recorded and the
+ * alert is cleared" passed `tsc`, `eslint` and all 1103 tests.
+ *
+ * The header's close control is not selected: it has no text (an `aria-hidden`
+ * icon under an `aria-label`), so it contributes nothing to `textContent` and
+ * nothing to either half. Its label is asserted by `modal-focus.test.tsx`.
  */
-function dialogCopyBlocks(): string[] {
-  return [...modalBody().querySelectorAll<HTMLElement>('p, li, .card')].map((n) =>
-    normalize(n.textContent),
+function dialogBlocks(): string[] {
+  return [
+    ...dialog().querySelectorAll<HTMLElement>('h2, p, li, .card, .modal-footer button'),
+  ].map((n) => normalize(n.textContent));
+}
+
+/**
+ * HALF ONE of the pin: the blocks are exactly these, in this order — wording,
+ * structure, count.
+ *
+ * Separate, NAMED, and exercised alone by the guard-the-guard below. The two
+ * halves lived in one helper, and `expect(() => expectPinnedCopy(…)).toThrow()`
+ * is satisfied by EITHER half throwing — so a loosened block equality stayed
+ * invisible behind a still-working "nothing outside" check. PR K hit the same
+ * masking and fixed it the same way.
+ */
+function expectBlocksPinned(expected: string[], label?: string) {
+  expect(dialogBlocks(), label).toEqual(expected);
+}
+
+/**
+ * HALF TWO: the dialog contains NOTHING ELSE.
+ *
+ * A bare text node or a `<span>` dropped into the body grid or the footer would
+ * satisfy half one and is the obvious way to add an unreviewed sentence.
+ * Compared with whitespace stripped, because the spacing BETWEEN blocks is a
+ * formatting accident and is not copy.
+ */
+function expectNothingOutside(expected: string[], label?: string) {
+  expect(squash(dialog().textContent), `${label ?? ''} — copy outside the pinned blocks`).toBe(
+    squash(expected.join('')),
   );
 }
 
 /**
- * The pin, both halves.
+ * HALF THREE: nothing is ANNOUNCED that was not written down.
  *
- * 1. the blocks are exactly these, in this order — wording, structure, count
- * 2. the body contains NOTHING ELSE — a bare text node or a `<span>` dropped
- *    into the grid would satisfy (1) and is the obvious way to add an
- *    unreviewed sentence. Compared with whitespace stripped, because the
- *    spacing BETWEEN blocks is a formatting accident and is not copy.
+ * The blocks pin `textContent`, which cannot see an attribute. A `title` on the
+ * body grid and an `aria-label` on the lead paragraph both survived the pin —
+ * copy reaching a hover tooltip and a screen reader without touching the text
+ * the other two halves compare.
+ *
+ * Asserted as SET EQUALITY, not as "none of the forbidden ones": a missing
+ * announcement is a defect too (the close control losing its only accessible
+ * name), and an enumeration of bad values is the open-set mistake this whole
+ * file exists to stop making.
  */
-function expectPinnedCopy(opts: {
+function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
+  const found: string[] = [];
+  for (const el of dialog().querySelectorAll<HTMLElement>('*')) {
+    for (const attr of ANNOUNCED_TEXT_ATTRS) {
+      const v = el.getAttribute(attr);
+      if (v !== null && v !== '') found.push(normalize(v));
+    }
+  }
+  expect(new Set(found), `${label ?? ''} — announced copy outside the pinned set`).toEqual(
+    new Set(expectedAnnounced(outcome)),
+  );
+  // The id-reference attributes carry no text of their own, but they can point
+  // at an element OUTSIDE the dialog — whose text neither of the other halves
+  // sees. So they are required to resolve inside it.
+  for (const el of dialog().querySelectorAll<HTMLElement>('*')) {
+    for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-details']) {
+      for (const id of (el.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
+        expect(
+          dialog().querySelector(`#${CSS.escape(id)}`),
+          `${attr}="${id}" points outside the dialog`,
+        ).toBeTruthy();
+      }
+    }
+  }
+}
+
+type PinOpts = {
   stage: AckStage;
   consequence: AckListingConsequence | null;
+  outcome: AckOutcome;
+  footer: AckFooterState;
   authority: string;
   reason: string;
+  diagnostic?: string;
+  failedMessage?: string;
   label?: string;
-}) {
-  const expected = expectedAckBlocks(opts);
-  expect(dialogCopyBlocks(), opts.label).toEqual(expected);
-  expect(squash(modalBody().textContent), `${opts.label ?? ''} — copy outside the pinned blocks`).toBe(
-    squash(expected.join('')),
-  );
+};
+
+function expectPinnedDialog(opts: PinOpts) {
+  const expected = expectedDialogBlocks(opts);
+  expectBlocksPinned(expected, opts.label);
+  expectNothingOutside(expected, opts.label);
+  expectNothingAnnounced(opts.outcome, opts.label);
 }
 
 const ack404 = () =>
@@ -797,9 +896,9 @@ describe('witness alert worklist — the confirm says what an ack is NOT', () =>
     // when the default listing was unacknowledged-only, it survived the default
     // being flipped and then told an operator, on the default screen, that the
     // row "leaves this worklist" and "stays hidden until you use Show
-    // acknowledged above" — while the row stayed, nothing was hidden, and the
-    // control it named was labelled "Hide acknowledged". Three false claims on
-    // the one control that writes.
+    // acknowledged above" — while the row stayed, nothing was hidden, and no
+    // control by that name existed. Three false claims on the one control that
+    // writes.
     renderWith({ data: rows([row()]) });
     openConfirm();
     const shown = dialog().textContent ?? '';
@@ -809,19 +908,25 @@ describe('witness alert worklist — the confirm says what an ack is NOT', () =>
     // a control that is not on screen.
     expect(shown).toMatch(/stays<?\/?\w*>? in this worklist|\bstays\b.{0,40}in this worklist/i);
     expect(shown).not.toMatch(/stays hidden/i);
-    expect(shown).not.toMatch(/use Show acknowledged above/i);
-    expect(screen.queryByRole('button', { name: 'Show acknowledged' })).toBeNull();
+    expect(shown).not.toMatch(/stays hidden from this view/i);
+    // …and it must not send the operator to the control by the name it does not
+    // have. The control is on screen in BOTH views (it is how you get back), so
+    // what is wrong in this arm is the sentence, not the button's presence.
+    expect(normalize(shown)).not.toContain('switch the control above to');
 
     // Filtered view: the row DOES leave this view, the control IS on screen,
     // and the dialog says both.
-    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    fireEvent.click(ackToggle());
     openConfirm();
     const filtered = dialog().textContent ?? '';
     expect(filtered).toMatch(/leaves this view/i);
     expect(filtered).toMatch(/does not leave the worklist/i);
     expect(filtered).toMatch(/stays hidden from this view/i);
-    expect(filtered).toMatch(/Show acknowledged/);
-    expect(screen.getByRole('button', { name: 'Show acknowledged' })).toBeInTheDocument();
+    // The control it names, by the name the control actually renders. The two
+    // are pinned against one table (`ACK_LISTING` and the component's own
+    // label), so a relabel that forgets this sentence fails the copy pin.
+    expect(normalize(filtered)).toContain('switch the control above to Acknowledged shown');
+    expect(normalize(ackToggle().textContent)).toBe('Acknowledged hidden');
   });
 
   it('DISCRIMINATES: the two arms of that bullet are different text', () => {
@@ -831,7 +936,7 @@ describe('witness alert worklist — the confirm says what an ack is NOT', () =>
     openConfirm();
     const shown = dialog().textContent ?? '';
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+    fireEvent.click(ackToggle());
     openConfirm();
     expect(dialog().textContent).not.toBe(shown);
   });
@@ -1265,35 +1370,85 @@ describe('witness alert worklist — acknowledged rows stay reachable', () => {
     // before anyone touches it.
     renderWith({ data: rows([row()]) });
     expect(lastIncludeAcknowledged()).toBe(true);
-    expect(screen.getByRole('button', { name: /hide acknowledged/i })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(ackToggle()).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('toggles the listing it REQUESTS, not just the button label, and back', () => {
     renderWith({ data: rows([row()]) });
-    const btn = () => screen.getByRole('button', { name: /(show|hide) acknowledged/i });
     // Starts on the full listing, so the first click FILTERS DOWN.
-    fireEvent.click(btn());
+    fireEvent.click(ackToggle());
     expect(lastIncludeAcknowledged()).toBe(false);
-    expect(btn()).toHaveAttribute('aria-pressed', 'false');
-    expect(btn()).toHaveTextContent(/show acknowledged/i);
+    expect(ackToggle()).toHaveAttribute('aria-pressed', 'false');
+    expect(ackToggle()).toHaveTextContent(/acknowledged hidden/i);
     // …and back. Upstream never resurfaces a row whose reason has not changed,
     // so the way back to an acknowledged-but-still-alerting authority has to
     // change the REQUEST, not just the label — the filtering is server-side.
-    fireEvent.click(btn());
+    fireEvent.click(ackToggle());
     expect(lastIncludeAcknowledged()).toBe(true);
-    expect(btn()).toHaveAttribute('aria-pressed', 'true');
-    expect(btn()).toHaveTextContent(/hide acknowledged/i);
+    expect(ackToggle()).toHaveAttribute('aria-pressed', 'true');
+    expect(ackToggle()).toHaveTextContent(/acknowledged shown/i);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // THE ANNOUNCEMENT, which this control had backwards.
+  //
+  // It was labelled `Hide acknowledged` / `Show acknowledged` under
+  // `aria-pressed={showAcknowledged}`. `Button` adds no `aria-label`, so the
+  // text IS the accessible name, and `aria-pressed` says whether the thing the
+  // NAME denotes is on. An ACTION name therefore inverts under it:
+  //
+  //   showAcknowledged === true   ->  "Hide acknowledged, pressed"
+  //                                   (acknowledged rows are on screen)
+  //   showAcknowledged === false  ->  "Show acknowledged, not pressed"
+  //                                   (acknowledged rows are filtered out)
+  //
+  // A screen-reader operator got "hidden" in both states and no state change at
+  // all, on the one screen whose first gate round was about this worklist
+  // silently hiding alerts a human had already seen.
+  //
+  // The old tests asserted `aria-pressed='true'` and `/hide acknowledged/i` in
+  // the same breath — they LOCKED the contradiction in rather than catching it.
+  // So the assertion below is stated as the invariant, over both states, rather
+  // than as two literals that can be updated to match whatever ships.
+  // ══════════════════════════════════════════════════════════════════════
+  it('its NAME and its aria-pressed state agree, in both states', () => {
+    renderWith({ data: rows([row()]) });
+    for (const expected of [true, false]) {
+      const btn = ackToggle();
+      expect(btn.getAttribute('aria-pressed')).toBe(String(expected));
+      const name = normalize(btn.textContent).toLowerCase();
+      // The name names the STATE the control is in, and `aria-pressed` says
+      // that state is on. Not "what clicking will do" — that is what inverts.
+      expect(name, `aria-pressed=${expected} under the name "${name}"`).toBe(
+        expected ? 'acknowledged shown' : 'acknowledged hidden',
+      );
+      // And the listing really is in that state, so the name is not just
+      // internally consistent — it is true.
+      expect(lastIncludeAcknowledged()).toBe(expected);
+      fireEvent.click(btn);
+    }
+  });
+
+  it('its name is a STATE, not an action — an action name inverts under aria-pressed', () => {
+    // The general rule, so a future relabel back to an imperative fails here
+    // rather than in a screen reader. Every other `aria-pressed` control in
+    // this repo is already a state label (`enrollments.tsx` enabled/disabled,
+    // `connection-panel.tsx` "On — using mock data", `events/page.tsx` Live
+    // SSE/Live off) or a static filter label; this one was the outlier.
+    renderWith({ data: rows([row()]) });
+    for (let i = 0; i < 2; i++) {
+      const name = normalize(ackToggle().textContent);
+      expect(name, `"${name}" reads as an action`).not.toMatch(/^(show|hide|toggle|display)\b/i);
+      fireEvent.click(ackToggle());
+    }
   });
 
   it('renders the control even while loading and while erroring, so the view is never stuck', () => {
     renderWith({ isLoading: true });
-    expect(screen.getByRole('button', { name: /hide acknowledged/i })).toBeInTheDocument();
+    expect(ackToggle()).toBeInTheDocument();
     cleanup();
     renderWith({ error: new ApiError(500, 'boom', 'control-plane', '/x') });
-    expect(screen.getByRole('button', { name: /hide acknowledged/i })).toBeInTheDocument();
+    expect(ackToggle()).toBeInTheDocument();
   });
 });
 
@@ -1340,16 +1495,27 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     );
   }
 
+  /** A 403 the control plane really sent — `isUpstreamForbidden` refuses one this console minted. */
+  const ackForbidden = () => new ApiError(403, 'Forbidden', 'control-plane', '/x', true);
+  /** No `errorCode`, so `operatorErrorMessage` falls through to its status arm. */
+  const ack503 = () => new ApiError(503, 'upstream down', 'control-plane', '/x', true);
+
   it('renders exactly the pinned copy, in every reachable arm', async () => {
     const scenarios: Array<{
       stage: AckStage;
       consequence: AckListingConsequence | null;
+      outcome: AckOutcome;
+      footer: AckFooterState;
       reason: string;
+      diagnostic?: string;
+      failedMessage?: string;
       setUp: () => Promise<void>;
     }> = [
       {
         stage: 'alerting',
         consequence: 'stays-listed',
+        outcome: 'none',
+        footer: 'confirmable',
         reason: MISMATCH,
         setUp: async () => {
           renderWith({ data: rows([row()]) });
@@ -1359,10 +1525,12 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       {
         stage: 'alerting',
         consequence: 'leaves-view',
+        outcome: 'none',
+        footer: 'confirmable',
         reason: MISMATCH,
         setUp: async () => {
           renderWith({ data: rows([row()]) });
-          fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+          fireEvent.click(screen.getByRole('button', { name: /acknowledged (shown|hidden)/i }));
           openConfirm();
         },
       },
@@ -1373,6 +1541,8 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
         // would stay put.
         stage: 'left-listing',
         consequence: 'already-gone',
+        outcome: 'none',
+        footer: 'confirmable',
         reason: MISMATCH,
         setUp: async () => {
           const { rerender } = renderWith({ data: rows([row()]) });
@@ -1383,6 +1553,8 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       {
         stage: 'resolved',
         consequence: null,
+        outcome: 'already-resolved',
+        footer: 'closed-out',
         reason: MISMATCH,
         setUp: async () => {
           acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
@@ -1394,31 +1566,369 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
           );
         },
       },
+      {
+        // ROUND 4's GAP, arm one. Acknowledging is admin-gated upstream, so
+        // this is a designed failure path, not an exotic one — and it is the
+        // worst state to leave unpinned, because the control plane has just
+        // REFUSED the write. A fabricated `<p>` reading "The acknowledgement
+        // was recorded anyway and the alert is now cleared", rendered only
+        // here, passed `tsc`, `eslint` and all 1103 tests.
+        //
+        // The bullets are NOT withdrawn: confirming can still be retried with a
+        // better-scoped key, so every sentence about what confirming does is
+        // still a live claim. That is the difference from the 404 arm, and it
+        // is a composition fact the block list pins.
+        stage: 'alerting',
+        consequence: 'stays-listed',
+        outcome: 'forbidden',
+        footer: 'confirmable',
+        reason: MISMATCH,
+        diagnostic: errorDiagnostic(ackForbidden()),
+        setUp: async () => {
+          acknowledgeLogWitnessAlert.mockRejectedValue(ackForbidden());
+          renderWith({ data: rows([row()]) });
+          openConfirm();
+          confirmAck();
+          await waitFor(() => expect(dialog().textContent).toContain(ADMIN_ROUTE_FORBIDDEN));
+        },
+      },
+      {
+        // ROUND 4's GAP, arm two: anything that is neither a 404 nor an
+        // upstream 403.
+        stage: 'alerting',
+        consequence: 'stays-listed',
+        outcome: 'failed',
+        footer: 'confirmable',
+        reason: MISMATCH,
+        diagnostic: errorDiagnostic(ack503()),
+        failedMessage: operatorErrorMessage(ack503(), 'Could not record the acknowledgement'),
+        setUp: async () => {
+          acknowledgeLogWitnessAlert.mockRejectedValue(ack503());
+          renderWith({ data: rows([row()]) });
+          openConfirm();
+          confirmAck();
+          await waitFor(() =>
+            expect(dialog().textContent).toMatch(/could not record the acknowledgement/i),
+          );
+        },
+      },
+      {
+        // ROUND 4's GAP, arm three: the in-flight footer. The confirm button
+        // relabels while the write is out, and nothing pinned what the dialog
+        // says in that window — a fabricated sentence gated on `isPending`
+        // survived too.
+        stage: 'alerting',
+        consequence: 'stays-listed',
+        outcome: 'none',
+        footer: 'in-flight',
+        reason: MISMATCH,
+        setUp: async () => {
+          acknowledgeLogWitnessAlert.mockImplementation(() => new Promise(() => {}));
+          renderWith({ data: rows([row()]) });
+          openConfirm();
+          confirmAck();
+          await waitFor(() => expect(dialog().textContent).toMatch(/acknowledging/i));
+        },
+      },
     ];
 
     // Anti-vacuity, asserted BEFORE the loop: a table that quietly lost an arm
-    // must fail as a coverage gap rather than pass with three scenarios. Both
-    // key sets are read off the pinned `Record`s, which are typed by the
-    // component's own unions — so this compares the copy table against the
-    // state machine, not against a second hand-written list that could drift
-    // with it.
+    // must fail as a coverage gap rather than pass with three scenarios. Every
+    // key set is read off a `Record` typed by one of the component's own
+    // unions — so this compares the copy table against the state machine, not
+    // against a second hand-written list that could drift with it.
+    //
+    // ROUND 4: `ALL_OUTCOMES` and `ALL_FOOTER_STATES` are new here, and their
+    // absence is exactly why this check could not see the gap it was written to
+    // prevent. It compared the table against the two LISTING axes while three
+    // reachable bodies differed on an axis it did not know existed. An
+    // exhaustiveness proof is only ever as wide as its axes.
     expect(new Set(scenarios.map((s) => s.stage))).toEqual(new Set(ALL_STAGES));
     expect(
       new Set(scenarios.map((s) => s.consequence).filter((c) => c !== null)),
     ).toEqual(new Set(ALL_CONSEQUENCES));
+    expect(new Set(scenarios.map((s) => s.outcome))).toEqual(new Set(ALL_OUTCOMES));
+    expect(new Set(scenarios.map((s) => s.footer))).toEqual(new Set(ALL_FOOTER_STATES));
 
     for (const s of scenarios) {
       cleanup();
       acknowledgeLogWitnessAlert.mockReset();
       await s.setUp();
-      expectPinnedCopy({
+      expectPinnedDialog({
         stage: s.stage,
         consequence: s.consequence,
+        outcome: s.outcome,
+        footer: s.footer,
         authority: AUTH,
         reason: s.reason,
-        label: `${s.stage} / ${s.consequence ?? 'no bullets'}`,
+        diagnostic: s.diagnostic,
+        failedMessage: s.failedMessage,
+        label: `${s.stage} / ${s.consequence ?? 'no bullets'} / ${s.outcome} / ${s.footer}`,
       });
     }
+  });
+
+  // ── The pin's own guard ───────────────────────────────────────────────
+  //
+  // Each half is exercised ALONE against an injection into the ACTUAL DOM.
+  //
+  // Both directions of that sentence were got wrong on this repo before.
+  // Injecting into the EXPECTED list proves only that `toEqual` distinguishes
+  // two arrays; and with both halves inside one helper, a single
+  // `expect(() => pin()).toThrow()` is satisfied by either one firing, so a
+  // loosened block equality hid behind a working "nothing outside" check.
+  /** Split one block into two carrying the same total text, in place. */
+  function splitFirstParagraph() {
+    const lead = modalBody().querySelector('p') as HTMLElement;
+    const text = lead.textContent ?? '';
+    const cut = text.indexOf(' ', Math.floor(text.length / 2));
+    const a = document.createElement('p');
+    const b = document.createElement('p');
+    a.textContent = text.slice(0, cut);
+    b.textContent = text.slice(cut);
+    lead.replaceWith(a, b);
+  }
+
+  it('the block pin catches a change of STRUCTURE that changes no text', () => {
+    // The block half's own job, and it needs an injection the other halves
+    // cannot see — otherwise deleting its call site from the composite is
+    // silent. Measured: with an APPENDED element, removing `expectBlocksPinned`
+    // from `expectPinnedDialog` left the whole suite green, because the
+    // nothing-outside half catches an append too.
+    //
+    // Splitting one paragraph into two leaves the concatenated text identical
+    // and the block LIST one element longer. That is what "the order and the
+    // count are part of the pin" means, stated as a test rather than as a
+    // docblock.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    expectBlocksPinned(expected);
+
+    splitFirstParagraph();
+    expect(() => expectBlocksPinned(expected)).toThrow();
+    // …and the other half really is blind to it, which is why there are three.
+    expect(() => expectNothingOutside(expected)).not.toThrow();
+  });
+
+  it('the nothing-outside pin catches text that adds no block', () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    expectNothingOutside(expected);
+
+    // A `<span>` matches none of the block selectors, so half one is blind to
+    // it. This is the half that sees it.
+    const span = document.createElement('span');
+    span.textContent = 'and the retained head has been cleared';
+    modalBody().appendChild(span);
+    expect(() => expectNothingOutside(expected)).toThrow();
+    // …and half one really is blind, which is why there are two.
+    expect(() => expectBlocksPinned(expected)).not.toThrow();
+  });
+
+  it('the pin covers the FOOTER, not only the body', () => {
+    // The specific round-4 escape: `.modal-body` was the whole scope.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    const footer = dialog().querySelector('.modal-footer') as HTMLElement;
+    expect(footer, 'the modal renders no .modal-footer').toBeTruthy();
+    const span = document.createElement('span');
+    span.textContent = 'The acknowledgement has been recorded and the alert is cleared.';
+    footer.appendChild(span);
+    expect(() => expectNothingOutside(expected)).toThrow();
+  });
+
+  it('the pin covers the HEADING, not only the body', () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    const h2 = dialog().querySelector('h2') as HTMLElement;
+    h2.textContent = `${h2.textContent} — already cleared`;
+    expect(() => expectBlocksPinned(expected)).toThrow();
+  });
+
+  it('the announced pin catches copy that never reaches textContent', () => {
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    expectNothingAnnounced('none');
+
+    // A `title` is invisible to every `textContent` comparison, and it is the
+    // channel `CLAUDE.md` singles out: invisible on touch, invisible to the
+    // keyboard, unreliably announced. Both of these survived the block pin.
+    modalBody().setAttribute('title', 'The alert is cleared once you confirm.');
+    expect(() => expectNothingAnnounced('none')).toThrow();
+    modalBody().removeAttribute('title');
+
+    const lead = modalBody().querySelector('p') as HTMLElement;
+    lead.setAttribute('aria-label', 'This acknowledgement resolves the alert.');
+    expect(() => expectNothingAnnounced('none')).toThrow();
+    // …and the other two halves really are blind to it, which is why there are
+    // three.
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    expect(() => expectBlocksPinned(expected)).not.toThrow();
+    expect(() => expectNothingOutside(expected)).not.toThrow();
+  });
+
+  it('the announced pin catches a LOST announcement, not only an added one', () => {
+    // Set equality in both directions. The close control's icon is
+    // `aria-hidden`, so its `aria-label` is its entire accessible name —
+    // dropping it leaves a button announced as "button" and nothing else.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const close = dialog().querySelector('[aria-label="Close dialog"]') as HTMLElement;
+    expect(close, 'the modal renders no labelled close control').toBeTruthy();
+    close.removeAttribute('aria-label');
+    expect(() => expectNothingAnnounced('none')).toThrow();
+  });
+
+  it('all three halves are WIRED IN, not merely present', () => {
+    // The per-half tests above prove each half catches its own injection. They
+    // say nothing about whether `expectPinnedDialog` still CALLS all three — a
+    // deleted call site leaves every one of them green.
+    //
+    // This is not the masking the halves were split to avoid: masking is when
+    // one assertion stands for two checks and either can satisfy it. Here each
+    // injection has a known owner, established separately above, and this test
+    // only adds that the composite fires for each.
+    const pin = () =>
+      expectPinnedDialog({
+        stage: 'alerting',
+        consequence: 'stays-listed',
+        outcome: 'none',
+        footer: 'confirmable',
+        authority: AUTH,
+        reason: MISMATCH,
+      });
+
+    const injections: Array<[string, () => void]> = [
+      // block half — a STRUCTURE change with no text change, because an
+      // appended element is caught by the nothing-outside half as well and so
+      // cannot tell whether this half is still wired in.
+      ['a split paragraph', splitFirstParagraph],
+      // nothing-outside half
+      ['a bare span', () => {
+        const el = document.createElement('span');
+        el.textContent = 'and the retained head has been cleared';
+        modalBody().appendChild(el);
+      }],
+      // announced half
+      ['a title attribute', () => {
+        modalBody().setAttribute('title', 'Confirming clears the alert.');
+      }],
+    ];
+
+    for (const [what, inject] of injections) {
+      cleanup();
+      renderWith({ data: rows([row()]) });
+      openConfirm();
+      expect(pin, `${what}: the pin fails before the injection`).not.toThrow();
+      inject();
+      expect(pin, `${what} is not caught by the composed pin`).toThrow();
+    }
+  });
+
+  it('names the row it was OPENED ON, on a listing with more than one row', async () => {
+    // The live lookup is `rows.find(r => r.authority === confirming.authority)`.
+    // Replacing it with `rows[0]` survived every dialog test, because they all
+    // used a single-row listing — so the identity match was asserted by
+    // coincidence rather than by design. Regressed, the dialog captions row
+    // three's confirm with row one's reason, which is the exact
+    // wrong-row-reported defect round 3 of this PR existed to fix.
+    renderWith({
+      data: rows([
+        row({ authority: 'first.example.com', reason: 'log_id_changed' }),
+        row({ authority: AUTH, reason: 'root_mismatch' }),
+      ]),
+    });
+    openConfirm(AUTH);
+    expectPinnedDialog({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+      label: 'second row of a two-row listing',
+    });
+    // Stated separately, because the pin would also fail for an unrelated
+    // wording change and this is the specific claim.
+    expect(normalize(dialog().textContent)).not.toContain(LOG_ID);
+  });
+
+  it('does not carry one row’s failure into the next row’s dialog', async () => {
+    // `key={confirming.authority}` on the `<Modal>`. Without it React reuses
+    // the instance across a change of `confirming`, and the mutation state goes
+    // with it — so a 403 from row one renders under row two's heading, telling
+    // the operator the control plane refused a write that was never attempted.
+    acknowledgeLogWitnessAlert.mockRejectedValue(ackForbidden());
+    renderWith({
+      data: rows([
+        row({ authority: 'first.example.com', reason: 'root_mismatch' }),
+        row({ authority: AUTH, reason: 'root_mismatch' }),
+      ]),
+    });
+    openConfirm('first.example.com');
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toContain(ADMIN_ROUTE_FORBIDDEN));
+
+    // WITHOUT going through Cancel. Dismissing sets `confirming` to null, the
+    // parent stops rendering the dialog, and React drops the instance whether
+    // or not it is keyed — so a test that cancels first proves nothing about
+    // the key. Measured: with `key={confirming.authority}` removed, the
+    // cancel-first version stays green.
+    //
+    // This is the transition the key is FOR: `confirming` going straight from
+    // one authority to another. An operator reaches it by clicking a second
+    // row's acknowledge control; the overlay makes that awkward but not
+    // impossible, and nothing in the component prevents the parent from
+    // setting `confirming` directly.
+    openConfirm(AUTH);
+    expectPinnedDialog({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+      label: 'second dialog opened straight from the first',
+    });
   });
 
   it('DISCRIMINATES: the three listing consequences are three different sentences', () => {
@@ -1444,9 +1954,11 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     confirmAck();
     await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
 
-    expectPinnedCopy({
+    expectPinnedDialog({
       stage: 'resolved',
       consequence: null,
+      outcome: 'already-resolved',
+      footer: 'closed-out',
       authority: AUTH,
       reason: MISMATCH,
       label: 'resolved, after the live row changed reason',
@@ -1470,9 +1982,11 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     expect(normalize(modalBody().textContent)).toContain('currently alerting');
 
     refetchTo([], rerender);
-    expectPinnedCopy({
+    expectPinnedDialog({
       stage: 'left-listing',
       consequence: 'already-gone',
+      outcome: 'none',
+      footer: 'confirmable',
       authority: AUTH,
       reason: MISMATCH,
       label: 'left-listing, no error',

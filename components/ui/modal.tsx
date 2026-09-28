@@ -46,6 +46,14 @@ export function Modal({
   // Five moves, ending on the header X rather than where the operator left it.
   // At HEAD the same run records none. (`modal-focus.test.tsx` is that run.)
   //
+  // The NAMES in that array needed their own correction, in round 4: the
+  // recorder read only `aria-label` and fell back to the tag name, so the body
+  // control was recorded as `"button"` and the array above had been transcribed
+  // from a different harness. The recorder now reads `textContent`, and
+  // `modal-focus.test.tsx` asserts the three names it produces — so this array
+  // is quoting a run rather than a mechanism, which is the whole point of the
+  // paragraph above it.
+  //
   // The trigger is the OWNER re-rendering, which is not the same thing as the
   // dialog re-rendering — and that distinction is what the earlier figure got
   // wrong. It claimed four moves across a confirm click and its error arrival

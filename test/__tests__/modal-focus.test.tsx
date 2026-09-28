@@ -39,13 +39,18 @@ afterEach(cleanup);
  * A count alone would not distinguish "focus moved twice and came back" from
  * "focus never moved", so the elements are recorded too.
  */
+function focusName(el: HTMLElement): string {
+  const label = el.getAttribute('aria-label');
+  if (label) return label;
+  return (el.textContent ?? '').trim() || el.tagName.toLowerCase();
+}
+
 function watchFocus(): { moves: string[] } {
   const moves: string[] = [];
   document.addEventListener(
     'focusin',
     (e) => {
-      const el = e.target as HTMLElement;
-      moves.push(el.getAttribute('aria-label') ?? el.tagName.toLowerCase());
+      moves.push(focusName(e.target as HTMLElement));
     },
     { capture: true },
   );
@@ -110,12 +115,39 @@ describe('Modal — focus is not disturbed by the owner re-rendering', () => {
       // `focusin` for that, so the alternation starts one short. A guard's
       // comment that reports a number nobody measured is how the guard gets
       // trusted past what it actually shows.
+      //
+      // ROUND 4 CORRECTION, and it is the third figure in this docblock to need
+      // one. The array above was right about the count and the alternation and
+      // WRONG about the names: `watchFocus` read only `aria-label` and fell
+      // back to the tag, so the body control — a `<button>` with no
+      // `aria-label` — was recorded as `"button"`. The array printed here was
+      // transcribed from the other harness (`log-witness-alerts.test.tsx`),
+      // which does read `textContent`. `focusName` now reads `textContent` too,
+      // so the names above are the ones this run can actually produce, and
+      // `the focus recorder names controls the way these comments quote them`
+      // below asserts that rather than asking a reader to trust it.
       expect(watch.moves, `focus moved to: ${watch.moves.join(', ')}`).toEqual([]);
       // And it really is still where the operator put it.
       expect(document.activeElement).toBe(bodyAction);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('the focus recorder names controls the way these comments quote them', () => {
+    // The docblocks above and in `modal.tsx` quote recorded focus arrays by
+    // name. Three revisions of those arrays have now been wrong — two in the
+    // count, one in the names — so the naming is asserted rather than asserted
+    // ABOUT. This is the line that makes "Body action" a measurement.
+    render(<Harness />);
+    const close = screen.getByLabelText('Close dialog');
+    const body = screen.getByText('Body action');
+    const footer = screen.getByText('Footer action');
+    expect([close, body, footer].map((el) => focusName(el as HTMLElement))).toEqual([
+      'Close dialog',
+      'Body action',
+      'Footer action',
+    ]);
   });
 
   it('DISCRIMINATES: opening the dialog DOES move focus into it', async () => {
