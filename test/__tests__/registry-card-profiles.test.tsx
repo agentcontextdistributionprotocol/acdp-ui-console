@@ -36,6 +36,25 @@ function chips(container: HTMLElement): string[] {
   return [...container.querySelectorAll('.chip')].map((c) => c.textContent ?? '');
 }
 
+/**
+ * The seven ids a real registry may advertise, in the order upstream declares
+ * them (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`).
+ * The same mirror as `mock-data.test.ts`, kept here rather than shared because
+ * the claim differs: there it bounds what the FIXTURES may say, here it bounds
+ * what the component must have COPY for. The mirror's limits — what a hand-copy
+ * can and cannot detect about upstream — are written out at its definition in
+ * `mock-data.test.ts`.
+ */
+const ADVERTISABLE = [
+  'acdp-registry-core',
+  'acdp-registry-discovery',
+  'acdp-registry-federated',
+  'acdp-registry-receipts',
+  'acdp-registry-head-receipts',
+  'acdp-registry-transparency-log',
+  'acdp-registry-lifecycle',
+];
+
 describe('registry-b renders the profiles it now advertises', () => {
   it('shows exactly two chips, and the two valid ids', () => {
     const { container } = render(
@@ -50,10 +69,28 @@ describe('registry-b renders the profiles it now advertises', () => {
     );
     expect(container.textContent).not.toContain('acdp-consumer');
     expect(container.textContent).not.toContain('acdp-federated');
-    // `acdp-registry-federated` is a real id and must NOT be caught by the
-    // assertion above — `acdp-federated` is a substring of nothing here, but a
-    // future test written the same way against A would need the distinction.
-    expect('acdp-registry-federated').toContain('federated');
+  });
+
+  it('does not reject the VALID federation id, whose name contains the invalid one', () => {
+    // `'acdp-federated'` is not a substring of `'acdp-registry-federated'`, so
+    // the assertion above is safe — but that is a fact about two string
+    // literals, and the first version of this file asserted it as
+    // `expect('acdp-registry-federated').toContain('federated')`, which is a
+    // tautology over two constants and could not fail for any reason.
+    //
+    // Asserted through a render instead: a card advertising the real federation
+    // id passes the same exclusion the test above applies. Now it is a claim
+    // about the component and the matcher, and it breaks if either the id or
+    // the exclusion is rewritten into something that overlaps.
+    const { container } = render(
+      <RegistryCard
+        registry={REGISTRY_B}
+        capabilities={{ ...MOCK_CAPABILITIES.b, profiles: ['acdp-registry-federated'] }}
+      />,
+    );
+    expect(chips(container)).toEqual(['acdp-registry-federated']);
+    expect(container.textContent).not.toContain('acdp-consumer');
+    expect(container.textContent).not.toContain('acdp-federated');
   });
 
   it('still renders registry-a with all six of its chips', () => {
@@ -121,22 +158,55 @@ describe('the dead tooltip copy is gone', () => {
     expect(code).toContain("'acdp-registry-federated'");
   });
 
-  it('keeps a PROFILE_INFO entry for every advertisable profile', () => {
+  it('keeps REACHABLE copy for every advertisable profile, not just a line in the file', () => {
     // The other direction: having removed two, the seven that a registry CAN
-    // advertise must all still have copy, or the accent and the tooltip go
-    // missing for a real profile.
-    const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
-    for (const p of [
+    // advertise must all still have copy, or the tooltip goes missing for a real
+    // profile.
+    //
+    // This was a source grep for `'<id>':`, and a grep cannot tell copy that the
+    // component reads from copy that merely exists. Moving an entry into a second,
+    // unreferenced object satisfied the grep and killed no test — while the chip
+    // silently lost its tooltip. `acdp-registry-federated` was the exposed one:
+    // it is the only advertisable profile NO demo fixture advertises, so nothing
+    // else rendered it.
+    //
+    // A registry may legitimately advertise all seven, so rendering all seven is
+    // not a synthetic shape.
+    const { container } = render(
+      <RegistryCard registry={REGISTRY_B} capabilities={{ ...MOCK_CAPABILITIES.b, profiles: ADVERTISABLE }} />,
+    );
+    const rendered = [...container.querySelectorAll('.chip')];
+    expect(rendered.map((c) => c.textContent)).toEqual(ADVERTISABLE);
+    for (const chip of rendered) {
+      expect(chip.getAttribute('title'), `${chip.textContent} renders no tooltip copy`).toBeTruthy();
+    }
+  });
+
+  it('accents exactly the three 0.3.0 trust profiles', () => {
+    // `accent: true` on two of the three killed no test, because only
+    // `acdp-registry-transparency-log` was ever asserted. The accent is a signal
+    // an operator reads as "this is one of the new trust profiles", so getting it
+    // right for one of three and wrong for two is the same defect as getting it
+    // wrong for all three — and the set is asserted as a set for that reason.
+    const { container } = render(
+      <RegistryCard registry={REGISTRY_B} capabilities={{ ...MOCK_CAPABILITIES.b, profiles: ADVERTISABLE }} />,
+    );
+    const accented = [...container.querySelectorAll('.chip.ok')].map((c) => c.textContent);
+    expect(accented).toEqual([
+      'acdp-registry-head-receipts',
+      'acdp-registry-transparency-log',
+      'acdp-registry-lifecycle',
+    ]);
+    // And the complement, so "accent everything" cannot pass either.
+    const plain = [...container.querySelectorAll('.chip')]
+      .filter((c) => c.className === 'chip')
+      .map((c) => c.textContent);
+    expect(plain).toEqual([
       'acdp-registry-core',
       'acdp-registry-discovery',
       'acdp-registry-federated',
       'acdp-registry-receipts',
-      'acdp-registry-head-receipts',
-      'acdp-registry-transparency-log',
-      'acdp-registry-lifecycle',
-    ]) {
-      expect(src, `no PROFILE_INFO entry for ${p}`).toContain(`'${p}':`);
-    }
+    ]);
   });
 });
 

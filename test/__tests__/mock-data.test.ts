@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MOCK_SCENARIOS,
@@ -592,15 +594,37 @@ describe('run-revoked-1: the RFC-ACDP-0014 fixture', () => {
  *
  * Mirrored rather than imported on purpose. A cross-repo import is not
  * available here and would be wrong if it were: this repo must not take a
- * dependency on a Rust crate's source layout. The cost is that the mirror can
- * go stale silently, which the length assertion below makes at least visible —
- * an eighth profile upstream turns this red rather than passing quietly.
+ * dependency on a Rust crate's source layout.
  *
- * Upstream keeps ITS copy honest with a conformance test
- * (`registry_advertisable_profiles_matches_spec`) that recomputes the set from
- * the pinned spec's `registries/profiles.json`. That test is why mirroring the
- * const is safe: the const cannot drift from the spec without upstream CI
- * going red first.
+ * BE PRECISE ABOUT WHAT THE MIRROR CAN AND CANNOT DETECT, because the first
+ * version of this comment got it backwards. A hand-copied list has no coupling
+ * to its source, so nothing here observes upstream at all. The two staleness
+ * directions are not symmetric:
+ *
+ *   Upstream ADDS an eighth profile → the mirror is now STRICTER than reality.
+ *     A fixture advertising the new id fails the subset check below. That is a
+ *     false red, which is loud and self-explaining — annoying, not dangerous.
+ *
+ *   Upstream REMOVES or RENAMES one → the mirror is now MORE PERMISSIVE than
+ *     reality. A fixture advertising the dead id passes here while a real
+ *     registry refuses to boot on it — the exact defect #95 was. Nothing in
+ *     this repo can see that happen. The length assertion below does not help:
+ *     the removal changes a number upstream and no number here.
+ *
+ * So the guard that follows makes NO claim about upstream. What it does pin is
+ * the local failure mode, which is the likely one: the cheapest way to make a
+ * fixture pass the subset check is to add the invalid id to this mirror, and
+ * `acdp-consumer`/`acdp-federated` are exactly the two values that would be
+ * added. Widening the mirror is what it catches.
+ *
+ * The mitigation for the unguarded direction is not a test, it is provenance:
+ * the file:line above is where to re-check, and upstream keeps ITS copy honest
+ * with a conformance test (`registry_advertisable_profiles_matches_spec`) that
+ * recomputes the set from the pinned spec's `registries/profiles.json`, so the
+ * const cannot drift from the SPEC without upstream CI going red first. A
+ * machine-readable list this repo could actually consume is requested in
+ * `acdp-registry-rs#347`; until one exists, a mirror plus a citation is the
+ * honest ceiling.
  */
 const REGISTRY_ADVERTISABLE_PROFILES = [
   'acdp-registry-core',
@@ -640,17 +664,21 @@ function atLeast(actual: string, required: string): boolean {
 }
 
 describe('demo registry profiles are ones a real registry would start with', () => {
-  it('mirrors a seven-entry upstream set', () => {
-    // The length is asserted, not just the contents, because the failure mode
-    // this mirror has is going STALE — an eighth profile added upstream would
-    // otherwise pass here forever while the subset check below quietly stopped
-    // being a real constraint.
-    expect(REGISTRY_ADVERTISABLE_PROFILES).toHaveLength(7);
-    expect(new Set(REGISTRY_ADVERTISABLE_PROFILES).size).toBe(7);
-    // The two ids #95 removed must not be in the mirror either — they are the
-    // exact values a careless "fix" would put back.
+  it('cannot be widened to launder an invalid id through the subset check', () => {
+    // NOT a staleness guard — see the docblock; a local literal compared to a
+    // local number observes nothing upstream, and the first version of this test
+    // claimed otherwise. What it guards is the local shortcut: the cheapest way
+    // to make an invalid fixture pass the subset check below is to add the id
+    // here, and these are the two ids that would be added.
     expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-consumer');
     expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-federated');
+    // Every entry must look like a registry profile id. `acdp-consumer` fails
+    // this on its own shape, which is the property that generalises: a consumer
+    // or agent profile smuggled in later is caught without being named.
+    for (const p of REGISTRY_ADVERTISABLE_PROFILES) expect(p).toMatch(/^acdp-registry-[a-z-]+$/);
+    // And no duplicates, so `toHaveLength` elsewhere cannot be satisfied by a
+    // repeated entry.
+    expect(new Set(REGISTRY_ADVERTISABLE_PROFILES).size).toBe(REGISTRY_ADVERTISABLE_PROFILES.length);
   });
 
   it.each(Object.keys(MOCK_CAPABILITIES))(
@@ -702,6 +730,31 @@ describe('demo registry profiles are ones a real registry would start with', () 
   it('records a minimum version for every advertisable profile', () => {
     // Otherwise the guard above silently skips any profile the table forgot.
     for (const p of REGISTRY_ADVERTISABLE_PROFILES) expect(PROFILE_MIN_VERSION[p]).toBeDefined();
+  });
+
+  it('agrees with the version each profile chip already names on screen', () => {
+    // The table above was, by itself, unfalsifiable: lowering
+    // `acdp-registry-receipts` to '0.1.0' made the coherence guard vacuous and
+    // killed no test, because no fixture sits at a version where receipts is the
+    // deciding profile. A second source in this repo fixes that.
+    //
+    // `PROFILE_INFO` in `registry-card.tsx` puts the version in the operator's
+    // tooltip — "(RFC-ACDP-0010, acdp 0.2.0)" — so the two files are now held to
+    // each other and neither can be edited alone. Source text rather than an
+    // import because `PROFILE_INFO` is private to the component, and widening a
+    // component's public API to let a test read a constant is the wrong trade.
+    const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
+    for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
+      const entry = new RegExp(`'${p}':\\s*\\{([\\s\\S]*?)\\}`).exec(src)?.[1];
+      expect(entry, `no PROFILE_INFO entry for ${p}`).toBeDefined();
+      // Baseline profiles carry no version marker because they ARE the 0.1.0
+      // baseline; anything later says so in the copy. The default is asserted,
+      // not assumed — a marker appearing on a baseline profile is drift too.
+      const named = /acdp (\d+\.\d+\.\d+)/.exec(entry!)?.[1] ?? '0.1.0';
+      expect(named, `${p}: tooltip says acdp ${named}, PROFILE_MIN_VERSION says ${PROFILE_MIN_VERSION[p]}`).toBe(
+        PROFILE_MIN_VERSION[p],
+      );
+    }
   });
 
   it('the version comparison is not string comparison', () => {
