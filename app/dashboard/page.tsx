@@ -275,13 +275,15 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
     return (
       <div style={prose}>
         <strong style={{ color: 'var(--text)' }}>
-          Revocation checking ran over this window and classified nothing.
+          Revocation checking is enabled, and nothing in this window is classified against a revoked
+          key.
         </strong>
         <br />
-        This deployment reports the compromise-boundary check as enabled, so the absence of figures
-        is a result rather than a gap: nothing in this window was classified against a revoked key.
-        It is a statement about the selected window and not about the deployment — a longer window
-        may well show figures.
+        Two facts, stated separately because the console holds them separately: the deployment
+        reports the compromise-boundary check as on, and this window&rsquo;s counters are zero. It
+        does not follow that every event in the window was checked — classification happens at audit
+        time, so events audited before the check was switched on keep the status they were given
+        then, and enabling it does not re-classify them. A longer window may also show figures.
       </div>
     );
   }
@@ -294,8 +296,27 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
         </strong>
         <br />
         No figures are shown because nothing was measured — which is not the same as nothing being
-        found. The control plane reports the compromise-boundary check as disabled, so no window will
-        show figures until it is enabled.
+        found. The control plane reports the compromise-boundary check as disabled, so nothing new
+        will be classified until it is enabled. Figures already recorded against an earlier window
+        are unaffected: classification happens at audit time and is not undone by switching the
+        check off.
+      </div>
+    );
+  }
+
+  // `unknown`, whose two reasons license different explanations. Only
+  // `no-flags` may keep the original hedge — see `dashboardRevocationState`.
+  if (state.because === 'flags-disagree') {
+    return (
+      <div style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          This deployment&rsquo;s report about revocation checking does not add up.
+        </strong>
+        <br />
+        It says the compromise-boundary check is enabled but sent no counters at all — not even
+        zeros. Those two come from the same setting upstream, so one of them is wrong and there is
+        no way to tell which from here. No figures are shown, and deliberately no cause is given:
+        the check is not reported as off, so saying it was would be inventing an explanation.
       </div>
     );
   }

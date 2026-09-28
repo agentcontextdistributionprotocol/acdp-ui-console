@@ -174,12 +174,32 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(card.textContent).not.toContain(HEDGE);
   });
 
-  it('checked-clean: the check RAN and found nothing — a claim the card could not make before', () => {
+  it('checked-clean: the flag is on and this window is empty — stated as two facts, not one inference', () => {
     renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
     const text = revocationCard().textContent ?? '';
-    expect(text).toContain('Revocation checking ran over this window and classified nothing');
+    expect(text).toContain('Revocation checking is enabled');
+    expect(text).toContain('nothing in this window is classified against a revoked key');
     expect(revocationCard().querySelectorAll('.kpi-value')).toHaveLength(0);
     expect(text).not.toContain(HEDGE);
+  });
+
+  it('checked-clean does NOT claim the check ran over this window\u2019s events', () => {
+    // The gate's finding. The console holds two facts: a flag describing the
+    // deployment NOW, and counters persisted AT AUDIT TIME. Enabling the check
+    // does not re-classify rows already audited (`lib/types.ts` records that
+    // `key_revocation_status` is NOT NULL DEFAULT 'none'), and the console
+    // cannot know when the flag was flipped — so "the check ran over this
+    // window" is exactly the inference that does not follow. It is the same
+    // argument this change uses to deny /trust a clean arm; it transfers here
+    // unchanged.
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    const text = revocationCard().textContent ?? '';
+    expect(text).not.toMatch(/checking ran over this window/i);
+    expect(text).not.toMatch(/(ran|checked) (over|across) (this|the selected) window/i);
+    expect(text).not.toMatch(/every event .{0,30}(was|were) checked(?! )/i);
+    // And it says so positively, rather than merely omitting the claim.
+    expect(text).toMatch(/does not follow that every event in the window was checked/i);
+    expect(text).toMatch(/audit time/i);
   });
 
   it('every clean claim in the checked-clean arm is scoped to the window, sentence by sentence', () => {
@@ -195,7 +215,9 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     // `<br />` contributes no whitespace to textContent, so split on the period
     // itself rather than on a space after it.
     const sentences = text.split(/(?<=\.)\s*/).filter((s) => s.trim().length > 0);
-    const claims = sentences.filter((s) => /classified nothing|was classified/.test(s));
+    const claims = sentences.filter((s) =>
+      /classified against a revoked key|counters are zero/.test(s),
+    );
     // Without this the loop below goes vacuous the moment the copy is reworded.
     expect(claims.length).toBeGreaterThanOrEqual(2);
     for (const s of claims) expect(s).toMatch(/this window|selected window/);
@@ -238,21 +260,24 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(revocationCard().textContent).toContain(HEDGE);
   });
 
-  it('all four arms render DISTINGUISHABLE text', () => {
-    // Without this, three arms could collapse onto one paragraph and every
-    // test above would still pass in isolation.
+  it('all FIVE renderings are DISTINGUISHABLE text', () => {
+    // Four kinds, but five renderings: `unknown` splits on `because`, and the
+    // whole point of that split is that the two read differently. Without this,
+    // arms could collapse onto one paragraph and every test above would still
+    // pass in isolation.
     const texts: string[] = [];
     for (const [k, f] of [
-      [SOME, FEATURES],
-      [CLEAN, FEATURES],
-      [CLEAN, { ...FEATURES, keyRevocationCheck: false }],
-      [CLEAN, undefined],
+      [SOME, FEATURES],                                        // reported
+      [CLEAN, FEATURES],                                       // checked-clean
+      [CLEAN, { ...FEATURES, keyRevocationCheck: false }],     // disabled
+      [CLEAN, undefined],                                      // unknown/no-flags
+      [null, FEATURES],                                        // unknown/flags-disagree
     ] as const) {
       renderWith(overview({ keyRevocation: k, features: f }));
       texts.push(revocationCard().textContent ?? '');
       cleanup();
     }
-    expect(new Set(texts).size).toBe(4);
+    expect(new Set(texts).size).toBe(5);
   });
 
   it('a non-zero count is REPORTED even when the flag says the check is off', () => {
@@ -263,14 +288,33 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect([...revocationCard().querySelectorAll('.kpi-value')].map((v) => v.textContent)).toEqual(['9', '0', '0']);
   });
 
-  it('a null payload with the check ENABLED is unknown, not clean', () => {
-    // Upstream cannot produce this — both derive from one config value
-    // (`dashboard.service.ts:39` and `:240`) — so it means something is wrong,
-    // and a clean estate must not be asserted from a contradiction.
+  it('a null payload with the check ENABLED is unknown, not clean — and is NOT explained as disabled', () => {
+    // Upstream cannot produce this — both derive from one config value — so it
+    // means something is wrong, and a clean estate must not be asserted from a
+    // contradiction.
+    //
+    // The hedge assertion here used to be `toContain(HEDGE)`, which PINNED the
+    // defect the gate found: the console holds `keyRevocationCheck === true`
+    // and rendered "the check is disabled by default" over it — stating a
+    // cause it has direct evidence against, which is the exact sentence #97
+    // exists to delete. The `because` discriminator is what lets this arm
+    // decline to explain itself.
     renderWith(overview({ keyRevocation: null, features: FEATURES }));
     const text = revocationCard().textContent ?? '';
-    expect(text).toContain(HEDGE);
-    expect(text).not.toContain('classified nothing');
+    expect(text).not.toContain(HEDGE);
+    expect(text).not.toMatch(/disabled|switched off/i);
+    expect(text).not.toContain('classified against a revoked key');
+    expect(text).toMatch(/does not add up/i);
+  });
+
+  it('a non-boolean flag lands in the same no-explanation arm, not on the pre-#178 hedge', () => {
+    // A `features` object DID arrive, so this is not a pre-#178 backend and the
+    // "disabled by default" explanation is not ours to reach for.
+    const stringy = { ...FEATURES, keyRevocationCheck: 'true' } as unknown as typeof FEATURES;
+    renderWith(overview({ keyRevocation: CLEAN, features: stringy }));
+    const text = revocationCard().textContent ?? '';
+    expect(text).not.toContain(HEDGE);
+    expect(text).toMatch(/does not add up/i);
   });
 });
 

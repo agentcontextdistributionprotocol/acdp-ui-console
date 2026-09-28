@@ -840,10 +840,17 @@ const DEMO_WINDOW_SCALE: Record<string, number> = {
 // than an accident of where a rounding rule happens to land. Two windows are
 // pinned; every other window inherits the 24 h figures.
 //
-//   1h → all zero        → "not reported" (the degrade path)
+//   1h → all zero        → the no-figures branch
 //   6h → one non-zero    → figures render, INCLUDING the two genuine zeros
-//                          beside it — the heuristic's other arm, also
-//                          otherwise invisible to a human.
+//                          beside it, which are information only because the
+//                          non-zero proves the check ran.
+//
+// (Those two lines used to say "not reported (the degrade path)" and "the
+// heuristic's other arm". Both named a heuristic #97 deleted, and the first was
+// made false by the `features` block below — which turns the all-zero window
+// into `checked-clean`, not "not reported". The state each window now reaches
+// is spelled out further down rather than here.)
+//
 // `features` is deliberately absent from this table and must stay absent.
 // Upstream reads it from process config (`dashboard.service.ts:260-266`), so it
 // is identical for every window of the same deployment — a per-window

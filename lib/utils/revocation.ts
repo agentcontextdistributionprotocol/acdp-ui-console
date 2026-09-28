@@ -269,16 +269,16 @@ export function runRevocationReported(trust: RunTrustSummary): boolean {
   return counted > 0;
 }
 
-/**
- * The dashboard overview's window-scoped revocation counters.
+/*
+ * `DashboardRevocation` is NOT re-exported from here.
  *
- * Re-exported rather than declared here. It now lives in `lib/types.ts` beside
- * `CpDashboardOverview`, which is the field's actual home — two structurally
- * identical declarations of the same name in two modules is how a wire type and
- * its consumer quietly drift apart. The re-export keeps this module's existing
- * import surface intact.
+ * An earlier revision of this change re-exported it with the rationale that
+ * doing so "keeps this module's existing import surface intact". That rationale
+ * was false: the type was only ever referenced inside this file, so the
+ * re-export had no consumer to keep intact, before the change or after. It now
+ * lives in `lib/types.ts` beside `CpDashboardOverview`, which is the field's
+ * actual home — import it from there.
  */
-export type { DashboardRevocation };
 
 /**
  * REMOVED with #97: `dashboardRevocationReported`, a type predicate over the
@@ -359,16 +359,30 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *                    the function exists.
  *   `disabled`       the flag says the check is off. Nothing was measured, and
  *                    saying so is different from saying nothing was found.
- *   `unknown`        no `features` at all — a control plane predating
- *                    acdp-control-plane#178. The legacy heuristic's answer, and
- *                    the honest one: we cannot tell.
+ *   `unknown`        we cannot tell — for one of two REASONS, carried on the
+ *                    arm as `because`, because they license different copy.
+ *
+ * The `because` split exists for a defect the first gate round on this change
+ * found. The `unknown` arm inherited the old prose verbatim, hedge included —
+ * "the check is disabled by default" — on the argument that this arm is a
+ * pre-#178 backend where the hedge is still honest. That argument covers only
+ * ONE of the routes into the arm. The others reach it holding a `features`
+ * object whose `keyRevocationCheck` is `true`, and rendering "disabled by
+ * default" there states a cause the console has direct evidence against. So:
+ *
+ *   `because: 'no-flags'`       nothing said whether the check runs (pre-#178).
+ *                               The legacy hedge is a fair explanation here and
+ *                               only here.
+ *   `because: 'flags-disagree'` flags arrived but cannot be squared with the
+ *                               counters. Never explain this as "disabled" —
+ *                               the flag we can read says the opposite.
  *
  * `null` counters WITH `keyRevocationCheck === true` is a combination upstream
  * cannot produce — both derive from the same config value
- * (`dashboard.service.ts:39` and `:240`) — so it maps to `unknown` rather than
- * `checked-clean`. A state the backend cannot reach must not be asserted from
- * this side; if it ever appears, something is wrong and "we do not know" is the
- * only defensible reading.
+ * (`dashboard.service.ts:39` and `:240`, cited from #97 rather than verified
+ * from here) — so it maps to `unknown` rather than `checked-clean`. A state the
+ * backend cannot reach must not be asserted from this side; if it ever appears,
+ * something is wrong and "we do not know" is the only defensible reading.
  *
  * Every flag read is `=== true` / `=== false`, never truthiness. `features` is
  * typed with all six booleans required, so a partial object fails typecheck
@@ -380,7 +394,7 @@ export type DashboardRevocationState =
   | { kind: 'reported'; counts: DashboardRevocation }
   | { kind: 'disabled' }
   | { kind: 'checked-clean' }
-  | { kind: 'unknown' };
+  | { kind: 'unknown'; because: 'no-flags' | 'flags-disagree' };
 
 export function dashboardRevocationState(
   keyRevocation: DashboardRevocation | null | undefined,
@@ -399,21 +413,26 @@ export function dashboardRevocationState(
     return { kind: 'reported', counts: keyRevocation };
   }
 
-  // No flag object at all — the pre-#178 backend. Everything below this point
-  // needs `features` to say anything, so this is where "we cannot know" lives.
-  if (features === undefined) return { kind: 'unknown' };
+  // No flag object at all — the pre-#178 backend. This is the ONE route into
+  // `unknown` where "the check is disabled by default" is a fair explanation,
+  // because nothing has told us otherwise.
+  if (features === undefined) return { kind: 'unknown', because: 'no-flags' };
 
   if (features.keyRevocationCheck === false) return { kind: 'disabled' };
 
   if (features.keyRevocationCheck === true) {
     // The impossible combination described above: the flag says the check runs,
-    // but the counters are absent rather than zero. Do not report clean.
-    if (!keyRevocation) return { kind: 'unknown' };
+    // but the counters are absent rather than zero. Do not report clean — and
+    // do not explain it as "disabled" either, since the one thing we can read
+    // says it is on.
+    if (!keyRevocation) return { kind: 'unknown', because: 'flags-disagree' };
     return { kind: 'checked-clean' };
   }
 
   // `keyRevocationCheck` is neither `true` nor `false` — a wire payload with
   // the flag missing or non-boolean. Unreachable through the type, reachable
-  // through the network.
-  return { kind: 'unknown' };
+  // through the network. `flags-disagree` rather than `no-flags`: a `features`
+  // object DID arrive, so we are not talking to a pre-#178 backend and must not
+  // reach for that explanation.
+  return { kind: 'unknown', because: 'flags-disagree' };
 }

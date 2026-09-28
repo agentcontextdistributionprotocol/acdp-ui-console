@@ -18,11 +18,12 @@ import {
   violationCount,
   runRevocationReported,
   dashboardRevocationState,
+  type DashboardRevocationState,
   isKeyRevocationFacet,
   KEY_REVOCATION_TYPE_ALIASES,
   type RevocationEntry,
 } from '@/lib/utils/revocation';
-import type { CpDashboardFeatures } from '@/lib/types';
+import type { CpDashboardFeatures, DashboardRevocation } from '@/lib/types';
 
 function entry(status: string, eventId = status): RevocationEntry {
   return {
@@ -326,6 +327,31 @@ describe('dashboardRevocationState', () => {
     if (state.kind === 'reported') expect(state.counts).toBe(SOME);
   });
 
+  it('EVERY counter is self-evidencing on its own, including revokedTimeUnverifiable', () => {
+    // The gate's finding, and a real hole: the migration of
+    // `dashboardRevocationReported` dropped the one probe its predecessor
+    // carried ({0,0,1}), and no fixture in any of the three touched test files
+    // set `revokedTimeUnverifiable` non-zero afterwards. Deleting that disjunct
+    // survived all 980 tests, and under the mutant a payload carrying five
+    // time-unverifiable findings rendered "classified nothing" — a false
+    // all-clear on a trust surface.
+    //
+    // One case per disjunct, each with the other two at zero, so no one of them
+    // can carry another.
+    const only = (k: keyof DashboardRevocation): DashboardRevocation => ({
+      preCompromise: 0,
+      revokedAtOrAfter: 0,
+      revokedTimeUnverifiable: 0,
+      [k]: 1,
+    });
+    for (const k of ['preCompromise', 'revokedAtOrAfter', 'revokedTimeUnverifiable'] as const) {
+      expect(dashboardRevocationState(only(k), ALL_ON).kind, k).toBe('reported');
+      // …and with no flags at all, which is the route the counters have to
+      // stand up on their own.
+      expect(dashboardRevocationState(only(k), undefined).kind, k).toBe('reported');
+    }
+  });
+
   it('reports non-zero counters even when the flag disagrees', () => {
     // Self-evidencing: a non-zero count means the check ran and found that,
     // whatever the deployment claims about itself. Rendering "disabled" over
@@ -342,6 +368,45 @@ describe('dashboardRevocationState', () => {
     expect(dashboardRevocationState(CLEAN, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
     // And `null` counters — what upstream actually sends when it is off.
     expect(dashboardRevocationState(null, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
+  });
+
+  it('distinguishes WHY it is unknown, because the two license different copy', () => {
+    // The gate's second finding. `unknown` inherited the pre-#178 hedge ("the
+    // check is disabled by default") on the argument that this arm IS a
+    // pre-#178 backend. That covers one route into the arm; the others arrive
+    // holding `keyRevocationCheck === true`, where the hedge states a cause the
+    // console has direct evidence against.
+    const noFlags = dashboardRevocationState(CLEAN, undefined);
+    expect(noFlags).toEqual({ kind: 'unknown', because: 'no-flags' });
+
+    // Flag says the check runs, but no counters arrived at all.
+    expect(dashboardRevocationState(null, ALL_ON)).toEqual({
+      kind: 'unknown',
+      because: 'flags-disagree',
+    });
+    expect(dashboardRevocationState(undefined, ALL_ON)).toEqual({
+      kind: 'unknown',
+      because: 'flags-disagree',
+    });
+
+    // A features object arrived with an unreadable flag. NOT `no-flags`: we are
+    // demonstrably not talking to a backend that predates the field.
+    const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringy)).toEqual({
+      kind: 'unknown',
+      because: 'flags-disagree',
+    });
+
+    // Both reasons are reachable, so neither arm is dead code. Read through a
+    // narrowing helper rather than asserting on a literal, so this fails if the
+    // two routes ever start returning the same reason.
+    const reasonOf = (s: DashboardRevocationState) => (s.kind === 'unknown' ? s.because : null);
+    const reasons = [
+      reasonOf(dashboardRevocationState(CLEAN, undefined)),
+      reasonOf(dashboardRevocationState(null, ALL_ON)),
+    ];
+    expect(new Set(reasons).size).toBe(2);
+    expect(reasons).not.toContain(null);
   });
 
   it('no features at all is unknown — a pre-#178 control plane', () => {

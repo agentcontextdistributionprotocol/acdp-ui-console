@@ -313,6 +313,13 @@ export interface DashboardRevocation {
  * produce; making them optional would invent a fourth state for every tile and
  * put the burden of imagining it on every consumer.
  *
+ * That requirement is a claim about UPSTREAM, not a guarantee the wire makes —
+ * nothing validates this payload on arrival, so a renamed or dropped flag from
+ * a future release would reach a consumer typed `boolean` and be `undefined`.
+ * Consumers are written for that: every read is `=== true` / `=== false`, never
+ * truthiness, and `revocation.test.ts` exercises the non-boolean case through
+ * an `as unknown as` cast precisely because the type cannot express it.
+ *
  * `keyRevocationCheck` cannot be true without `receiptAudit` — upstream THROWS
  * at boot if it is (`app-config.service.ts:573-574`), rather than coercing —
  * so a fixture setting one without the other depicts a deployment that could
