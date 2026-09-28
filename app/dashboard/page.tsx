@@ -358,6 +358,28 @@ function RevocationBody({ state }: { state: DashboardRevocationState }) {
     );
   }
 
+  if (state.because === 'counters-partial') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          This deployment&rsquo;s revocation counters arrived incomplete.
+        </strong>
+        <br />
+        {/*
+          Says nothing about the flag, deliberately: this arm is reached with
+          the check reported on, off, unreadable, or not reported at all, and a
+          sentence naming any of those would be true on one route and false on
+          three. The only fact that holds everywhere here is the shape of the
+          payload.
+        */}
+        Some of the three counters came through and some did not, so the ones that did have no
+        denominator to be read against. No figures are shown, because rendering the members that
+        arrived would print a zero for each member that did not — and a zero this console invented
+        is indistinguishable, on screen, from one the check produced.
+      </p>
+    );
+  }
+
   if (state.because === 'flag-unreadable') {
     return (
       <p style={prose}>

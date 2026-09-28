@@ -418,6 +418,19 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *   `because: 'flag-unreadable'`     a `features` object arrived but its
  *                                    `keyRevocationCheck` is neither `true` nor
  *                                    `false`.
+ *   `because: 'counters-partial'`    some of the three counters arrived and
+ *                                    some did not. A fact about the PAYLOAD, so
+ *                                    it is read before any flag — it falsifies
+ *                                    the copy on the flag-derived arms rather
+ *                                    than being explained by them.
+ *
+ * FOUR, and the seventh gate round on this change is why the fourth exists.
+ * `flag-on-no-counters` was widened to catch `{}` and swallowed partial triples
+ * with it, so its sentence — "sent no counters at all, not even zeros" —
+ * rendered over payloads that had sent a zero. The suite pinned that sentence
+ * positively, so it enforced the false claim instead of catching it. A `because`
+ * value must name a fact that holds on EVERY route that carries it; widening a
+ * route without re-reading its copy is how that invariant keeps breaking.
  *
  * Three, not two, and the second gate round on this change is why. A single
  * `flags-disagree` value collapsed the last two, and the copy written for it
@@ -446,16 +459,27 @@ export type DashboardRevocationState =
   | { kind: 'reported'; counts: DashboardRevocation }
   | { kind: 'disabled' }
   | { kind: 'checked-clean' }
-  | { kind: 'unknown'; because: 'no-flags' | 'flag-on-no-counters' | 'flag-unreadable' };
+  | {
+      kind: 'unknown';
+      because: 'no-flags' | 'flag-on-no-counters' | 'flag-unreadable' | 'counters-partial';
+    };
 
 /**
  * Did a counter TRIPLE actually arrive, as three numbers?
  *
  * `!!keyRevocation` is not the same question, and the difference is a false
  * claim: `{}` is truthy, carries nothing, and routed to `checked-clean`, whose
- * copy states "this window's counters are zero". `undefined > 0` is `false`, so
- * the `reported` guard already handled a missing member silently — it declined
- * to report, then fell through to an arm that asserted a value anyway.
+ * copy states "this window's counters are zero".
+ *
+ * This docblock used to continue: "`undefined > 0` is `false`, so the
+ * `reported` guard already handled a missing member silently — it declined to
+ * report." That was wrong, and it is left here as the correction rather than
+ * deleted, because it is the sentence that made the defect invisible for three
+ * revisions. `undefined > 0` is indeed false, but the guard was a DISJUNCTION:
+ * `{ revokedAtOrAfter: 3 }` fails two of its three tests and passes the third,
+ * so it reported — and the tile rendered a fabricated `0` for each member that
+ * never arrived. The guard did not decline anything. It is now gated on this
+ * predicate, which is what the sentence claimed was already true.
  *
  * All three, not any: a partial triple is not a payload this console can read,
  * and picking the members that happen to be present would report a sum over an
@@ -467,6 +491,31 @@ function hasCounters(k: DashboardRevocation | null | undefined): k is DashboardR
     typeof k.preCompromise === 'number' &&
     typeof k.revokedAtOrAfter === 'number' &&
     typeof k.revokedTimeUnverifiable === 'number'
+  );
+}
+
+/**
+ * Did SOMETHING counter-shaped arrive, without all three being there?
+ *
+ * The distinction `hasCounters` alone could not make, and the gap the previous
+ * revision fell into. `hasCounters` sorts payloads into "readable" and "not
+ * readable", but "not readable" then held two populations whose copy must
+ * differ: `{}` and `null` sent nothing, and `{ preCompromise: 0 }` sent
+ * something. Routing both to `flag-on-no-counters` made that arm's sentence —
+ * "sent no counters at all, not even zeros" — false of the second, and the
+ * suite POSITIVELY PINNED the sentence, so it enforced the false claim.
+ *
+ * `{}` is deliberately NOT partial: it carries no member of the triple, so
+ * "sent no counters" is true of it. The predicate is about members that are
+ * actually numbers, not about the object's existence.
+ */
+function hasSomeCounters(k: DashboardRevocation | null | undefined): boolean {
+  if (!k || typeof k !== 'object' || Array.isArray(k)) return false;
+  const r = k as unknown as Record<string, unknown>;
+  return (
+    typeof r.preCompromise === 'number' ||
+    typeof r.revokedAtOrAfter === 'number' ||
+    typeof r.revokedTimeUnverifiable === 'number'
   );
 }
 
@@ -485,13 +534,37 @@ export function dashboardRevocationState(
   // say, a non-zero count means the check ran and found that. Checked first so
   // the tile renders figures even against a backend whose `features` is missing
   // or contradicts them.
+  //
+  // `hasCounters` GATES THIS ARM, and its absence was a live defect. The guard
+  // used to be `keyRevocation && (a > 0 || b > 0 || c > 0)`, and `undefined > 0`
+  // is `false` — so `{ revokedAtOrAfter: 3 }` passed it, and the tile rendered
+  // `['0', '3', '0']`: a green "Pre-compromise (authorized) 0" and an amber
+  // "Revoked time unverifiable 0" from a payload that sent neither. Two
+  // fabricated zeros on a trust surface, beside one real figure, with nothing
+  // to tell them apart. This module's docblock said in three places that a
+  // partial triple "is not a payload this console can read"; this arm read one
+  // anyway.
   if (
-    keyRevocation &&
+    hasCounters(keyRevocation) &&
     (keyRevocation.preCompromise > 0 ||
       keyRevocation.revokedAtOrAfter > 0 ||
       keyRevocation.revokedTimeUnverifiable > 0)
   ) {
     return { kind: 'reported', counts: keyRevocation };
+  }
+
+  // A PARTIAL triple, checked before any flag is read.
+  //
+  // Its position is the point. This is a fact about the PAYLOAD, and it
+  // falsifies the copy on every flag-derived arm below: `no-flags` says
+  // "nothing in this window carried a revocation classification" (false of
+  // `{ revokedAtOrAfter: 3 }`), and `flag-on-no-counters` says "sent no
+  // counters at all — not even zeros" (false of anything that sent one). An
+  // earlier revision routed partials into the latter and the test suite pinned
+  // that sentence positively, so the guard enforced the false claim rather than
+  // catching it.
+  if (!hasCounters(keyRevocation) && hasSomeCounters(keyRevocation)) {
+    return { kind: 'unknown', because: 'counters-partial' };
   }
 
   // No usable flag object at all — the pre-#178 backend, or a wire payload that

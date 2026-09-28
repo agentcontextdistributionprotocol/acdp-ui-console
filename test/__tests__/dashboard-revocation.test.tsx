@@ -17,6 +17,13 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { CpDashboardOverview } from '@/lib/types';
+import { dashboardRevocationState } from '@/lib/utils/revocation';
+import {
+  DASHBOARD_PROSE,
+  fullProse,
+  proseKeyFor,
+  type ProseKey,
+} from '../support/revocation-prose';
 
 const useDashboard = vi.fn();
 vi.mock('@/lib/hooks/use-dashboard', () => ({ useDashboard: () => useDashboard() }));
@@ -190,6 +197,27 @@ const SOME = { preCompromise: 9, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0
 const HEDGE = 'the check is disabled by default';
 
 /**
+ * One payload per rendering arm, shared by the distinctness loop and the
+ * closed-set pin so neither can drift out from under the other.
+ *
+ * It was two separate inline lists. The pin is only as complete as this list,
+ * so the pin also asserts that iterating it reaches every key in
+ * `DASHBOARD_PROSE` — a payload dropped from here fails there rather than
+ * silently un-checking an arm.
+ */
+const ARM_PAYLOADS: ReadonlyArray<
+  readonly [CpDashboardOverview['keyRevocation'], CpDashboardOverview['features']]
+> = [
+  [SOME, FEATURES], // reported
+  [CLEAN, FEATURES], // checked-clean
+  [CLEAN, { ...FEATURES, keyRevocationCheck: false }], // disabled
+  [CLEAN, undefined], // unknown/no-flags
+  [null, FEATURES], // unknown/flag-on-no-counters
+  [{ revokedAtOrAfter: 3 } as never, FEATURES], // unknown/counters-partial
+  [CLEAN, { ...FEATURES, keyRevocationCheck: 'true' } as unknown as typeof FEATURES], // flag-unreadable
+] as const;
+
+/**
  * The explanatory paragraph of the revocation tile, excluding the card header
  * and subtitle. The prose arms render as `<p>`; the `reported` arm renders a
  * `.kpi-grid` and no paragraph at all, so calling this on THAT arm THROWS —
@@ -208,16 +236,38 @@ const HEDGE = 'the check is disabled by default';
  * here", "every audited run this deployment has ever recorded". Each was a
  * NEW sentence, so no `not.toMatch` aimed at the OLD one could see it.
  *
- * So this bans the SHAPE, not the sentence. Every counter on this card is
- * scoped to a window and to what was audited in it; a claim that quantifies
- * over the deployment, over all time, or over "every event" is unsupportable
- * from here no matter how it is worded. The one legitimate use of "every event"
- * — "It does not follow that every event in the window was checked" — is a
- * DENIAL of such a claim and is allowed for explicitly, because a matcher
- * cannot read negation.
+ * It was rewritten to "ban the SHAPE, not the sentence". IT DOES NOT DO THAT,
+ * and this docblock claimed it did for a full round — which is worth more than
+ * the guard itself, because a guard trusted to do something it cannot is how
+ * the next four paraphrases got through review.
+ *
+ * What it actually is: nine literal phrase patterns, i.e. an enumerated-sentence
+ * guard one abstraction level up. Round 7 appended four different unscoped
+ * universals to the `checked-clean` arm with the whole suite green:
+ *
+ *   "No key in this deployment has been revoked."
+ *   "Each event across this deployment checked out clean, throughout."
+ *   "The entire fleet is clean."   (pattern 3 lists estate|deployment|fleet,
+ *                                   pattern 4 lists only estate|deployment)
+ *   "Across all 0 revoked events on record, nothing anywhere has been flagged."
+ *
+ * KEEP IT ANYWAY, and know what it is for. It fails FAST and READABLY — it
+ * names the offending phrase — where the exact-text pin below reports only that
+ * a paragraph changed. It is a lint, not a proof. The proof that the arms
+ * cannot say more than their evidence licenses is the closed-set pin in
+ * `test/support/revocation-prose.ts`, which admits exactly one string per arm
+ * and therefore has no paraphrase to miss.
+ *
+ * The one legitimate use of "every event" — "It does not follow that every
+ * event in the window was checked" — is a DENIAL of such a claim and is allowed
+ * for explicitly, because a matcher cannot read negation. That exemption is
+ * itself a reason not to trust this function: a guard that has to be told about
+ * negation cannot be reading meaning.
  */
 function assertNoUnscopedUniversal(text: string): void {
-  const allowedDenial = /does not follow that every event in the window was checked/i;
+  const allowedDenial = /does not follow that every event in the window was checked/gi;
+  // `g`, because a non-global `String.replace` strips only the FIRST match — so
+  // a second legitimate denial would have produced a false failure.
   const stripped = text.replace(allowedDenial, '');
   for (const pattern of [
     /\bnone ever\b/i,
@@ -492,9 +542,87 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(proseText()).toMatch(/counters are zero/i);
   });
 
-  it('a PARTIAL triple is unknown too — a sum over an unknown denominator is not a figure', () => {
+  // ── A PARTIAL triple ────────────────────────────────────────────────
+  //
+  // This test used to render exactly the payload below and assert only
+  // `/does not add up/i`, which passed — and walked straight past the sentence
+  // underneath it, which read "It reports the compromise-boundary check as
+  // enabled, yet sent no counters at all — not even zeros" over a payload that
+  // had sent a counter, and a zero at that. Worse, that sentence was pinned
+  // POSITIVELY elsewhere in this file, so the suite enforced the false claim.
+  //
+  // The lesson is in the assertion style, not the routing: a test that checks
+  // one phrase of a paragraph vouches for one phrase of a paragraph. These
+  // assert the whole arm and, in the sibling below, that the sentence written
+  // for a DIFFERENT payload is not on screen.
+
+  it('a PARTIAL triple gets its own arm — it did not "send no counters"', () => {
     renderWith(overview({ keyRevocation: { preCompromise: 0 } as never, features: FEATURES }));
-    expect(proseText()).toMatch(/does not add up/i);
+    const text = proseText();
+    expect(text).toMatch(/counters arrived incomplete/i);
+    expect(text).toMatch(/no denominator/i);
+    // The sentence this payload used to be given, which it refutes by existing.
+    expect(text).not.toMatch(/no counters at all/i);
+    expect(text).not.toMatch(/not even zeros/i);
+  });
+
+  it('a partial triple with a NON-ZERO member still renders no figures', () => {
+    // The half that matters most. `{ revokedAtOrAfter: 3 }` passed the
+    // `reported` guard — `undefined > 0` is false, but the guard was a
+    // disjunction and the third test passed — so the tile rendered
+    // `['0', '3', '0']`: a green "Pre-compromise (authorized) 0" and an amber
+    // "Revoked time unverifiable 0" from a payload that sent neither, beside
+    // one real figure, with nothing on screen to tell them apart.
+    renderWith(overview({ keyRevocation: { revokedAtOrAfter: 3 } as never, features: FEATURES }));
+    const card = revocationCard();
+    expect(card.querySelectorAll('.kpi-value')).toHaveLength(0);
+    expect(card.textContent).toMatch(/counters arrived incomplete/i);
+  });
+
+  it('DISCRIMINATES: the COMPLETE triple with the same non-zero member does report', () => {
+    // Without this, gating `reported` on the full triple could be satisfied by
+    // never reporting at all.
+    renderWith(
+      overview({
+        keyRevocation: { preCompromise: 0, revokedAtOrAfter: 3, revokedTimeUnverifiable: 0 },
+        features: FEATURES,
+      }),
+    );
+    const values = [...revocationCard().querySelectorAll('.kpi-value')].map((v) => v.textContent);
+    expect(values).toEqual(['0', '3', '0']);
+  });
+
+  it('a partial triple is read BEFORE the flags, so no flag arm claims it', () => {
+    // The arm is a fact about the payload, and it falsifies the copy on every
+    // flag-derived arm: `no-flags` says "nothing in this window carried a
+    // revocation classification", which a payload reporting three revoked
+    // events plainly contradicts. Reached here with each of the four flag
+    // states, all of which must produce the same reading.
+    for (const features of [
+      undefined,
+      null as never,
+      { ...FEATURES, keyRevocationCheck: false },
+      { ...FEATURES, keyRevocationCheck: 'yes' as never },
+    ]) {
+      cleanup();
+      renderWith(overview({ keyRevocation: { revokedAtOrAfter: 3 } as never, features }));
+      const text = proseText();
+      expect(text, `flags=${JSON.stringify(features)}`).toMatch(/counters arrived incomplete/i);
+      expect(text, `flags=${JSON.stringify(features)}`).not.toMatch(
+        /nothing in this window carried/i,
+      );
+    }
+  });
+
+  it('`{}` is NOT partial — it really did send no counters', () => {
+    // The boundary. `{}` carries no member of the triple, so "sent no counters
+    // at all, not even zeros" is true of it and it keeps that arm. Collapsing
+    // the two would make the new arm's copy ("some came through and some did
+    // not") false in its turn — the same mistake facing the other way.
+    renderWith(overview({ keyRevocation: {} as never, features: FEATURES }));
+    const text = proseText();
+    expect(text).toMatch(/no counters at all/i);
+    expect(text).not.toMatch(/counters arrived incomplete/i);
   });
 
   it('the array payload reaches no-flags, not a claim that a report arrived', () => {
@@ -581,26 +709,77 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     // and the whole point of that split is that each reads differently — each
     // says only what holds on its own route. Without this, arms could collapse
     // onto one paragraph and every test above would still pass in isolation.
-    const stringy = { ...FEATURES, keyRevocationCheck: 'true' } as unknown as typeof FEATURES;
     const texts: string[] = [];
-    for (const [k, f] of [
-      [SOME, FEATURES],                                        // reported
-      [CLEAN, FEATURES],                                       // checked-clean
-      [CLEAN, { ...FEATURES, keyRevocationCheck: false }],     // disabled
-      [CLEAN, undefined],                                      // unknown/no-flags
-      [null, FEATURES],                                        // unknown/flag-on-no-counters
-      [CLEAN, stringy],                                        // unknown/flag-unreadable
-    ] as const) {
+    for (const [k, f] of ARM_PAYLOADS) {
       renderWith(overview({ keyRevocation: k, features: f }));
       texts.push(revocationCard().textContent ?? '');
       cleanup();
     }
-    expect(new Set(texts).size).toBe(6);
+    expect(new Set(texts).size).toBe(ARM_PAYLOADS.length);
     // Every arm, not just the two that had a dedicated guard. The over-claims
     // round 6's gate inserted were each aimed at one arm, and four of the six
     // had nothing watching them at all — a claim that reaches past this card's
     // evidence is wrong on whichever arm it is written into.
+    //
+    // NOTE ON WHAT DOES THE WORK HERE. This loop is a secondary signal, not the
+    // guarantee — see `assertNoUnscopedUniversal`'s docblock. The guarantee is
+    // the exact-text pin in the test below, which closes the set of sentences
+    // these arms can emit. Round 7 appended four different unscoped universals
+    // to `checked-clean` and this loop passed all four.
     for (const t of texts) assertNoUnscopedUniversal(t);
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // THE CLOSED-WORLD PIN. This is the guard; everything else about this
+  // card's copy is a readable early warning in front of it.
+  //
+  // Seven gate rounds defeated seven successive enumerations of forbidden
+  // phrasings — the last of them twelve times in one round, by paraphrase
+  // alone. "Does this English sentence claim more than the evidence licenses"
+  // is an open-world question and a pattern list cannot answer it.
+  //
+  // So the set of sentences is closed instead. Each arm may render exactly the
+  // text pinned in `test/support/revocation-prose.ts` and nothing else. A
+  // paraphrase has nothing to evade: any text that is not byte-identical fails,
+  // whatever it says. The review moves to that file, where each entry sits
+  // beside the evidence that licenses it.
+  // ══════════════════════════════════════════════════════════════════
+  it('every prose arm renders EXACTLY its pinned text, and no arm is unpinned', () => {
+    const seen = new Set<ProseKey>();
+    for (const [k, f] of ARM_PAYLOADS) {
+      const key = proseKeyFor(dashboardRevocationState(k, f));
+      renderWith(overview({ keyRevocation: k, features: f }));
+      if (key === null) {
+        // `reported` renders figures and no paragraph at all.
+        expect(revocationCard().querySelector('p')).toBeNull();
+        expect(revocationCard().querySelectorAll('.kpi-value').length).toBeGreaterThan(0);
+        cleanup();
+        continue;
+      }
+      seen.add(key);
+      expect(proseText(), `arm \`${key}\` drifted from its pinned text`).toBe(
+        fullProse(DASHBOARD_PROSE[key]),
+      );
+      cleanup();
+    }
+    // …and the payload list reaches every pinned arm. Without this, dropping a
+    // payload from `ARM_PAYLOADS` would silently stop checking an arm while
+    // every assertion above still passed.
+    expect([...seen].sort()).toEqual((Object.keys(DASHBOARD_PROSE) as ProseKey[]).sort());
+  });
+
+  it('the pinned entries are distinct, so the table cannot collapse onto one sentence', () => {
+    // The anti-vacuity half. A table whose six entries were the same string
+    // would satisfy the test above on a card that rendered one paragraph for
+    // every state — which is the defect round 2 found, with the pin reversed.
+    const all = Object.values(DASHBOARD_PROSE);
+    expect(new Set(all.map(fullProse)).size).toBe(all.length);
+    expect(new Set(all.map((e) => e.headline)).size).toBe(all.length);
+    // Every entry states what licenses it. An empty one is an entry nobody
+    // argued for.
+    for (const [key, e] of Object.entries(DASHBOARD_PROSE)) {
+      expect(e.licensedBy.length, `\`${key}\` has no stated licence`).toBeGreaterThan(80);
+    }
   });
 
   it('a non-zero count is REPORTED even when the flag says the check is off', () => {

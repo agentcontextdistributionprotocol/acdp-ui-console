@@ -322,7 +322,7 @@ describe('demo dashboard windows', () => {
   });
 
   it('keeps features DEPLOYMENT-wide — no window may override it', () => {
-    // Upstream reads these from process config (`dashboard.service.ts:260-266`),
+    // Upstream reads these from process config (`dashboard.service.ts:260-267`),
     // so they are identical for every window of one deployment. A per-window
     // `features` would teach the demo's viewer a state the real system cannot
     // produce.

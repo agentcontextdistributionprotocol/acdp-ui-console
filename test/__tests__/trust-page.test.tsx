@@ -10,6 +10,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { CpRun, RunTrustSummary } from '@/lib/types';
 import type { TrustOverview } from '@/lib/hooks/use-trust';
+import { TRUST_KPI_HINT, TRUST_VIOLATIONS_SUB, TRUST_EMPTY } from '../support/revocation-prose';
 
 const useTrust = vi.fn();
 vi.mock('@/lib/hooks/use-trust', async (orig) => ({
@@ -90,8 +91,23 @@ function overview(
  * them is a guess presented as a finding — which is the defect class #97
  * exists to remove, arrived at from the other direction.
  *
- * Shape, not sentence. The guard this replaces listed four specific wrong
- * phrasings and a fifth walked past it.
+ * IT IS NOT "shape, not sentence", which is what this docblock claimed for a
+ * round. It is four conjunctions and a noun phrase, and round 7 went through it
+ * four times without using any of them:
+ *
+ *   "; this deployment has the receipt-audit sweep switched off"
+ *        `\breceipt audit\b` requires a SPACE, and the repo's own usual
+ *        spelling is hyphenated. A semicolon is not `because`.
+ *   "; the receipt-audit sweep is off on this deployment"   (check-ON arm)
+ *   "; this deployment has the receipt-audit sweep off"     (empty-run state)
+ *   "— the control plane had nothing to send"
+ *        an attribution to the control plane that `page.tsx` explicitly
+ *        forbids ("the cause is not ours to name"), reached with an em-dash.
+ *
+ * No colon, semicolon, em-dash or bare juxtaposition is refused — only four
+ * conjunctions. KEEP IT as a fast, readable lint that names the offending
+ * phrase; the guarantee is the closed-set pin below, which admits exactly one
+ * string per arm and so has no paraphrase to miss.
  */
 function assertNamesNoCause(text: string): void {
   for (const pattern of [
@@ -326,6 +342,115 @@ describe('/trust — a run whose fail-closed verdicts have no per-event detail',
 describe('/trust — the deployment revocation flag', () => {
   const RUN = [{ runId: 'run-quiet', trust: trust() }];
   const NONE = { revocationReportedRuns: 0 };
+
+  // ══════════════════════════════════════════════════════════════════
+  // THE CLOSED-WORLD PIN, the same instrument the dashboard card now uses
+  // and for the same reason.
+  //
+  // This page had no shape guard at all: `assertNoUnscopedUniversal` is
+  // dashboard-only and `assertNamesNoCause` refuses four conjunctions rather
+  // than causes. Round 7 appended five different unlicensed claims here with
+  // the whole suite green — a deployment-wide all-clear on the violations
+  // card, and the same attributed cause on four separate arms, respelled with
+  // a hyphen and a semicolon to slip both guards.
+  //
+  // Asking a pattern list "does this English sentence claim more than the
+  // evidence licenses" is an open-world question. So the set of sentences is
+  // closed instead: each arm renders exactly the string pinned in
+  // `test/support/revocation-prose.ts`, and a paraphrase has nothing to evade.
+  // ══════════════════════════════════════════════════════════════════
+  const HINT_CASES = [
+    ['off-with-runs', RUN, { ...FEATURES_ON, keyRevocationCheck: false }],
+    ['off-no-runs', [], { ...FEATURES_ON, keyRevocationCheck: false }],
+    ['on-with-runs', RUN, FEATURES_ON],
+    ['on-no-runs', [], FEATURES_ON],
+  ] as const;
+
+  function revokedKpi(container: HTMLElement): string {
+    const kpi = [...container.querySelectorAll('.kpi-card')].find((c) =>
+      c.textContent?.includes('Revoked events'),
+    );
+    expect(kpi, 'no Revoked events KPI on the page').toBeTruthy();
+    return (kpi as HTMLElement).querySelector('.kpi-delta')?.textContent ?? '';
+  }
+
+  it('every KPI hint arm renders EXACTLY its pinned text', () => {
+    const seen = new Set<string>();
+    for (const [key, runs, features] of HINT_CASES) {
+      cleanup();
+      const { container } = renderWith(overview([...runs], NONE, features));
+      expect(revokedKpi(container), `hint arm \`${key}\` drifted from its pinned text`).toBe(
+        TRUST_KPI_HINT[key],
+      );
+      seen.add(key);
+    }
+    // The payload list reaches every pinned arm — dropping one from
+    // `HINT_CASES` fails here rather than silently un-checking it.
+    expect([...seen].sort()).toEqual(Object.keys(TRUST_KPI_HINT).sort());
+  });
+
+  it('the four hint arms are distinct, so they cannot collapse onto one sentence', () => {
+    const all = Object.values(TRUST_KPI_HINT);
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it('both violations empty states render EXACTLY their pinned text', () => {
+    // The all-clear is the card that cost round 6 a blocking finding, and it
+    // was guarded by `toContain` on one literal plus a `runs.length` split —
+    // so "Nothing in this deployment binds badly." appended to it survived.
+    cleanup();
+    const { container: empty } = renderWith(overview([], NONE, FEATURES_ON));
+    expect(empty.textContent).toContain(TRUST_EMPTY['no-runs'].title);
+    expect(empty.textContent).toContain(TRUST_EMPTY['no-runs'].description);
+
+    for (const n of [1, 3]) {
+      cleanup();
+      const runs = Array.from({ length: n }, (_, i) => ({ runId: `r${i}`, trust: trust() }));
+      const { container } = renderWith(overview(runs, { revocationReportedRuns: 1 }, FEATURES_ON));
+      expect(container.textContent).toContain(TRUST_EMPTY['no-violations'].title);
+      // The count is IN the sentence, and singular/plural is part of the pin:
+      // the claim is bounded by the run set it was drawn from.
+      expect(container.textContent).toContain(TRUST_EMPTY['no-violations'].description(n));
+    }
+  });
+
+  it('the violations empty states carry NOTHING beyond their pinned text', () => {
+    // The pin above is `toContain`, because `EmptyState` renders an icon and
+    // its own structure around the copy. That alone would admit an appended
+    // sentence, which is exactly the escape being closed — so the empty
+    // state's own text content is compared whole.
+    cleanup();
+    const { container } = renderWith(overview([], NONE, FEATURES_ON));
+    const el = container.querySelector('.empty-state') as HTMLElement;
+    expect(el, 'no .empty-state rendered — the scope of this guard is gone').toBeTruthy();
+    expect(el.textContent).toBe(
+      TRUST_EMPTY['no-runs'].title + TRUST_EMPTY['no-runs'].description,
+    );
+
+    cleanup();
+    const { container: c2 } = renderWith(
+      overview([{ runId: 'r0', trust: trust() }], { revocationReportedRuns: 1 }, FEATURES_ON),
+    );
+    const el2 = c2.querySelector('.empty-state') as HTMLElement;
+    expect(el2.textContent).toBe(
+      TRUST_EMPTY['no-violations'].title + TRUST_EMPTY['no-violations'].description(1),
+    );
+  });
+
+  it('the violations subtitle renders EXACTLY its pinned revocation clause', () => {
+    for (const [key, features] of [
+      ['check-off', { ...FEATURES_ON, keyRevocationCheck: false }],
+      ['not-reported', FEATURES_ON],
+    ] as const) {
+      cleanup();
+      const { container } = renderWith(overview(RUN, NONE, features));
+      const sub = container.textContent ?? '';
+      expect(sub, `subtitle arm \`${key}\``).toContain(TRUST_VIOLATIONS_SUB[key]);
+      // …and not the other arm's clause, which is what makes this a choice.
+      const other = key === 'check-off' ? 'not-reported' : 'check-off';
+      expect(sub).not.toContain(TRUST_VIOLATIONS_SUB[other]);
+    }
+  });
 
   it('says the check is off when the deployment says so', () => {
     const { container } = renderWith(
