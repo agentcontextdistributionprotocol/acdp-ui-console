@@ -23,6 +23,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { LogWitnessAlertRow } from '@/lib/types';
+import type { AckStage, AckListingConsequence } from '@/components/registries/log-witness-alerts';
+import {
+  ACK_LISTING,
+  ALL_CONSEQUENCES,
+  ALL_STAGES,
+  expectedAckBlocks,
+  normalize,
+  squash,
+} from '@/test/support/witness-ack-prose';
 
 // The mock FORWARDS ITS ARGUMENTS. A zero-arg passthrough would make every
 // assertion about which listing the component asks for vacuous — the component
@@ -648,6 +657,66 @@ function confirmAck() {
   fireEvent.click(within(dialog()).getByRole('button', { name: /^acknowledge$/i }));
 }
 
+/**
+ * The dialog's copy, and only the copy — not its chrome.
+ *
+ * The heading and the footer buttons are pinned by their own tests above
+ * (`captions the dialog with the FULL authority`, `withdraws the confirm action
+ * once the alert is gone`); this is the body, which is where every sentence the
+ * mutation sweep falsified lives.
+ */
+function modalBody(): HTMLElement {
+  const el = dialog().querySelector('.modal-body');
+  expect(el, 'the modal renders no .modal-body').toBeTruthy();
+  return el as HTMLElement;
+}
+
+/**
+ * The body's copy blocks, in document order.
+ *
+ * `p` is the lead sentence, `li` the facts, `.card` the `ErrorPanel` (whose
+ * message is its only text when no `details` is passed — the 404 panel passes
+ * none). Read as a LIST so order and count are pinned alongside the wording;
+ * `textContent` on the body as a whole would concatenate blocks with no
+ * separator and turn an added sentence into a substring change.
+ *
+ * Anything a future edit adds outside these three selectors is caught by the
+ * companion assertion in `expectPinnedCopy`, not by this function.
+ */
+function dialogCopyBlocks(): string[] {
+  return [...modalBody().querySelectorAll<HTMLElement>('p, li, .card')].map((n) =>
+    normalize(n.textContent),
+  );
+}
+
+/**
+ * The pin, both halves.
+ *
+ * 1. the blocks are exactly these, in this order — wording, structure, count
+ * 2. the body contains NOTHING ELSE — a bare text node or a `<span>` dropped
+ *    into the grid would satisfy (1) and is the obvious way to add an
+ *    unreviewed sentence. Compared with whitespace stripped, because the
+ *    spacing BETWEEN blocks is a formatting accident and is not copy.
+ */
+function expectPinnedCopy(opts: {
+  stage: AckStage;
+  consequence: AckListingConsequence | null;
+  authority: string;
+  reason: string;
+  label?: string;
+}) {
+  const expected = expectedAckBlocks(opts);
+  expect(dialogCopyBlocks(), opts.label).toEqual(expected);
+  expect(squash(modalBody().textContent), `${opts.label ?? ''} — copy outside the pinned blocks`).toBe(
+    squash(expected.join('')),
+  );
+}
+
+const ack404 = () =>
+  new ApiError(404, JSON.stringify({ errorCode: 'REGISTRY_NOT_FOUND' }), 'control-plane', '/x', true);
+const isAlertsKey = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'));
+
 describe('witness alert worklist — acknowledging is gated on a confirm', () => {
   it('issues NO request when the row control is clicked', async () => {
     renderWith({ data: rows([row()]) });
@@ -885,11 +954,6 @@ describe('witness alert worklist — the two designed failure paths', () => {
     // on failure would leave the table looking unchanged with no explanation.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
-
-  const ack404 = () =>
-    new ApiError(404, JSON.stringify({ errorCode: 'REGISTRY_NOT_FOUND' }), 'control-plane', '/x', true);
-  const isAlertsKey = (spy: { mock: { calls: unknown[][] } }) =>
-    spy.mock.calls.some((c) => JSON.stringify(c[0] ?? {}).includes('log-witness-alerts'));
 
   it('a 404 is rendered as the alert having RESOLVED, not as a failure', async () => {
     // `acknowledgeAlert` updates `WHERE alerted = true`, so a 404 means the
@@ -1230,5 +1294,327 @@ describe('witness alert worklist — acknowledged rows stay reachable', () => {
     cleanup();
     renderWith({ error: new ApiError(500, 'boom', 'control-plane', '/x') });
     expect(screen.getByRole('button', { name: /hide acknowledged/i })).toBeInTheDocument();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The dialog's copy, and the three facts it kept conflating.
+//
+// Round 3's sweep found four independent falsifications of this dialog's prose
+// that the whole suite accepted — the "No acknowledgement was recorded"
+// sentence inverted, the refetch clause past-perfected, negated and inverted,
+// and the resurfacing rule's `same`/`different` swapped. Every positive
+// assertion on those paths was a substring `toMatch`, and a substring match
+// cannot see a prefix, so one negation walked through all of them.
+//
+// Widening the forbidden-phrase list is not the fix; the set of English
+// paraphrases has no end. The fix is to close the GOOD set: the body is a
+// finite composition of enumerated sentences, pinned character for character in
+// `test/support/witness-ack-prose.ts`, with the arms keyed off the component's
+// own exported state unions so a new state cannot ship with old copy painted
+// over it. That file argues the approach and states its limits.
+//
+// Three behavioural tests sit alongside the pin, because the pin asserts WHICH
+// sentence renders and these assert that the state it is keyed on is computed
+// from the right thing. All three were blocking findings:
+//
+//   - the resolved arm read the LIVE reason while claiming to report the
+//     open-time one
+//   - an in-flight ack whose dialog was dismissed tore down whichever dialog
+//     replaced it
+//   - "currently alerting" was gated on "our ack 404'd", so a row that left the
+//     listing for any other reason was still asserted to be alerting
+// ══════════════════════════════════════════════════════════════════════
+describe('witness alert worklist — the confirm dialog’s copy is a closed set', () => {
+  const AUTH = 'registry-c.playground.local';
+  const MISMATCH = 'Root mismatch (split view)';
+  const LOG_ID = 'Log ID changed';
+
+  /** Drive a refetch under the open dialog: the hook starts answering differently. */
+  function refetchTo(rs: LogWitnessAlertRow[], rerender: (ui: React.ReactElement) => void) {
+    useLogWitnessAlerts.mockReturnValue({ isLoading: false, error: null, data: rows(rs) });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <LogWitnessAlerts />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('renders exactly the pinned copy, in every reachable arm', async () => {
+    const scenarios: Array<{
+      stage: AckStage;
+      consequence: AckListingConsequence | null;
+      reason: string;
+      setUp: () => Promise<void>;
+    }> = [
+      {
+        stage: 'alerting',
+        consequence: 'stays-listed',
+        reason: MISMATCH,
+        setUp: async () => {
+          renderWith({ data: rows([row()]) });
+          openConfirm();
+        },
+      },
+      {
+        stage: 'alerting',
+        consequence: 'leaves-view',
+        reason: MISMATCH,
+        setUp: async () => {
+          renderWith({ data: rows([row()]) });
+          fireEvent.click(screen.getByRole('button', { name: /hide acknowledged/i }));
+          openConfirm();
+        },
+      },
+      {
+        // No error at all — the listing simply stopped holding the row. This
+        // arm did not exist before round 3; the `stays-listed` sentence was
+        // rendering over it, asserting that a row the table no longer showed
+        // would stay put.
+        stage: 'left-listing',
+        consequence: 'already-gone',
+        reason: MISMATCH,
+        setUp: async () => {
+          const { rerender } = renderWith({ data: rows([row()]) });
+          openConfirm();
+          refetchTo([], rerender);
+        },
+      },
+      {
+        stage: 'resolved',
+        consequence: null,
+        reason: MISMATCH,
+        setUp: async () => {
+          acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+          renderWith({ data: rows([row()]) });
+          openConfirm();
+          confirmAck();
+          await waitFor(() =>
+            expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i),
+          );
+        },
+      },
+    ];
+
+    // Anti-vacuity, asserted BEFORE the loop: a table that quietly lost an arm
+    // must fail as a coverage gap rather than pass with three scenarios. Both
+    // key sets are read off the pinned `Record`s, which are typed by the
+    // component's own unions — so this compares the copy table against the
+    // state machine, not against a second hand-written list that could drift
+    // with it.
+    expect(new Set(scenarios.map((s) => s.stage))).toEqual(new Set(ALL_STAGES));
+    expect(
+      new Set(scenarios.map((s) => s.consequence).filter((c) => c !== null)),
+    ).toEqual(new Set(ALL_CONSEQUENCES));
+
+    for (const s of scenarios) {
+      cleanup();
+      acknowledgeLogWitnessAlert.mockReset();
+      await s.setUp();
+      expectPinnedCopy({
+        stage: s.stage,
+        consequence: s.consequence,
+        authority: AUTH,
+        reason: s.reason,
+        label: `${s.stage} / ${s.consequence ?? 'no bullets'}`,
+      });
+    }
+  });
+
+  it('DISCRIMINATES: the three listing consequences are three different sentences', () => {
+    // Without this, a component that rendered one constant bullet in all three
+    // arms would still pass the pin above — as long as the pinned table
+    // repeated itself too. The bullet WAS constant across two arms once, and
+    // shipped false on the screen it was rendered over.
+    const texts = ALL_CONSEQUENCES.map((c) => ACK_LISTING[c]);
+    expect(new Set(texts).size, 'two listing consequences share their copy').toBe(texts.length);
+  });
+
+  it('the resolved arm names the reason the dialog OPENED on, not the live one', async () => {
+    // The row is overwritten in place upstream when the same authority is
+    // re-detected with a different reason — the table's primary key is
+    // `(tenantId, registryAuthority)`. A dialog that read the live row here
+    // reported a detection the operator had never seen, and it did so on the
+    // one path where the dialog is the only surviving record of what they
+    // clicked, because a 404 means the row is already gone from the table.
+    acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
+    const { rerender } = renderWith({ data: rows([row({ reason: 'root_mismatch' })]) });
+    openConfirm();
+    refetchTo([row({ reason: 'log_id_changed' })], rerender);
+    confirmAck();
+    await waitFor(() => expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i));
+
+    expectPinnedCopy({
+      stage: 'resolved',
+      consequence: null,
+      authority: AUTH,
+      reason: MISMATCH,
+      label: 'resolved, after the live row changed reason',
+    });
+    // Stated separately from the pin, because the pin would also fail for an
+    // unrelated wording change and this is the specific claim.
+    expect(
+      normalize(modalBody().textContent),
+      'the resolved arm is reading the LIVE reason',
+    ).not.toContain(LOG_ID);
+  });
+
+  it('a row that leaves the listing is described in the past tense, and nothing claims why', async () => {
+    // `resolved` means only "our ack returned 404". A row can leave the listing
+    // without that ever happening — any refetch after upstream ran
+    // `advanceCursor`, or, in the filtered view, someone else acknowledging it
+    // — and the dialog then asserted "currently alerting" over a card that was
+    // simultaneously rendering "No alert is recorded at all".
+    const { rerender } = renderWith({ data: rows([row({ reason: 'root_mismatch' })]) });
+    openConfirm();
+    expect(normalize(modalBody().textContent)).toContain('currently alerting');
+
+    refetchTo([], rerender);
+    expectPinnedCopy({
+      stage: 'left-listing',
+      consequence: 'already-gone',
+      authority: AUTH,
+      reason: MISMATCH,
+      label: 'left-listing, no error',
+    });
+    // No 404 has arrived, so the console has NOT been told the alert cleared
+    // and may not say so — this arm and the resolved one are different claims.
+    expect(normalize(modalBody().textContent)).not.toContain('no longer an alert to acknowledge');
+    // And confirming stays on offer, because only the control plane can settle
+    // whether the alert is still there. Withdrawing it here would be the same
+    // over-claim in the other direction.
+    expect(within(dialog()).getByRole('button', { name: /^acknowledge$/i })).toBeInTheDocument();
+  });
+
+  it('still sends the ack for the row it opened on after that row leaves the listing', async () => {
+    // The identity half of the same change: `live` going null must not change
+    // WHO is acknowledged. Upstream takes no body, so the authority is the
+    // whole request.
+    acknowledgeLogWitnessAlert.mockResolvedValue({ authority: AUTH, alerted: true });
+    const { rerender } = renderWith({
+      data: rows([row({ authority: 'other.example.com' }), row({ authority: AUTH })]),
+    });
+    openConfirm(AUTH);
+    refetchTo([row({ authority: 'other.example.com' })], rerender);
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalledTimes(1));
+    expect(acknowledgeLogWitnessAlert.mock.calls[0][0]).toBe(AUTH);
+  });
+
+  it('an ack whose dialog was dismissed does not close the dialog that replaced it', async () => {
+    // `useMutation`'s own `onSuccess` is invoked by the Mutation in `execute()`
+    // with no observer check, so it runs after this dialog unmounts —
+    // deliberately, so the refetch still happens. `onClose` was sitting in it
+    // too, and `onClose` is the PARENT's `setConfirming(null)`: an operator who
+    // dismissed an in-flight ack and opened a different row had that second
+    // dialog torn down when the first ack landed.
+    //
+    // The close therefore moved to the per-call callback passed to `mutate()`,
+    // which `MutationObserver#notify` gates on `hasListeners()`. Both halves
+    // are asserted here, because moving the invalidation with it would be the
+    // other half of the same bug (see the refetch tests above).
+    let resolveAck: (v: unknown) => void = () => {};
+    acknowledgeLogWitnessAlert.mockImplementation(
+      () => new Promise((res) => { resolveAck = res; }),
+    );
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    renderWith({
+      data: rows([row({ authority: 'first.example.com' }), row({ authority: 'second.example.com' })]),
+    });
+    openConfirm('first.example.com');
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalled());
+
+    // Dismissed while in flight, and a different row opened.
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    openConfirm('second.example.com');
+    expect(within(dialog()).getByRole('heading').textContent).toBe('Acknowledge second.example.com');
+
+    // …and only now does the first ack succeed.
+    resolveAck({ authority: 'first.example.com', alerted: true });
+    // The refetch still fires — that half must NOT be gated on the dialog.
+    await waitFor(() => expect(isAlertsKey(invalidate)).toBe(true));
+    // The second dialog is untouched.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(within(dialog()).getByRole('heading').textContent).toBe('Acknowledge second.example.com');
+  });
+
+  it('a worklist refetch does not take focus off the open dialog', async () => {
+    // `Modal`'s focus effect used to list `onClose` as a dependency, and
+    // `onClose` here is an inline arrow minted by `LogWitnessAlerts` — so every
+    // re-render of the PARENT tore the effect down (restoring focus out of the
+    // dialog) and re-ran it (focusing the header X).
+    //
+    // The parent re-renders on every React Query update, which for this hook
+    // means every background refetch on a 20-second `staleTime` AND the
+    // invalidation the 404 path issues itself. Measured with the dependency
+    // restored, focus on the confirm button, two refetches:
+    //
+    //   ["Close dialog", "Acknowledge", "Close dialog"]
+    //
+    // — the operator taken off the one control on this page that writes, and
+    // left on the close button. `modal-focus.test.tsx` holds the synthetic
+    // minimum; this is the real component, because that file's earlier header
+    // claimed a witness-ack figure that the witness-ack component does not
+    // produce (a confirm click and its error arrival move focus zero times,
+    // with the bug and without — the mutation re-renders the dialog, not its
+    // owner).
+    const moves: string[] = [];
+    const onFocusIn = (e: Event) => {
+      const el = e.target as HTMLElement;
+      moves.push(el.getAttribute('aria-label') ?? el.textContent?.slice(0, 24) ?? el.tagName);
+    };
+
+    const { rerender } = renderWith({ data: rows([row()]) });
+    openConfirm();
+    // The focus timer is a `setTimeout(…, 0)`; let it land before measuring.
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 5));
+
+    // THE OPERATOR TABS TO THE CONFIRM BUTTON. Measuring from wherever
+    // mount-time focus landed would measure from the header X — which is
+    // exactly where the broken effect re-focuses, so the defect is invisible
+    // from there and the test would pass with the bug restored.
+    const confirm = within(dialog()).getByRole('button', { name: /^acknowledge$/i });
+    confirm.focus();
+    expect(document.activeElement).toBe(confirm);
+
+    document.addEventListener('focusin', onFocusIn, { capture: true });
+    try {
+      for (let i = 0; i < 2; i++) {
+        refetchTo([row({ consecutiveFailures: 3 + i })], rerender);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    } finally {
+      document.removeEventListener('focusin', onFocusIn, { capture: true });
+    }
+
+    expect(moves, `focus moved to: ${moves.join(', ')}`).toEqual([]);
+    expect(document.activeElement).toBe(confirm);
+  });
+
+  it('DISCRIMINATES: the dialog DOES close when its OWN ack succeeds', async () => {
+    // The sibling that stops the test above from passing on a dialog that never
+    // closes at all — deleting the `onSuccess` callback entirely satisfies it.
+    // Same mechanics as the dismissal test (a deferred promise, so the close is
+    // observably tied to the response rather than to the click), and the same
+    // two rows, so the only difference between the two is whether the dialog
+    // was dismissed first.
+    let resolveAck: (v: unknown) => void = () => {};
+    acknowledgeLogWitnessAlert.mockImplementation(
+      () => new Promise((res) => { resolveAck = res; }),
+    );
+    renderWith({
+      data: rows([row({ authority: 'first.example.com' }), row({ authority: 'second.example.com' })]),
+    });
+    openConfirm('first.example.com');
+    confirmAck();
+    await waitFor(() => expect(acknowledgeLogWitnessAlert).toHaveBeenCalled());
+    // Still open while the request is outstanding.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    resolveAck({ authority: 'first.example.com', alerted: true });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });

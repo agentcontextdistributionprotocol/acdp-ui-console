@@ -131,6 +131,66 @@ const ACK_ALREADY_RESOLVED =
   'dialog updates when that answer arrives.';
 
 /**
+ * The dialog's THREE states, as a closed union — and the reason it is a union
+ * rather than two booleans read at three different places.
+ *
+ * Round 3 of this PR's gate found the dialog asserting, in the same render,
+ * that an authority was "currently alerting" a reason the operator had never
+ * seen. Both halves came from the same shape: one `row` value that preferred
+ * the live row and fell back to the snapshot, and one `resolved` boolean that
+ * meant "our ack 404'd" but was read as "the row is gone". Three different
+ * facts — what was clicked, what the listing holds now, what upstream answered
+ * — were being recovered from two values that could not carry them.
+ *
+ *   - `alerting`     — the listing still holds this authority. The present
+ *                      tense is earned; the reason comes from the LIVE row.
+ *   - `left-listing` — it does not, and upstream has not answered. This console
+ *                      does not know why the row left, so nothing here may say.
+ *                      The reason comes from the SNAPSHOT, in the past tense.
+ *   - `resolved`     — the ack returned 404, which upstream only does when the
+ *                      row is no longer `alerted = true`. The one state where
+ *                      the console can say the alert is gone, because upstream
+ *                      said so about this very write.
+ *
+ * `resolved` dominates `left-listing`: a direct answer about our own write
+ * outranks an inference from a listing that may simply be filtered.
+ *
+ * Exported so the prose table in `test/support/witness-ack-prose.ts` can key
+ * off it. Adding a fourth state fails `tsc` there until its copy is written —
+ * which is the point. Every previous round of this dialog shipped a new state
+ * with old copy painted over it.
+ */
+export type AckStage = 'alerting' | 'left-listing' | 'resolved';
+
+export function ackStage(live: LogWitnessAlertRow | null, error: unknown): AckStage {
+  if (error instanceof ApiError && error.status === 404) return 'resolved';
+  return live === null ? 'left-listing' : 'alerting';
+}
+
+/**
+ * What the operator will SEE in the table after confirming.
+ *
+ * Not a property of the ack — a property of the ack crossed with the listing
+ * they are looking at, which is why it is derived rather than inlined. A single
+ * unconditional sentence shipped here once and was false on the default screen
+ * in all three of its claims.
+ *
+ * `null` means the bullets are withdrawn entirely: on the `resolved` path
+ * confirming cannot happen, so every sentence describing what confirming does
+ * is a claim about an action that will not occur.
+ */
+export type AckListingConsequence = 'stays-listed' | 'leaves-view' | 'already-gone';
+
+export function ackListingConsequence(
+  stage: AckStage,
+  showAcknowledged: boolean,
+): AckListingConsequence | null {
+  if (stage === 'resolved') return null;
+  if (stage === 'left-listing') return 'already-gone';
+  return showAcknowledged ? 'stays-listed' : 'leaves-view';
+}
+
+/**
  * The confirm step (#84).
  *
  * It exists because "acknowledge" is the single most over-read word on this
@@ -147,24 +207,66 @@ const ACK_ALREADY_RESOLVED =
  * (or offer one that does not) on the strength of an unrelated answer.
  */
 function AcknowledgeDialog({
-  row,
+  openedOn,
+  live,
   showAcknowledged,
   onClose,
 }: {
-  row: LogWitnessAlertRow;
+  // THREE FACTS, CARRIED SEPARATELY, and the separation is the fix for round
+  // 3's first and third blocking findings.
+  //
+  // A single `row` prop that preferred the live row and fell back to the
+  // snapshot collapsed three different things into one value, and each
+  // collapse produced a sentence that was false in a state the same path
+  // admits:
+  //
+  //   - "It was alerting X when this dialog opened" read X off the LIVE row.
+  //     Upstream overwrites a row in place when the same authority is
+  //     re-detected with a different reason (the PK is `(tenantId,
+  //     registryAuthority)`), so after such a refetch the dialog named a
+  //     detection the operator had never seen — as the only surviving record
+  //     of what they had been looking at, since the 404 path means the row is
+  //     already gone from the table.
+  //   - "currently alerting: X" was gated on `resolved`, which means only "our
+  //     ack 404'd". A row can leave the list for other reasons — any refetch
+  //     after upstream ran `advanceCursor` — and then the dialog asserted a
+  //     live alert in the present tense while the card behind it rendered "No
+  //     alert is recorded at all".
+  //
+  // So: `openedOn` is what the operator clicked and never changes;
+  // `live` is the current row or `null` if it has left the listing.
+  openedOn: LogWitnessAlertRow;
+  live: LogWitnessAlertRow | null;
   // Which listing the table behind this dialog is showing. The third fact
   // below is about what the operator will SEE after confirming, and that
   // depends on the view — it is not a property of the ack.
   showAcknowledged: boolean;
   onClose: () => void;
 }) {
+  // The ack is keyed on the authority alone — upstream takes no body — and the
+  // authority is the one field that cannot differ between the two, so the
+  // snapshot is always a safe source for it.
+  const authority = openedOn.authority;
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const queryClient = useQueryClient();
   const mut = useMutation({
-    mutationFn: () => acknowledgeLogWitnessAlert(row.authority, demoMode),
+    mutationFn: () => acknowledgeLogWitnessAlert(authority, demoMode),
+    // The invalidation belongs to the MUTATION; closing belongs to the
+    // COMPONENT, and round 3 found the difference is not cosmetic.
+    //
+    // `useMutation`'s own `onSuccess` is invoked by the Mutation in
+    // `execute()` with no observer check, so it runs after this dialog
+    // unmounts — deliberately, for the refetch (see `onError` below). But
+    // `onClose()` sat here too, and `onClose` is the PARENT's
+    // `setConfirming(null)`: an operator who dismissed an in-flight ack and
+    // opened a different row's dialog had that second dialog torn down when
+    // the first ack landed. `screen.queryByRole('dialog')` measured null.
+    //
+    // The close therefore moves to the per-call callback passed to `mutate()`,
+    // which `MutationObserver#notify` gates on `hasListeners()` — exactly the
+    // "only if this component is still mounted" semantics it needs.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['log-witness-alerts'] });
-      onClose();
     },
     // The 404 refetch fires ON ARRIVAL, and this is the third arrangement of it.
     //
@@ -200,7 +302,9 @@ function AcknowledgeDialog({
     },
   });
 
-  const resolved = mut.error instanceof ApiError && mut.error.status === 404;
+  const stage = ackStage(live, mut.error);
+  const resolved = stage === 'resolved';
+  const consequence = ackListingConsequence(stage, showAcknowledged);
   const forbidden = isUpstreamForbidden(mut.error);
 
   return (
@@ -211,7 +315,7 @@ function AcknowledgeDialog({
       // truncates at the first dot, so a confirm dialog for
       // `registry-a.corp.example` would be captioned identically to one for
       // `registry-a.playground.local` — on the one control that writes.
-      title={`Acknowledge ${row.authority}`}
+      title={`Acknowledge ${authority}`}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
@@ -221,7 +325,14 @@ function AcknowledgeDialog({
             {resolved ? 'Close' : 'Cancel'}
           </Button>
           {!resolved && (
-            <Button onClick={() => mut.mutate()} disabled={mut.isPending}>
+            // `onSuccess` here rather than in the mutation's own options: see
+            // the note there. This callback is gated on the observer still
+            // having listeners, so an ack whose dialog was dismissed cannot
+            // close whichever dialog is open when it lands.
+            <Button
+              onClick={() => mut.mutate(undefined, { onSuccess: () => onClose() })}
+              disabled={mut.isPending}
+            >
               {mut.isPending ? 'Acknowledging…' : 'Acknowledge'}
             </Button>
           )}
@@ -229,22 +340,44 @@ function AcknowledgeDialog({
       }
     >
       <div style={{ display: 'grid', gap: 10 }}>
-        {/* Tense is a function of `resolved`, and so is the list below it.
-            "currently alerting" is a present-tense claim about the authority,
-            and on the 404 path the control plane has just told us it is false:
-            the alert cleared. The reason is still worth naming — it is what the
-            operator clicked on, and the row may already be gone from the table
-            behind the dialog — but it has to be named in the past tense. */}
+        {/* One sentence per STAGE, and the reason's source differs per stage —
+            which is the whole point of the split.
+
+            `alerting` is the only arm allowed the present tense, and the only
+            one that reads the LIVE row: the authority is in the listing right
+            now, so "currently alerting" is a claim this console can make.
+
+            The other two read the SNAPSHOT. `resolved` must, because upstream
+            has just said the alert is gone and the live row is gone with it —
+            the snapshot is the only surviving record of what the operator
+            clicked. `left-listing` must for the same reason, and must also stop
+            short of saying WHY the row left: from here the console cannot tell
+            a cleared condition from someone else's acknowledgement filtering it
+            out of this view, and an earlier revision asserted the former. */}
         <p style={{ margin: 0 }}>
-          {resolved ? (
+          {stage === 'resolved' && (
             <>
-              No acknowledgement was recorded for <strong>{row.authority}</strong>. It was alerting{' '}
-              <strong>{reasonLabel(row.reason)}</strong> when this dialog opened.
+              No acknowledgement was recorded for <strong>{authority}</strong>. It was alerting{' '}
+              <strong>{reasonLabel(openedOn.reason)}</strong> when this dialog opened.
             </>
-          ) : (
+          )}
+          {/* `openedOn.reason` here is not a choice the tests can falsify, and
+              that is worth saying rather than leaving as an apparent gap: this
+              arm is reachable only when `live === null` (see `ackStage`), so
+              `live?.reason ?? openedOn.reason` is the same expression. The
+              sweep records it as a surviving mutant; it is an equivalent one.
+              The arm ABOVE is the one where the distinction is real, and it has
+              its own test. */}
+          {stage === 'left-listing' && (
             <>
-              Recording an acknowledgement for <strong>{row.authority}</strong>, currently alerting:{' '}
-              <strong>{reasonLabel(row.reason)}</strong>.
+              <strong>{authority}</strong> is no longer in the listing this console is showing. It
+              was alerting <strong>{reasonLabel(openedOn.reason)}</strong> when this dialog opened.
+            </>
+          )}
+          {stage === 'alerting' && live && (
+            <>
+              Recording an acknowledgement for <strong>{authority}</strong>, currently alerting:{' '}
+              <strong>{reasonLabel(live.reason)}</strong>.
             </>
           )}
         </p>
@@ -255,7 +388,7 @@ function AcknowledgeDialog({
             Leaving "It records which key saw this alert, and when" on screen
             beside "there is no longer an alert to acknowledge" tells an operator
             something was recorded when nothing was. */}
-        {!resolved && (
+        {consequence && (
           <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
             <li>
               It records <strong>which key</strong> saw this alert, and when. The control plane
@@ -266,8 +399,10 @@ function AcknowledgeDialog({
               It does <strong>not clear the alert</strong> and does not touch the retained head. The
               authority stays alerted until the control plane witnesses a consistent checkpoint again.
             </li>
-            {/* A function of the VIEW, because the sentence is about what the
-                operator will see next and that is not a property of the ack.
+            {/* A function of the VIEW *and* of whether the row is still in it,
+                because the sentence is about what the operator will see next
+                and that is not a property of the ack.
+
                 A single sentence shipped here saying the row "leaves this
                 worklist by default … stays hidden until you use Show
                 acknowledged above" — written when the default listing WAS
@@ -277,8 +412,13 @@ function AcknowledgeDialog({
                 labelled "Hide acknowledged". The one control on this page that
                 writes was telling the operator a still-alerting authority would
                 disappear, and sending them to press a button that is not
-                there. */}
-            {showAcknowledged ? (
+                there.
+
+                The third arm is the one round 3 added. Both view arms describe
+                a row that is on screen; when the listing no longer holds it,
+                both are false, and the one that was rendering said the row
+                "stays". */}
+            {consequence === 'stays-listed' && (
               <li>
                 The row <strong>stays</strong> in this worklist — this view lists acknowledged alerts
                 too, and the <em>State</em> column will read <em>Acknowledged</em>. A later detection
@@ -286,13 +426,21 @@ function AcknowledgeDialog({
                 <strong>same</strong> reason does <strong>not</strong>, so an unchanged, ongoing
                 detection will not announce itself again.
               </li>
-            ) : (
+            )}
+            {consequence === 'leaves-view' && (
               <li>
                 The row leaves <strong>this view</strong>, which is filtered to unacknowledged
                 alerts — it does not leave the worklist. A later detection with a{' '}
                 <strong>different</strong> reason brings it back here; a repeat of the{' '}
                 <strong>same</strong> reason does <strong>not</strong> — so an unchanged, ongoing
                 detection stays hidden from this view until you use <em>Show acknowledged</em> above.
+              </li>
+            )}
+            {consequence === 'already-gone' && (
+              <li>
+                The row <strong>left this listing</strong> after the dialog opened, so there is
+                nothing here for the acknowledgement to change. This console cannot tell whether the
+                control plane still holds the alert — confirming is what settles it.
               </li>
             )}
           </ul>
@@ -377,9 +525,8 @@ export function LogWitnessAlerts() {
   const [showAcknowledged, setShowAcknowledged] = useState(true);
   const alerts = useLogWitnessAlerts(showAcknowledged);
   const rows = alerts.data?.data ?? [];
-  // The row the dialog OPENED on, with the live row preferred while there is
-  // one. Two requirements pull in opposite directions here, and each was
-  // shipped alone before this shape existed.
+  // The row the dialog OPENED on. Two requirements pull in opposite directions
+  // here, and each was shipped alone before this shape existed.
   //
   // Holding only the authority and re-deriving the row from `rows` keeps the
   // dialog's reason current when the list refetches underneath it — a frozen
@@ -394,12 +541,19 @@ export function LogWitnessAlerts() {
   //
   // So: the snapshot supplies IDENTITY — the dialog stays mounted for as long
   // as the operator keeps it open, whatever the list does — and the lookup
-  // supplies CONTENT, so the reason, the state and the ack stamp track the live
-  // row while there is one. The ack itself is keyed on the authority alone
-  // (upstream takes no body), so a snapshot can never send a stale field.
+  // supplies CONTENT while the listing still holds the row. The ack itself is
+  // keyed on the authority alone (upstream takes no body), so a snapshot can
+  // never send a stale field.
+  //
+  // The two are handed over SEPARATELY rather than coalesced with a `??` here.
+  // A coalesced value silently substitutes the snapshot for the live row, and
+  // the dialog then cannot tell "still alerting this reason" from "gone from
+  // the listing, and this is what it said when you clicked" — which is exactly
+  // the sentence round 3 caught it getting wrong. `live` is `null` when the
+  // listing does not hold the authority, and that `null` is information.
   const [confirming, setConfirming] = useState<LogWitnessAlertRow | null>(null);
-  const confirmRow = confirming
-    ? (rows.find((r) => r.authority === confirming.authority) ?? confirming)
+  const liveRow = confirming
+    ? (rows.find((r) => r.authority === confirming.authority) ?? null)
     : null;
 
   return (
@@ -564,10 +718,11 @@ export function LogWitnessAlerts() {
         )}
         {/* Keyed on the authority so switching rows remounts the dialog rather
             than carrying the previous row's mutation error into it. */}
-        {confirmRow && (
+        {confirming && (
           <AcknowledgeDialog
-            key={confirmRow.authority}
-            row={confirmRow}
+            key={confirming.authority}
+            openedOn={confirming}
+            live={liveRow}
             showAcknowledged={showAcknowledged}
             onClose={() => setConfirming(null)}
           />

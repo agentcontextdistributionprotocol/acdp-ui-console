@@ -10,13 +10,21 @@
 // focusable, which is the header "Close dialog" button.
 //
 // So a keyboard or screen-reader operator had focus yanked off whatever control
-// they had tabbed to, twice per re-render, on a dialog that was never
-// re-opened. It was measured at four focus moves across a single confirm click
-// and its error arrival in the witness-ack dialog — landing on "Close dialog"
-// three times.
+// they had tabbed to, on a dialog that was never re-opened.
 //
 // The effect's real dependency is `open`. `onClose` is read through a ref so
 // Escape still calls the current callback.
+//
+// The trigger is the OWNER re-rendering, not the dialog re-rendering, and the
+// difference matters enough that an earlier version of this header got it
+// wrong: it reported four focus moves across a confirm click and its error
+// arrival in the witness-ack dialog. That scenario records ZERO, with the bug
+// and without — `onClose` there is minted by `LogWitnessAlerts`, and a mutation
+// state change re-renders only the dialog, leaving the prop's identity
+// untouched. The witness-ack case that DOES reproduce it is a worklist refetch,
+// and it is pinned against the real component in `log-witness-alerts.test.tsx`
+// rather than described here. What this file holds is the synthetic minimum:
+// an owner that re-renders and nothing else.
 // ══════════════════════════════════════════════════════════════════════
 import { describe, expect, it, afterEach, vi } from 'vitest';
 import { useState } from 'react';
@@ -91,8 +99,17 @@ describe('Modal — focus is not disturbed by the owner re-rendering', () => {
         });
       }
 
-      // With `onClose` in the dep list this recorded six moves — three
-      // teardown-restores and three re-focuses onto "Close dialog".
+      // With `onClose` in the dep list this records exactly:
+      //
+      //   ["Close dialog", "Body action", "Close dialog", "Body action", "Close dialog"]
+      //
+      // FIVE, not six. The count is written down because it was written down
+      // wrong before — as six, "three teardown-restores and three re-focuses",
+      // which is what the mechanism suggests rather than what the run produces.
+      // The first teardown restores to `document.body`, and jsdom fires no
+      // `focusin` for that, so the alternation starts one short. A guard's
+      // comment that reports a number nobody measured is how the guard gets
+      // trusted past what it actually shows.
       expect(watch.moves, `focus moved to: ${watch.moves.join(', ')}`).toEqual([]);
       // And it really is still where the operator put it.
       expect(document.activeElement).toBe(bodyAction);

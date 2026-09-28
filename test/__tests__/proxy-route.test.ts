@@ -180,8 +180,16 @@ describe('proxy route — route allow-list', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('allows every route lib/api/client.ts actually issues', async () => {
-    const cases: Array<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; service: string; path: string[] }> = [
+  // Hoisted out of the test below so the `^`-anchor sweep after it can run over
+  // the SAME list. Two hand-maintained copies of "every route we issue" is one
+  // copy too many: the sweep is only a whole-file guard if it cannot fall
+  // behind the allow-list, and sharing the table is what makes adding a route
+  // automatically add its anchor case.
+  const ALLOWED_CASES: Array<{
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+    service: string;
+    path: string[];
+  }> = [
       { method: 'GET', service: 'playground', path: ['healthz'] },
       { method: 'GET', service: 'playground', path: ['scenarios'] },
       { method: 'POST', service: 'playground', path: ['runs'] },
@@ -226,14 +234,59 @@ describe('proxy route — route allow-list', () => {
       { method: 'GET', service: 'registry-a', path: ['.well-known', 'acdp.json'] },
       { method: 'GET', service: 'registry-a', path: ['.well-known', 'jwks.json'] },
       { method: 'GET', service: 'registry-b', path: ['contexts', 'search'] },
-    ];
-    for (const { method, service, path } of cases) {
+  ];
+
+  it('allows every route lib/api/client.ts actually issues', async () => {
+    for (const { method, service, path } of ALLOWED_CASES) {
       const fetchMock = mockFetch(() => upstream());
       const url = `http://localhost/api/proxy/${service}/${path.join('/')}`;
       const handler = method === 'GET' ? GET : method === 'POST' ? POST : method === 'PATCH' ? PATCH : DELETE;
       const res = await handler(new NextRequest(url, { method }), ctx(service, path));
       expect(res.status, `${method} ${service}/${path.join('/')}`).not.toBe(403);
       expect(fetchMock, `${method} ${service}/${path.join('/')}`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  // ── The `^` anchor, which nothing in this file pinned until #84's gate ──
+  //
+  // Every over-reach case in this file — all four blocks of them — tests the
+  // `$` end of the pattern: a tail, a widened literal, an extra segment. Not
+  // one tested the START. Dropping the `^` from
+  // `/^\/registries\/[^/]+\/log-witness\/ack$/` leaves `RegExp#test` matching
+  // the pattern ANYWHERE in the path, so
+  //
+  //   POST /api/proxy/control-plane/anything/registries/registry-a.example.com/log-witness/ack
+  //
+  // is allow-listed, forwarded to `${CONTROL_PLANE_BASE_URL}/anything/...`
+  // WITH the injected deployment bearer attached — an arbitrary control-plane
+  // path reachable from the browser under this console's credential. Measured:
+  // 200, upstream called once, and `proxy-route.test.ts` still 36/36 with the
+  // whole suite green.
+  //
+  // It is a whole-FILE property, not an ack-specific one — every pattern here
+  // has the same exposure — so it is asserted as one, over the same table the
+  // allow test uses. Enumerating a case per pattern is what left the gap in the
+  // first place: the enumeration is of an open set, and the defect lands on
+  // whichever member nobody wrote down.
+  //
+  // Two prefixes, because they fail differently. A plain segment is the
+  // traversal-free shape that only the anchor rejects; `..` would be caught by
+  // the dot-segment guard even with the anchor gone, so it is deliberately NOT
+  // the case being made here.
+  it('anchors every allow-list pattern at the START of the path', async () => {
+    expect(ALLOWED_CASES.length, 'the allow table emptied out').toBeGreaterThan(20);
+    for (const { method, service, path } of ALLOWED_CASES) {
+      for (const prefix of ['anything', 'v1']) {
+        const prefixed = [prefix, ...path];
+        const fetchMock = mockFetch(() => upstream());
+        const url = `http://localhost/api/proxy/${service}/${prefixed.join('/')}`;
+        const handler =
+          method === 'GET' ? GET : method === 'POST' ? POST : method === 'PATCH' ? PATCH : DELETE;
+        const res = await handler(new NextRequest(url, { method }), ctx(service, prefixed));
+        const label = `${method} ${service}/${prefixed.join('/')} — the ^ anchor must admit no prefix`;
+        expect(res.status, label).toBe(403);
+        expect(fetchMock, label).not.toHaveBeenCalled();
+      }
     }
   });
 

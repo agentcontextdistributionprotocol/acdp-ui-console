@@ -828,10 +828,15 @@ export async function getLogWitness(authority: string, demoMode: boolean): Promi
  * The durable transparency-log alert worklist, across every authority the
  * control plane witnesses (#84) — not just the two this console proxies.
  *
- * Read-only, like `getLogWitness` above. The sibling admin
- * `POST /registries/:authority/log-witness/ack` is still neither called nor
- * proxied; acknowledging from the console is Phase 19's work, and the docblock
- * on `getLogWitness` has to be corrected when it lands.
+ * Read-only. The sibling admin `POST /registries/:authority/log-witness/ack`
+ * IS now called and proxied — `acknowledgeLogWitnessAlert` below, allow-listed
+ * in the proxy route. This paragraph said the opposite for two commits after
+ * that landed, and it had written its own instruction ("the docblock on
+ * `getLogWitness` has to be corrected when it lands"), which was carried out 36
+ * lines above while this copy was left. It matters more than an ordinary stale
+ * comment: this is the FIRST of two consecutive docblocks on the same function,
+ * so editors surface only the second — the API contract below was invisible in
+ * tooling while the half visible in source was false.
  *
  * `includeAcknowledged` appends a query string ONLY when true. Upstream takes
  * the literal strings `'true'` and `'1'` as true, so an explicit
@@ -841,10 +846,16 @@ export async function getLogWitness(authority: string, demoMode: boolean): Promi
  * There is **no pagination on this endpoint** — no limit, offset or cursor. A
  * caller must not invent one, and the envelope's `total` is whatever upstream
  * put there rather than a page count.
- */
-/**
- * BOTH parameters are REQUIRED, with no defaults — unlike the shape this
- * function shipped with, and deliberately so.
+ *
+ * ── BOTH parameters are REQUIRED, with no defaults ──────────────────
+ *
+ * Unlike the shape this function shipped with, and deliberately so.
+ *
+ * (These were two consecutive JSDoc blocks. Editors and TypeScript surface
+ * only the SECOND, so everything above this line — the route, the read-only
+ * note, the query-string semantics — was invisible at every call site while
+ * remaining the half a reader sees in the file. Merged into one block for that
+ * reason, not for tidiness.)
  *
  * `demoMode` matches every other function in this file, which take it
  * required; defaulting it to `false` means a caller who forgets it fires a real

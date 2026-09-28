@@ -28,14 +28,42 @@ export function Modal({
   // effect below.
   //
   // Callers pass an inline arrow, so its identity changes on every render of the
-  // owning component. With it in the dep list, each such render tore this effect
+  // OWNING component. With it in the dep list, each such render tore this effect
   // down and re-ran it — and the teardown calls `previouslyFocused?.focus?.()`,
   // which moves focus OUT of the open dialog, while the re-run moves it to the
   // dialog's FIRST focusable (the header "Close dialog" button). A keyboard or
   // screen-reader operator was therefore thrown off whatever control they had
-  // tabbed to every time the dialog re-rendered — measured at four focus moves
-  // across a single confirm click and its error arrival in the witness-ack
-  // dialog, landing on "Close dialog" three times.
+  // tabbed to.
+  //
+  // MEASURED, because an earlier revision of this comment reported a figure
+  // that turned out to be nothing at all, and a wrong number in a comment
+  // justifying a fix is how the fix gets reverted. With the dependency
+  // restored, focus on a body control, three owner re-renders with the dialog
+  // open:
+  //
+  //   ["Close dialog", "Body action", "Close dialog", "Body action", "Close dialog"]
+  //
+  // Five moves, ending on the header X rather than where the operator left it.
+  // At HEAD the same run records none. (`modal-focus.test.tsx` is that run.)
+  //
+  // The trigger is the OWNER re-rendering, which is not the same thing as the
+  // dialog re-rendering — and that distinction is what the earlier figure got
+  // wrong. It claimed four moves across a confirm click and its error arrival
+  // in the witness-ack dialog. That scenario records ZERO, with the bug and
+  // without: `onClose` there is minted by `LogWitnessAlerts`, and a mutation
+  // state change re-renders only `AcknowledgeDialog`, leaving the prop's
+  // identity untouched.
+  //
+  // What does trigger it there is a worklist REFETCH, because
+  // `useLogWitnessAlerts` hands back a fresh object on every React Query
+  // update. Two of them, with focus on the confirm button:
+  //
+  //   ["Close dialog", "Acknowledge", "Close dialog"]
+  //
+  // — the operator's finger taken off the one control on that page that
+  // writes, on a 20-second `staleTime`, and again on the invalidation the 404
+  // path issues itself. `log-witness-alerts.test.tsx` pins that one against the
+  // real component.
   //
   // The effect's real dependency is `open`: it installs a keydown listener and a
   // one-shot focus timer, neither of which needs rebuilding when the close
