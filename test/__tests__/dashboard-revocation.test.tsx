@@ -179,10 +179,26 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     const text = revocationCard().textContent ?? '';
     expect(text).toContain('Revocation checking ran over this window and classified nothing');
     expect(revocationCard().querySelectorAll('.kpi-value')).toHaveLength(0);
-    // Window-scoped, not deployment-scoped: the picker can change the answer,
-    // so "nothing is revoked" would be a wider claim than the evidence.
-    expect(text).toContain('this window');
     expect(text).not.toContain(HEDGE);
+  });
+
+  it('every clean claim in the checked-clean arm is scoped to the window, sentence by sentence', () => {
+    // `toContain('this window')` over the whole card is not the assertion the
+    // docblock claims. The arm makes the clean statement more than once, so one
+    // sentence can lose its scope while another keeps the substring green — a
+    // mutation dropping "in this window" from the result sentence passed. The
+    // scope has to hold per sentence, because a sentence is what a reader takes
+    // as a unit: "nothing was classified against a revoked key" reads as a
+    // deployment-level all-clear regardless of what preceded it.
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    const text = revocationCard().textContent ?? '';
+    // `<br />` contributes no whitespace to textContent, so split on the period
+    // itself rather than on a space after it.
+    const sentences = text.split(/(?<=\.)\s*/).filter((s) => s.trim().length > 0);
+    const claims = sentences.filter((s) => /classified nothing|was classified/.test(s));
+    // Without this the loop below goes vacuous the moment the copy is reworded.
+    expect(claims.length).toBeGreaterThanOrEqual(2);
+    for (const s of claims) expect(s).toMatch(/this window|selected window/);
   });
 
   it('checked-clean never states a DEPLOYMENT-level clean', () => {
