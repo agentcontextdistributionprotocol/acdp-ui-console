@@ -81,6 +81,30 @@ function overview(
   };
 }
 
+/**
+ * Refuse any attributed cause for an empty run set.
+ *
+ * `runs` is empty when the receipt audit is off upstream, when no run has been
+ * audited yet, AND when every detail fetch failed (`use-trust.ts` catches those
+ * to `null`). Those are indistinguishable from this side, so naming any one of
+ * them is a guess presented as a finding — which is the defect class #97
+ * exists to remove, arrived at from the other direction.
+ *
+ * Shape, not sentence. The guard this replaces listed four specific wrong
+ * phrasings and a fifth walked past it.
+ */
+function assertNamesNoCause(text: string): void {
+  for (const pattern of [
+    /\bbecause\b/i,
+    /\bdue to\b/i,
+    /\bsince this deployment\b/i,
+    /\breceipt audit\b/i,
+    /\bsent no\b|\bwithheld\b|\bstops sending\b|\bno figures are sent\b/i,
+  ]) {
+    expect(text, `names a cause it cannot establish (\`${pattern}\`)`).not.toMatch(pattern);
+  }
+}
+
 function renderWith(data: TrustOverview) {
   useTrust.mockReturnValue({ isLoading: false, error: null, data });
   return render(<TrustPage />);
@@ -327,6 +351,12 @@ describe('/trust — the deployment revocation flag', () => {
     expect(text).toContain('a zero from a check that never ran is not a finding');
     expect(text).not.toContain('nothing was measured');
     expect(text).not.toMatch(/no figures are sent|stops sending/i);
+    // …and "every audited run" means the ones in THIS VIEW. Widening it to
+    // "every audited run this deployment has ever recorded" left `toContain`
+    // green while making the sentence false against a pre-Phase-14 backend,
+    // where the three counters really are absent. `runs` is a bounded list
+    // this page fetched; it is not the deployment's history.
+    expect(text).not.toMatch(/\bever recorded\b|\bhas ever\b|\ball time\b/i);
     // And the card subtitle agrees with the KPI hint — two strings, one fact.
     expect(text).toContain('revocation checking off');
   });
@@ -356,17 +386,64 @@ describe('/trust — the deployment revocation flag', () => {
     // And it still does not blame the control plane for the absence — a failed
     // detail fetch lands a run outside `runs` too, so the cause is not ours.
     expect(text).not.toMatch(/sent no|withheld|stops sending|no figures are sent/i);
+    // The stated RESTRAINT, pinned as a shape. The negative above names four
+    // specific wrong sentences, and round 6's gate walked past all four by
+    // appending a different one — "…because this deployment has the receipt
+    // audit switched off", which is a cause, and a cause this console cannot
+    // establish. So: no causal connective may attach to the absence at all.
+    assertNamesNoCause(text);
   });
 
-  it('the check-ON arm needs no such split: its claim is true over the empty set', () => {
-    // The asymmetry that produced the defect, pinned so a future edit does not
-    // "fix" this arm by making it positive too. "No run in this view carried a
-    // revocation classification" is a NEGATIVE existential and holds over zero
-    // runs; the sentence it replaced was positive and did not.
+  it('the check-ON arm stops attributing the absence to the deployment when nothing was audited', () => {
+    // Round 6's gate, non-blocking: the trailing clause of this arm is a true
+    // negative existential over the empty set, but its OPENING clause — "Not
+    // reported by THIS DEPLOYMENT" — names a cause, on exactly the payload
+    // where the sibling arm two lines up deliberately refuses to. The em-dash
+    // reads as apposition, which is why it survived the split that fixed its
+    // neighbour: it looks like a restatement and is an attribution.
     const { container } = renderWith(overview([], NONE, FEATURES_ON));
     const text = container.textContent ?? '';
-    expect(text).toContain('Not reported by this deployment — no run in this view carried a revocation classification');
+    expect(text).toContain('Not reported in this view — no audited run reached it');
+    expect(text).toContain('cannot tell from here why not');
+    expect(text).not.toContain('Not reported by this deployment');
     expect(text).not.toMatch(/counters .{0,20}arrive/i);
+    assertNamesNoCause(text);
+  });
+
+  it('DISCRIMINATES: with audited runs present, the deployment-scoped wording returns', () => {
+    // The pair. Once a run HAS been audited and still reported no
+    // classification, "not reported by this deployment" is a claim the payload
+    // supports — and without this, the arm above could be satisfied by deleting
+    // the deployment wording everywhere.
+    const { container } = renderWith(overview(RUN, NONE, FEATURES_ON));
+    const text = container.textContent ?? '';
+    expect(text).toContain('Not reported by this deployment — no run in this view carried a revocation classification');
+    expect(text).not.toContain('cannot tell from here why not');
+  });
+
+  it('never renders an all-clear over a view that audited nothing', () => {
+    // Round 6's second blocking finding. The violations card's empty state is a
+    // UNIVERSAL over `violationRuns`, so on an empty run set it is vacuously
+    // true and reads as the page's flagship all-clear. `runs` is empty on the
+    // upstream DEFAULT posture — receipt audit off — so the page rendered "no
+    // audited run reached this view" in the KPI row and "Every audited receipt
+    // bound cleanly to its served context" four inches below, in one paint.
+    const { container } = renderWith(overview([], NONE, { ...FEATURES_ON, keyRevocationCheck: false }));
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('Every audited receipt bound cleanly');
+    expect(text).toContain('No audited run reached this view');
+    expect(text).toMatch(/nothing here has been checked, so nothing here can be reported clean/i);
+  });
+
+  it('DISCRIMINATES: an audited, violation-free view DOES get the all-clear, with its scope', () => {
+    // The pair, and the reason the all-clear is not simply deleted: a clean
+    // audited run set is a real, reportable state. It just has to say how many
+    // runs it is speaking for — the sentence was a universal with no stated
+    // domain, which is what let the empty set satisfy it.
+    const { container } = renderWith(overview(RUN, NONE, FEATURES_ON));
+    const text = container.textContent ?? '';
+    expect(text).toContain('Every audited receipt bound cleanly to its served context, across the 1 run in this view');
+    expect(text).not.toContain('No audited run reached this view');
   });
 
   it('keeps the old not-reported wording when the check IS on', () => {

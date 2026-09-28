@@ -147,6 +147,10 @@ describe('dashboard — Key Revocation with no feature flags (the pre-#178 backe
     expect(text).not.toMatch(/older than this window/);
     // Whole-card reading would also pick up the header; the prose must not.
     expect(text).not.toMatch(/RFC-ACDP-0014/);
+    // "…, and none ever has." was appended to this arm's headline with every
+    // assertion in this test green — the negatives named two specific old
+    // sentences, and a new clause is neither of them.
+    assertNoUnscopedUniversal(text);
   });
 
   it('records that the counters are window-scoped and counted at audit time', () => {
@@ -194,6 +198,44 @@ const HEDGE = 'the check is disabled by default';
  * reverted the prose arms to `<div>`, would turn a whole class of assertions
  * into no-ops while staying green.
  */
+/**
+ * Refuse the claim shapes that reach past this card's evidence, wherever they
+ * appear in its prose.
+ *
+ * Every guard in this file used to name one wrong sentence, and round 6's gate
+ * went through four of them at once by rephrasing rather than by deleting: "and
+ * none ever has", "Nothing in the estate is revoked", "it ran over every event
+ * here", "every audited run this deployment has ever recorded". Each was a
+ * NEW sentence, so no `not.toMatch` aimed at the OLD one could see it.
+ *
+ * So this bans the SHAPE, not the sentence. Every counter on this card is
+ * scoped to a window and to what was audited in it; a claim that quantifies
+ * over the deployment, over all time, or over "every event" is unsupportable
+ * from here no matter how it is worded. The one legitimate use of "every event"
+ * — "It does not follow that every event in the window was checked" — is a
+ * DENIAL of such a claim and is allowed for explicitly, because a matcher
+ * cannot read negation.
+ */
+function assertNoUnscopedUniversal(text: string): void {
+  const allowedDenial = /does not follow that every event in the window was checked/i;
+  const stripped = text.replace(allowedDenial, '');
+  for (const pattern of [
+    /\bnone ever\b/i,
+    /\bever (recorded|been|has|have)\b/i,
+    /\bnothing in the (estate|deployment|fleet)\b/i,
+    /\bthe (whole|entire) (estate|deployment)\b/i,
+    /\bat any (time|point)\b/i,
+    /\bever\b.{0,20}\b(revoked|classified|audited)\b/i,
+    /\bevery (event|run|receipt)\b/i,
+    /\ball (events|runs|receipts)\b/i,
+    /\balways\b/i,
+  ]) {
+    expect(stripped, `unscoped universal \`${pattern}\` in: ${stripped.slice(0, 160)}`).not.toMatch(
+      pattern,
+    );
+  }
+}
+
 function proseText(): string {
   const p = revocationCard().querySelector('p');
   if (p === null) {
@@ -239,7 +281,13 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
     const text = revocationCard().textContent ?? '';
     expect(text).not.toMatch(/checking ran over this window/i);
-    expect(text).not.toMatch(/(ran|checked) (over|across) (this|the selected) window/i);
+    // NOT anchored on the word "window". Round 6's gate inserted "it ran over
+    // every event here" into this arm and every negative here stayed green,
+    // because all three required `window` adjacent to `ran`/`checked`. The same
+    // forbidden claim phrased with "here", "in this view" or "in the period"
+    // walked straight through the guard written to forbid it — a scope word is
+    // not what makes the claim wrong, the claim is wrong however it is scoped.
+    expect(text).not.toMatch(/(ran|checked) (over|across)\b/i);
     expect(text).not.toMatch(/every event .{0,30}(was|were) checked(?! )/i);
     // And it says so positively, rather than merely omitting the claim.
     expect(text).toMatch(/does not follow that every event in the window was checked/i);
@@ -296,6 +344,10 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     // clean, which no window-scoped counter can support.
     expect(text).not.toMatch(/nothing is revoked/i);
     expect(text).not.toMatch(/no(thing)? .{0,30}revoked .{0,20}deployment/i);
+    // Both of the above require the exact words adjacent. Round 6's gate
+    // appended "Nothing in the estate is revoked." and both stayed green.
+    expect(text).not.toMatch(/nothing\b[^.]{0,40}\bis revoked/i);
+    assertNoUnscopedUniversal(text);
   });
 
   it('disabled: states the fact, without the hedge that made it false', () => {
@@ -413,6 +465,38 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     );
   });
 
+  it('a counter object with no counters in it does not become a clean window', () => {
+    // Round 6's NB3. `{}` is truthy, so `!keyRevocation` let it through to
+    // `checked-clean`, whose copy states "this window's counters are zero" —
+    // a figure asserted from a payload that sent none. The `reported` guard
+    // above it declined silently (`undefined > 0` is false), which is exactly
+    // how it got to an arm that asserts a value.
+    //
+    // Upstream always builds all three with `?? 0`, so this is not a shape a
+    // correct control plane sends. Neither was `features: null` (round 2) or
+    // `features: []` (round 3), and both reached this function off the network
+    // and produced a false claim. A state the backend cannot reach must not be
+    // asserted from this side.
+    renderWith(overview({ keyRevocation: {} as never, features: FEATURES }));
+    const text = proseText();
+    expect(text).not.toMatch(/counters are zero/i);
+    expect(text).not.toMatch(/nothing in this window is classified against a revoked key/i);
+    expect(text).toMatch(/does not add up/i);
+    expect(revocationCard().querySelectorAll('.kpi-value')).toHaveLength(0);
+  });
+
+  it('DISCRIMINATES: a COMPLETE all-zero triple is still checked-clean', () => {
+    // The pair. Without it, the guard above could be satisfied by routing every
+    // zero payload to `unknown` — which would delete the state #97 added.
+    renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
+    expect(proseText()).toMatch(/counters are zero/i);
+  });
+
+  it('a PARTIAL triple is unknown too — a sum over an unknown denominator is not a figure', () => {
+    renderWith(overview({ keyRevocation: { preCompromise: 0 } as never, features: FEATURES }));
+    expect(proseText()).toMatch(/does not add up/i);
+  });
+
   it('the array payload reaches no-flags, not a claim that a report arrived', () => {
     // `typeof [] === 'object'`, so without the explicit array test a `features:
     // []` passes the object guard and renders "It sent a feature report" — a
@@ -512,6 +596,11 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
       cleanup();
     }
     expect(new Set(texts).size).toBe(6);
+    // Every arm, not just the two that had a dedicated guard. The over-claims
+    // round 6's gate inserted were each aimed at one arm, and four of the six
+    // had nothing watching them at all — a claim that reaches past this card's
+    // evidence is wrong on whichever arm it is written into.
+    for (const t of texts) assertNoUnscopedUniversal(t);
   });
 
   it('a non-zero count is REPORTED even when the flag says the check is off', () => {

@@ -370,17 +370,31 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  *                    RAN" for one commit after the `disabled` bullet below was
  *                    corrected for the same over-claim; a neighbouring arm is
  *                    where these keep surviving.
- *   `disabled`       the flag says the check is off, so any counters that did
- *                    arrive are zeros a check never produced — not a finding.
- *                    NOT "nothing was measured": the console cannot establish
- *                    that. Upstream gates both the query and the tile on the
- *                    same config value, so disabling the check nulls the tile
- *                    regardless of what was classified earlier in the window,
- *                    and the persisted rows are untouched. This sentence said
- *                    "Nothing was measured" for one commit after the rendering
- *                    stopped saying it — the state's own definition is where a
- *                    future consumer reads it from, so it is the one place that
- *                    must not lag.
+ *   `disabled`       the flag says the check is OFF. Whatever counters arrived
+ *                    are therefore not evidence either way: from here the
+ *                    console cannot tell a zero the check produced from a zero
+ *                    it never ran for, so neither may be rendered as a finding.
+ *
+ *                    NOT "nothing was measured", and NOT "zeros a check never
+ *                    produced" — which is the SAME CLAIM in different words,
+ *                    and is refuted by the next sentence of this very bullet.
+ *                    Upstream gates both the query and the tile on one config
+ *                    value, so disabling the check nulls the tile regardless of
+ *                    what was classified earlier in the window, and the
+ *                    persisted rows are untouched: a deployment that ran the
+ *                    check over the first half of the window and switched it
+ *                    off yesterday reaches this arm holding real zeros that a
+ *                    real check produced.
+ *
+ *                    This bullet has now stated that over-claim twice, in two
+ *                    wordings, each time as the FIX for the previous one —
+ *                    rounds 3 and 6 of this change's gate. The rendering has
+ *                    been right since round 3 (`app/dashboard/page.tsx`, "a
+ *                    zero produced WHILE THE CHECK IS OFF is not a finding",
+ *                    with `dashboard-revocation.test.tsx` forbidding the
+ *                    stronger reading outright); it is the definition that
+ *                    keeps lagging, and the definition is where the next
+ *                    consumer reads the meaning from.
  *   `unknown`        we cannot tell — for one of THREE reasons, carried on the
  *                    arm as `because`, because they license different copy.
  *                    (Enumerated below. This line said "two" for one commit
@@ -433,6 +447,28 @@ export type DashboardRevocationState =
   | { kind: 'disabled' }
   | { kind: 'checked-clean' }
   | { kind: 'unknown'; because: 'no-flags' | 'flag-on-no-counters' | 'flag-unreadable' };
+
+/**
+ * Did a counter TRIPLE actually arrive, as three numbers?
+ *
+ * `!!keyRevocation` is not the same question, and the difference is a false
+ * claim: `{}` is truthy, carries nothing, and routed to `checked-clean`, whose
+ * copy states "this window's counters are zero". `undefined > 0` is `false`, so
+ * the `reported` guard already handled a missing member silently — it declined
+ * to report, then fell through to an arm that asserted a value anyway.
+ *
+ * All three, not any: a partial triple is not a payload this console can read,
+ * and picking the members that happen to be present would report a sum over an
+ * unknown denominator.
+ */
+function hasCounters(k: DashboardRevocation | null | undefined): k is DashboardRevocation {
+  return (
+    !!k &&
+    typeof k.preCompromise === 'number' &&
+    typeof k.revokedAtOrAfter === 'number' &&
+    typeof k.revokedTimeUnverifiable === 'number'
+  );
+}
 
 export function dashboardRevocationState(
   keyRevocation: DashboardRevocation | null | undefined,
@@ -491,7 +527,16 @@ export function dashboardRevocationState(
     // but the counters are absent rather than zero. Do not report clean — and
     // do not explain it as "disabled" either, since the one thing we can read
     // says it is on.
-    if (!keyRevocation) return { kind: 'unknown', because: 'flag-on-no-counters' };
+    //
+    // `hasCounters`, not truthiness. `keyRevocation: {}` is truthy and carries
+    // no counters, so it fell through to `checked-clean` and rendered "this
+    // window's counters are zero" over a payload that sent none — a figure
+    // asserted from an absence, which is the one thing this module exists to
+    // stop. Upstream always builds all three with `?? 0`, so `{}` is not a
+    // shape a correct control plane sends; neither was `features: null` (round
+    // 2) or `features: []` (round 3), and both of those reached here off the
+    // network and produced a false claim.
+    if (!hasCounters(keyRevocation)) return { kind: 'unknown', because: 'flag-on-no-counters' };
     return { kind: 'checked-clean' };
   }
 

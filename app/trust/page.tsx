@@ -167,7 +167,19 @@ export default function TrustPage() {
                   // audits" — a run also lands outside `runs` when its detail
                   // fetch failed, so the cause is not ours to name.
                   : 'Revocation checking is switched off on this deployment, and no audited run reached this view — so there are no counters here at all, zero or otherwise'
-                : 'Not reported by this deployment — no run in this view carried a revocation classification'
+                // The sibling arm splits on the same predicate, for the same
+                // reason one level down. "Not reported by THIS DEPLOYMENT"
+                // names a cause, and over an empty run set the console has no
+                // basis for naming one: nothing audited arrived, which a
+                // disabled receipt audit, a run set with no audits yet, and a
+                // detail fetch that failed all produce identically. The
+                // trailing clause is a true negative existential either way;
+                // it was the opening clause that was doing the over-claiming,
+                // which is easy to miss because the em-dash reads as an
+                // apposition rather than an attribution.
+                : runs.length > 0
+                  ? 'Not reported by this deployment — no run in this view carried a revocation classification'
+                  : 'Not reported in this view — no audited run reached it, and this console cannot tell from here why not'
           }
         />
         <KpiCard label="No receipt" value={t.noReceipt} accent="var(--muted)" icon={<Fingerprint size={28} />} />
@@ -212,7 +224,31 @@ export default function TrustPage() {
             // empty array is exactly what "checked, clean" also looks like, so
             // the claim would be made without having looked. That
             // indistinguishability is the whole reason this phase exists.
-            <EmptyState title="No trust violations" description="Every audited receipt bound cleanly to its served context." />
+            // …and the SECOND reason, which cost this page a gate round: the
+            // sentence is a universal over `violationRuns`, so over an empty
+            // run set it is vacuously true and reads as an all-clear. `runs`
+            // is empty on the upstream DEFAULT posture — `RECEIPT_AUDIT_
+            // ENABLED=false`, where `summarizeByRun` returns `null` for every
+            // run and `useTrust` keeps only runs carrying a `trust` member —
+            // and it is also empty when every detail fetch failed. The page
+            // was rendering "no audited run reached this view" in the KPI row
+            // and "Every audited receipt bound cleanly to its served context"
+            // four inches below it, in one paint.
+            //
+            // Nothing audited is not nothing wrong. That is the conflation of
+            // UNMONITORED with CLEAN this whole change exists to remove, so it
+            // may not survive on the page the change is about.
+            runs.length === 0 ? (
+              <EmptyState
+                title="No audited run reached this view"
+                description="Nothing here has been checked, so nothing here can be reported clean. A run carries trust figures only once the control plane has audited its receipts."
+              />
+            ) : (
+              <EmptyState
+                title="No trust violations"
+                description={`Every audited receipt bound cleanly to its served context, across the ${runs.length} run${runs.length === 1 ? '' : 's'} in this view.`}
+              />
+            )
           ) : (
             <table className="data-table">
               <thead>

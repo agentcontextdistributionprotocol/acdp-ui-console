@@ -852,7 +852,7 @@ const DEMO_WINDOW_SCALE: Record<string, number> = {
 // is spelled out further down rather than here.)
 //
 // `features` is deliberately absent from this table and must stay absent.
-// Upstream reads it from process config (`dashboard.service.ts:260-266`), so it
+// Upstream reads it from process config (`dashboard.service.ts:260-267`), so it
 // is identical for every window of the same deployment — a per-window
 // `features` would teach the demo's viewer a state the real system cannot
 // produce, which is the objection this file already records for the witness
