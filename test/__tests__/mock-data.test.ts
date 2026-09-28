@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MOCK_SCENARIOS,
@@ -20,6 +18,7 @@ import {
 import * as MockData from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
+import { PROFILE_INFO } from '@/components/registries/registry-card';
 import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
@@ -702,9 +701,14 @@ describe('demo registry profiles are ones a real registry would start with', () 
     }
   });
 
-  it('records a minimum version for every advertisable profile', () => {
-    // Otherwise the guard above silently skips any profile the table forgot.
-    for (const p of REGISTRY_ADVERTISABLE_PROFILES) expect(PROFILE_MIN_VERSION[p]).toBeDefined();
+  it('records a minimum version for EXACTLY the advertisable profiles', () => {
+    // Both directions. "Every advertisable profile has an entry" alone leaves
+    // the table widenable: adding `'acdp-consumer': '0.1.0'` was green, which is
+    // the same two-copies-that-may-disagree shape `advertisable-profiles.ts`
+    // was created to remove — this was the last un-pinned copy of the seven.
+    expect(Object.keys(PROFILE_MIN_VERSION).sort()).toEqual(
+      [...REGISTRY_ADVERTISABLE_PROFILES].sort(),
+    );
   });
 
   it('agrees with the version each profile chip already names on screen', () => {
@@ -715,12 +719,18 @@ describe('demo registry profiles are ones a real registry would start with', () 
     //
     // `PROFILE_INFO` in `registry-card.tsx` puts the version in the operator's
     // tooltip — "(RFC-ACDP-0010, acdp 0.2.0)" — so the two files are now held to
-    // each other and neither can be edited alone. Source text rather than an
-    // import because `PROFILE_INFO` is private to the component, and widening a
-    // component's public API to let a test read a constant is the wrong trade.
-    const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
+    // each other and neither can be edited alone.
+    //
+    // IMPORTED, not read as source text. An earlier version ran an unanchored,
+    // first-match-wins regex over the RAW file, so a line in the docblock
+    // reading `'acdp-registry-receipts': { title: 'baseline (acdp 0.1.0)' }`
+    // shadowed the real entry and let the table be lowered to match — restoring
+    // exactly the unfalsifiability this test was added to remove. Same root
+    // cause as the key-set guard's two failed rounds: a reader that is not a
+    // parser loses to syntax it did not anticipate. `PROFILE_INFO` is exported
+    // for this.
     for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
-      const entry = new RegExp(`'${p}':\\s*\\{([\\s\\S]*?)\\}`).exec(src)?.[1];
+      const entry = PROFILE_INFO[p]?.title;
       expect(entry, `no PROFILE_INFO entry for ${p}`).toBeDefined();
       // Baseline profiles carry no version marker because they ARE the 0.1.0
       // baseline; anything later says so in the copy. The default is asserted,

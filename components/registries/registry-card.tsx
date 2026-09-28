@@ -12,18 +12,29 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
  * The seven keys here are exactly `REGISTRY_ADVERTISABLE_PROFILES`
  * (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`), which
  * is the set a real registry will start with — and "exactly" is enforced, not
- * asserted in prose: `registry-card-profiles.test.tsx` reads these keys out of
- * this file and compares them to that set. It did not, for one round: the guard
- * was a substring check for two names, so an eighth key under any other name,
- * or either deleted name re-added in bracket form, passed everything while this
- * sentence quietly became false. Entries for `acdp-consumer` and
+ * asserted in prose: `registry-card-profiles.test.tsx` compares
+ * `Object.keys(PROFILE_INFO)` to that set.
+ *
+ * WHICH IS WHY THIS IS EXPORTED. It is not part of the component's API and
+ * nothing renders from it but `RegistryCard` below; it is exported so the guard
+ * can enumerate the keys through the LANGUAGE rather than by reading this file
+ * as text. Two gate rounds were spent on source-regex readers that each
+ * disagreed with TypeScript in a different direction — the first was a
+ * substring check for two names, so an eighth key under any other name (or
+ * either deleted name re-added in bracket form) passed; the second was
+ * line-anchored and literal-only, so a key on an existing entry's line, a
+ * computed `[IDENT]:` key, a `...spread` and a post-literal `Object.assign`
+ * ALL passed, which was strictly worse. A reader that is not a parser will keep
+ * losing to syntax it did not anticipate. Widening one module-private constant
+ * to an export is the cheaper trade than a guard that vouches for something it
+ * cannot see. Entries for `acdp-consumer` and
  * `acdp-federated` were removed with #95: the first is a profile a registry is
  * forbidden to advertise and the second is not a spec id at all, so copy for
  * either was unreachable text that ratified two invalid ids for whoever read it
  * next. An id with no entry here still renders — see the fallback below — so
  * removing them costs nothing if one somehow reappears.
  */
-const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
+export const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-discovery': { title: 'Search / discovery endpoints (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },

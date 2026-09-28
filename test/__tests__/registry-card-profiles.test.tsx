@@ -24,11 +24,9 @@
 // rule guards. The tooltip predates this change; whether it should be a tooltip
 // at all is a separate question, and it is filed rather than settled here.
 // ══════════════════════════════════════════════════════════════════════
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
 import { render, cleanup, within } from '@testing-library/react';
-import { RegistryCard } from '@/components/registries/registry-card';
+import { RegistryCard, PROFILE_INFO } from '@/components/registries/registry-card';
 import { MOCK_CAPABILITIES } from '@/lib/data/mock-data';
 import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 import {
@@ -150,78 +148,67 @@ describe('an unknown profile id still reaches the screen', () => {
 });
 
 /**
- * The keys of `PROFILE_INFO`, read out of the component's source.
+ * The two ids #95 removed, rendered as if a registry advertised them.
  *
- * Source rather than an import because `PROFILE_INFO` is module-private, and
- * exporting it purely so a test can read it would widen the component's API to
- * suit its test. Scoped to the object literal itself — a key is a quoted string
- * at the start of a line, optionally bracketed — so a colon inside a `title`
- * string cannot be mistaken for one.
+ * A RENDER probe, not a source read. It is the only check here immune to
+ * syntax: however an entry is written into `PROFILE_INFO` — on its own line, on
+ * someone else's line, under a computed key, through a spread, by a
+ * post-literal `Object.assign` — the chip either gets a tooltip or it does not,
+ * and that is what an operator sees. Two rounds of this gate were lost to
+ * source-regex readers that each missed a different subset of those forms.
  */
-function parseProfileKeys(src: string): string[] {
-  const start = src.indexOf('const PROFILE_INFO');
-  if (start < 0) throw new Error('PROFILE_INFO not found — has it been renamed?');
-  const open = src.indexOf('{', start);
-  const close = src.indexOf('\n};', open);
-  if (open < 0 || close < 0) throw new Error('PROFILE_INFO object literal not delimited as expected');
-  const body = src
-    .slice(open + 1, close)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
-  return [...body.matchAll(/^\s*\[?\s*['"]([^'"]+)['"]\s*\]?\s*:/gm)].map((m) => m[1]);
-}
-
-function profileInfoKeys(): string[] {
-  const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
-  const keys = parseProfileKeys(src);
-  // Anti-vacuity: a parser that silently returned [] would make the set
-  // assertions below pass against an empty object AND fail-open on a rename.
-  expect(keys.length).toBeGreaterThan(0);
-  return keys;
+function chipFor(profileId: string): HTMLElement {
+  const { container } = render(
+    <RegistryCard
+      registry={REGISTRY_B}
+      capabilities={{ ...MOCK_CAPABILITIES.b, profiles: [profileId] } as RegistryCapabilities}
+    />,
+  );
+  const chip = [...container.querySelectorAll('.chip')].find((c) => c.textContent === profileId);
+  expect(chip, `no chip rendered for ${profileId}`).toBeTruthy();
+  return chip as HTMLElement;
 }
 
 describe('the dead tooltip copy is gone', () => {
   it('has copy for EXACTLY the advertisable seven — no more, no fewer', () => {
-    // A source assertion because unreachable copy is unreachable BY DEFINITION:
-    // no fixture emits an invalid id any more, so no render can demonstrate its
-    // absence. Reading the keys is the only way to see them.
-    //
-    // It reads the KEY SET rather than grepping for two strings, and round 2 of
-    // the gate is why. The old version was two exact single-quoted substring
-    // checks, so `["acdp-consumer"]: { title: … }` — the very copy #95 deleted,
-    // re-added in bracket form with double quotes — passed the whole suite,
-    // lint and typecheck. So did an eighth key of any other name, while the
-    // component's docblock and this test's own title both claimed the keys are
-    // "exactly" the advertisable set. Set equality is the assertion those
-    // claims were always making.
-    expect(new Set(profileInfoKeys())).toEqual(new Set(ADVERTISABLE));
-    // Stated separately so a failure says WHICH direction drifted rather than
-    // just that two sets differ.
-    for (const id of NOT_ADVERTISABLE) expect(profileInfoKeys()).not.toContain(id);
+    // Through the LANGUAGE, not through a regex over this file's text. Two
+    // earlier versions read the source and each lost to syntax in a different
+    // direction: the first was a substring check for two names, so an eighth
+    // key under any other name passed; the second was line-anchored and
+    // literal-only, so a key sharing a line with another entry, a computed
+    // `[IDENT]:` key, a `...spread` and an `Object.assign` after the literal
+    // ALL passed — strictly worse than what it replaced. `Object.keys` cannot
+    // lose to syntax, which is why `PROFILE_INFO` is exported.
+    expect(new Set(Object.keys(PROFILE_INFO))).toEqual(new Set(ADVERTISABLE));
+    // Stated separately so a failure names the direction rather than reporting
+    // two unequal sets.
+    for (const id of NOT_ADVERTISABLE) expect(Object.keys(PROFILE_INFO)).not.toContain(id);
     // The valid federation id is untouched — the removal must not have taken it.
-    expect(profileInfoKeys()).toContain('acdp-registry-federated');
+    expect(Object.keys(PROFILE_INFO)).toContain('acdp-registry-federated');
+    // Anti-vacuity: `Set` equality of two empty sets is also true.
+    expect(Object.keys(PROFILE_INFO)).toHaveLength(ADVERTISABLE.length);
   });
 
-  it('GUARDS THE GUARD: the key reader sees every quoting style an editor might use', () => {
-    // `profileInfoKeys` is a regex over source, so its blind spots are the
-    // test's blind spots. Anything it cannot see is a key that could be added
-    // unnoticed — which is exactly how the substring version failed.
-    const seen = parseProfileKeys(`const PROFILE_INFO: Record<string, X> = {
-  'plain-single': { title: 'a' },
-  "plain-double": { title: 'b' },
-  ['bracket-single']: { title: 'c' },
-  ["bracket-double"]: { title: 'd' },
-  'with-colon-in-title': { title: 'Lineage: signed heads' },
-};`);
-    expect(seen).toEqual([
-      'plain-single',
-      'plain-double',
-      'bracket-single',
-      'bracket-double',
-      'with-colon-in-title',
-    ]);
-    // And it does not mistake a nested property for a key.
-    expect(seen).not.toContain('title');
+  it('renders NO tooltip for either id a real registry refuses to boot with', () => {
+    // The operator-visible form of the assertion above, and the one that holds
+    // however a future entry is written. An `acdp-consumer` chip must still
+    // RENDER — the component must never drop a profile it does not recognise —
+    // but it must carry no gloss, because glossing an id nothing can advertise
+    // is what ratified both ids for the next reader.
+    for (const id of NOT_ADVERTISABLE) {
+      const chip = chipFor(id);
+      expect(chip.textContent).toBe(id);
+      expect(chip.getAttribute('title')).toBeNull();
+      cleanup();
+    }
+  });
+
+  it('DISCRIMINATES: a real profile rendered the same way DOES get its tooltip', () => {
+    // Without this, the probe above would pass against a component that had
+    // lost its tooltips entirely.
+    const chip = chipFor('acdp-registry-lifecycle');
+    expect(chip.getAttribute('title')).toContain('RFC-ACDP-0013');
+    cleanup();
   });
 
   it('keeps REACHABLE copy for every advertisable profile, not just a line in the file', () => {
@@ -244,7 +231,15 @@ describe('the dead tooltip copy is gone', () => {
     const rendered = [...container.querySelectorAll('.chip')];
     expect(rendered.map((c) => c.textContent)).toEqual(ADVERTISABLE);
     for (const chip of rendered) {
-      expect(chip.getAttribute('title'), `${chip.textContent} renders no tooltip copy`).toBeTruthy();
+      const title = chip.getAttribute('title');
+      expect(title, `${chip.textContent} renders no tooltip copy`).toBeTruthy();
+      // `toBeTruthy()` alone accepts `'x'`. Gutting a title to a single
+      // character was green, so "has copy" was really "has a non-empty
+      // attribute". Every entry names the RFC it comes from, and the version
+      // cross-check in `mock-data.test.ts` defends the version half — this
+      // defends the half nothing else reaches.
+      expect(title, `${chip.textContent}: tooltip names no RFC`).toMatch(/RFC-ACDP-\d{4}/);
+      expect(title!.length, `${chip.textContent}: tooltip is too short to say anything`).toBeGreaterThan(24);
     }
   });
 
