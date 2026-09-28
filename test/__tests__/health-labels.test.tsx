@@ -22,9 +22,14 @@ import type { HealthResult } from '@/lib/types';
 // has no `[title]` at all, so the tooltip cannot come back under a passing
 // suite.
 //
-// `components/**` is outside `vitest.config.mts`'s coverage `include`, so this
-// logic cannot show up as uncovered either. Without these tests, reverting
-// either component leaves the suite green.
+// Coverage would not save this either, though NOT for the reason an earlier
+// version of this comment gave. It claimed `components/**` is outside
+// `vitest.config.mts`'s coverage `include`; that was true once and is not now —
+// the glob is `['lib/**/*.ts', 'app/api/**/*.ts', 'components/**/*.tsx',
+// 'app/**/*.tsx']`. These lines would therefore be COUNTED as covered by any
+// test that renders the component at all, while the word it renders went
+// unasserted. Line coverage cannot tell a rendered string from a correct one.
+// Without these tests, reverting either component leaves the suite green.
 // ══════════════════════════════════════════════════════════════════════
 
 const pingHealth = vi.fn();
@@ -33,8 +38,13 @@ vi.mock('@/lib/stores/preferences-store', () => ({
   usePreferencesStore: (sel: (s: { demoMode: boolean }) => unknown) => sel({ demoMode: false }),
 }));
 
+// `Topbar` reads the route to decide whether it may say anything at all.
+let pathnameValue = '/dashboard';
+vi.mock('next/navigation', () => ({ usePathname: () => pathnameValue }));
+
 const { ConnectionStatus } = await import('@/components/layout/connection-status');
 const { HealthChecks } = await import('@/components/observability/health-checks');
+const { Topbar } = await import('@/components/layout/topbar');
 
 afterEach(() => {
   cleanup();
@@ -99,6 +109,33 @@ describe('HealthChecks renders the failure kind, not just "unreachable"', () => 
 
     await waitFor(() => expect(screen.getAllByText('degraded').length).toBeGreaterThan(0));
     expect(screen.getAllByText('8 ms').length).toBeGreaterThan(0);
+  });
+
+  it('does not paint the WORD danger while checking either', async () => {
+    // The dot was gated above; the word beside it was not, and the same
+    // correction applies to both — a probe that has not answered must not be
+    // rendered as a failure in either half of the card. The pill got two gates
+    // for this (its class, and the CSS rule); the card had none.
+    pingHealth.mockImplementation(() => new Promise(() => {}));
+    const { container } = mount(<HealthChecks />);
+
+    const word = [...container.querySelectorAll('.health-status span')].find(
+      (el) => el.textContent === 'checking…',
+    ) as HTMLElement;
+    expect(word).toBeTruthy();
+    expect(word.style.color).toBe('var(--muted)');
+  });
+
+  it('paints the word danger once a probe has actually failed', async () => {
+    pingHealth.mockResolvedValue({ ok: false, detail: 'degraded', latencyMs: 8 } satisfies HealthResult);
+    const { container } = mount(<HealthChecks />);
+
+    await waitFor(() => {
+      const word = [...container.querySelectorAll('.health-status span')].find(
+        (el) => el.textContent === 'degraded',
+      ) as HTMLElement;
+      expect(word?.style.color).toBe('var(--danger)');
+    });
   });
 
   it('shows no latency at all while checking', async () => {
@@ -198,5 +235,54 @@ describe('the topbar can physically show the word it now renders', () => {
     const base = css.match(/\.pill-detail\s*\{[^}]*\}/)?.[0] ?? '';
     expect(base).not.toMatch(/--danger/);
     expect(css).toMatch(/\.pill-detail\.bad\s*\{[^}]*--danger/);
+  });
+});
+
+describe('the sign-in screen makes no claim about any service', () => {
+  // The regression this batch would otherwise have shipped, and the reason it
+  // counts as a regression rather than a cosmetic nit.
+  //
+  // `middleware.ts` gates `/api/proxy/*` behind the session cookie, so before
+  // sign-in every probe is refused by THIS console. That refusal is unstamped,
+  // so `pingHealth` classifies it `unreachable` — correct for the field's
+  // definition ("nothing beyond our boundary answered") and actively misleading
+  // as a sentence on a login form: all four services are accused of being down
+  // when the only fact is that nobody has logged in, and the remedy the word
+  // implies (check the network, the URL, the process) is wrong in every
+  // particular.
+  //
+  // While the word lived in a `title` nobody ever saw it. Making it visible is
+  // what turned a latent wrongness into a rendered one.
+  function mountTopbar(pathname: string) {
+    pathnameValue = pathname;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <Topbar />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('renders no service pills on /login', async () => {
+    pingHealth.mockResolvedValue({ ok: false, detail: 'unreachable', latencyMs: 2 } satisfies HealthResult);
+    const { container } = mountTopbar('/login');
+
+    expect(container.querySelectorAll('.pill-detail')).toHaveLength(0);
+    expect(container.textContent).not.toContain('unreachable');
+    // And it does not probe at all, so a signed-out browser is not generating
+    // four refused requests every fifteen seconds.
+    expect(pingHealth).not.toHaveBeenCalled();
+    // The refresh control stays — it is not a claim about anything.
+    expect(screen.getByRole('button', { name: /Refresh all data/ })).toBeTruthy();
+  });
+
+  it('renders all four pills everywhere else', async () => {
+    // The sibling. Without it, deleting the pills outright would pass the test
+    // above.
+    pingHealth.mockResolvedValue({ ok: false, detail: 'unreachable', latencyMs: 2 } satisfies HealthResult);
+    const { container } = mountTopbar('/dashboard');
+
+    await waitFor(() => expect(container.querySelectorAll('.pill-detail')).toHaveLength(4));
+    expect(pingHealth).toHaveBeenCalled();
   });
 });

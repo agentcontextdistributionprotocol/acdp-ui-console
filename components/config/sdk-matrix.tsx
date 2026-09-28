@@ -114,10 +114,10 @@ export function SdkMatrix() {
             legend states it once, in the reading order, with no interaction and
             no hover. #100 names the `✓ live` legend as the worked example to
             copy, and this is the copy. */}{' '}
-        A failed row says which kind of failure it was: <code>degraded</code> means the service
-        answered and the answer was not a healthy one, so it is running and something inside it is
-        not; <code>unreachable</code> means nothing beyond this console answered at all, so start
-        with the network, the URL and whether the process is up.
+        A failed row says which kind of failure it was. <code>degraded</code> means something beyond
+        this console answered and the answer was not a healthy one — the service itself, or anything
+        in front of it. <code>unreachable</code> means nothing beyond this console answered at all,
+        which includes this console refusing its own request.
       </p>
     </Card>
   );

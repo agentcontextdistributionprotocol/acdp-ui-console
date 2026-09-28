@@ -23,11 +23,14 @@ export function ConnectionStatus({ label, service }: { label: string; service: P
       <span className={`dot ${dot}`} />
       {label}
       {/* Only when it is NOT healthy, and this is a measurement rather than a
-          preference. The topbar is already tight at phone width: the sidebar
-          holds 56px, `.topbar` takes 20px of padding each side, `.topbar-pills`
-          has no `flex-wrap` today, and the four labels plus the refresh button
-          already measure wider than a 400px viewport leaves. A word on all four
-          does not fit; a word on the ones that are failing does — and the
+          preference. The topbar is tight at phone width: `--sidebar-w` drops to
+          56px at ≤760px and `.topbar` takes 20px of padding each side plus a
+          12px gap, leaving ~292px, and the four labels plus the refresh button
+          already fill it. (This commit also gives `.topbar-pills` a
+          `flex-wrap`, so the row can spill onto a second line rather than being
+          clipped — but wrapping every pill by default is a worse answer than
+          not printing a word nobody needs.) A word on all four does not fit; a
+          word on the ones that are failing does — and the
           healthy state already has an unambiguous visual (`active-pill` plus a
           pulsing green dot), so the word would add ink and no information.
 

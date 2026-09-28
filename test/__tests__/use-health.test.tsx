@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, waitFor, cleanup } from '@testing-library/react';
+import { renderHook, waitFor, cleanup, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { HealthResult } from '@/lib/types';
 
@@ -111,24 +111,60 @@ describe('the edges of a field that is a union in TypeScript only', () => {
     expect(result.current.word).toBe('quarantined');
   });
 
-  it('reports a failure rather than going back to checking on a refetch', async () => {
-    // `isLoading` is first-fetch-only, so a service that was green and has just
-    // gone dark keeps showing the failure through the 15-second poll instead of
-    // blanking to `checking…`. Asserted by settling once, then rejecting is not
-    // possible — see the next test — so this settles twice.
+  it('reports the failure across a refetch instead of blinking back to checking', async () => {
+    // A REAL second fetch. The first version of this test called `rerender()`
+    // and asserted `kind !== 'checking'` — but `rerender()` does not refetch
+    // and the 15-second interval never elapses under the test clock, so
+    // `pingHealth` was called exactly ONCE, the second stub was never consumed,
+    // no failure was ever observed, and the assertion reduced to
+    // `'healthy' !== 'checking'`, which the healthy test above already proves.
+    // It gated nothing while its name and the hook's docblock both cited it as
+    // the gate on React Query's first-fetch-only `isLoading` semantics.
+    //
+    // `refetchQueries` drives the transition the 15-second poll would: React
+    // Query keeps the previous `data` while refetching, so the hook must report
+    // the NEW failure and must never pass through `checking…` on the way.
     pingHealth
       .mockResolvedValueOnce({ ok: true, latencyMs: 7 } satisfies HealthResult)
       .mockResolvedValue({ ok: false, detail: 'unreachable', latencyMs: 30 } satisfies HealthResult);
-    const { result, rerender } = mount();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // Every value the hook RETURNS, render by render. Sampling `result.current`
+    // on a timer would miss intermediate renders entirely — React's updates are
+    // what this claim is about, so the render is where it has to be observed.
+    const seen: string[] = [];
+    const { result } = renderHook(
+      () => {
+        const view = useHealth('registry-a');
+        seen.push(view.kind);
+        return view;
+      },
+      { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> },
+    );
 
     await waitFor(() => expect(result.current.kind).toBe('healthy'));
-    rerender();
-    expect(result.current.kind).not.toBe('checking');
+    const afterFirstSettle = seen.length;
+
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ['health', 'registry-a', false] });
+    });
+    await waitFor(() => expect(result.current.kind).toBe('failing'));
+
+    // The probe really ran a second time — without this the rest is vacuous,
+    // which is exactly how the previous version of this test passed.
+    expect(pingHealth).toHaveBeenCalledTimes(2);
+    expect(result.current.word).toBe('unreachable');
+    // And there was at least one render in between to have an opinion about.
+    expect(seen.length).toBeGreaterThan(afterFirstSettle);
+    expect(seen.slice(afterFirstSettle)).not.toContain('checking');
   });
 });
 
 describe('why the incoherent state is unreachable rather than handled', () => {
-  it('pingHealth resolves a HealthResult on every path, including its catch', async () => {
+  // One path, not "every path" — an earlier title claimed the latter, which is
+  // the same over-claiming this batch exists to remove. The transport-failure
+  // path is the one that would otherwise reject, and therefore the one worth
+  // demonstrating; the success path cannot reject by construction.
+  it('pingHealth resolves rather than rejects when the fetch itself fails', async () => {
     // The load-bearing fact behind the hook's shape. `lib/api/client.ts`'s
     // `pingHealth` wraps its fetch in a `try/catch` and RETURNS
     // `{ ok: false, detail: failureKind(err) }` from the catch rather than
@@ -146,5 +182,54 @@ describe('why the incoherent state is unreachable rather than handled', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('the query config the hook owns', () => {
+  // Two copies of this config used to live in `connection-status.tsx` and
+  // `health-checks.tsx`, byte-identical including the cache key. The docblock
+  // argues that sharing a cache KEY across two files is a correctness hazard
+  // rather than ordinary duplication — so the key's own shape is worth pinning,
+  // and neither claim was gated before.
+
+  it('does not share a cache entry between demo and real mode', async () => {
+    // The `demoMode` segment of the key is why `/observability` does not show a
+    // real probe's answer after a toggle, and vice versa. Dropping it from the
+    // key kills no render assertion anywhere — the words are identical — so
+    // this is the only thing standing between the segment and a tidy-up.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    pingHealth.mockResolvedValue({ ok: true, latencyMs: 7 } satisfies HealthResult);
+    renderHook(() => useHealth('registry-a'), {
+      wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    });
+    await waitFor(() => expect(client.getQueryData(['health', 'registry-a', false])).toBeDefined());
+
+    // The other mode's slot is a DIFFERENT entry and is still empty.
+    expect(client.getQueryData(['health', 'registry-a', true])).toBeUndefined();
+    // And so is another service's.
+    expect(client.getQueryData(['health', 'control-plane', false])).toBeUndefined();
+  });
+
+  it('does not retry a failed probe', async () => {
+    // `retry: false` is kept deliberately, not inherited: a health probe that
+    // retries reports the RETRY's outcome, and the operator is watching a
+    // 15-second poll — the next honest answer is closer than a backoff would
+    // be. Asserted through the query's own options, since `pingHealth` never
+    // rejects and so cannot demonstrate a retry by failing.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: 3 } } });
+    pingHealth.mockResolvedValue({ ok: false, detail: 'unreachable' } satisfies HealthResult);
+    const { result } = renderHook(() => useHealth('registry-a'), {
+      wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+    });
+    await waitFor(() => expect(result.current.kind).toBe('failing'));
+
+    // Read off the cache entry's own options. `QueryOptions` does not declare
+    // `refetchInterval` (it lives on the observer, not the query), so the two
+    // are read through the shape the cache actually stores rather than through
+    // a cast that would also hide a rename.
+    const entry = client.getQueryCache().find({ queryKey: ['health', 'registry-a', false] })!;
+    const opts = entry.options as { retry?: unknown; refetchInterval?: unknown };
+    expect(opts.retry).toBe(false);
+    expect(opts.refetchInterval).toBe(15_000);
   });
 });

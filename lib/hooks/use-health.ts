@@ -67,27 +67,36 @@ export type HealthView =
  */
 export function useHealth(service: ProxyService): HealthView {
   const demoMode = usePreferencesStore((s) => s.demoMode);
-  const { data, isLoading } = useQuery({
+  const { data } = useQuery({
     queryKey: ['health', service, demoMode],
     queryFn: () => pingHealth(service, demoMode),
     refetchInterval: 15_000,
     retry: false,
   });
 
-  // `isLoading` is React Query's first-fetch-only flag, not "a fetch is in
-  // flight". A service that was green and has just gone dark therefore reports
-  // `unreachable`, NOT `checking…` — the 15-second refetch does not blank the
-  // word it already has. That is the right way round: an operator watching a
-  // service fail should see it fail, not see the display go coy.
+  // ONE condition, not two. An earlier version read `isLoading || data ===
+  // undefined`; the `isLoading` half was dead — React Query's `isLoading` is
+  // `isPending && isFetching`, and `isPending` already implies no data — so it
+  // decided nothing while a long comment claimed it decided something. Removing
+  // it changes no test and no behaviour. `data === undefined` is also the arm
+  // the compiler enforces: delete it instead and `tsc` fails on the five reads
+  // below.
   //
-  // `data === undefined` is a NARROWING, not a second state. `pingHealth`
-  // resolves a `HealthResult` on every path — its `catch` returns
-  // `{ ok: false, detail: failureKind(err) }` rather than rethrowing
-  // (`lib/api/client.ts:170-187`) — so this query has no error arm to reach and
-  // "settled with no data" does not occur. The test suite pins that: a
-  // rejecting probe is what a `healthWord(undefined, false)` helper would have
-  // answered `unreachable` to, and the reason this is a hook.
-  if (isLoading || data === undefined) return { kind: 'checking', word: 'checking…' };
+  // What the absent flag was *about* is still true and still matters, so it is
+  // recorded here as behaviour rather than as a condition: a background refetch
+  // does NOT return this hook to `checking…`. React Query keeps the previous
+  // `data` while refetching, so a service that was green and has just gone dark
+  // reports `unreachable` continuously across the 15-second poll instead of
+  // blinking back to "checking". That is the right way round — an operator
+  // watching a service fail should see it fail, not see the display go coy —
+  // and `use-health.test.tsx` drives a real second fetch to pin it.
+  //
+  // "Settled with no data" does not occur at all: `pingHealth` resolves a
+  // `HealthResult` on every path, returning `{ ok: false, detail:
+  // failureKind(err) }` from its `catch` rather than rethrowing
+  // (`lib/api/client.ts`), so this query has no error arm. That is what makes
+  // the incoherent `healthWord(undefined, false)` question unaskable here.
+  if (data === undefined) return { kind: 'checking', word: 'checking…' };
 
   if (data.ok) {
     return { kind: 'healthy', word: 'healthy', latencyMs: data.latencyMs, version: data.version };

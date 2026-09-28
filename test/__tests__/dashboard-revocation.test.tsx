@@ -175,8 +175,13 @@ describe('the KPI row makes no health claim', () => {
   it('renders no "all healthy" caption anywhere on the page', () => {
     renderWith(overview());
     expect(screen.queryByText(/all healthy/i)).toBeNull();
-    // Not just the exact literal — any restored variant of the claim.
-    expect(document.body.textContent).not.toMatch(/healthy/i);
+    // Not just the exact literal — any restored variant of the claim, but
+    // scoped to the KPI ROW rather than the page. A page-wide `/healthy/i`
+    // would trip on any future legitimate use of the word anywhere on
+    // `/dashboard`, which is a guard that eventually gets deleted rather than
+    // understood.
+    const row = screen.getByText('Registries').closest('.kpi-grid') as HTMLElement;
+    expect(row.textContent).not.toMatch(/healthy/i);
   });
 
   it('still renders the Registries tile and its count', () => {
