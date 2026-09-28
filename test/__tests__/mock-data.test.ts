@@ -21,6 +21,7 @@ import {
   SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
 import * as MockData from '@/lib/data/mock-data';
+import { dashboardRevocationState } from '@/lib/utils/revocation';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
 
@@ -290,6 +291,59 @@ describe('demo dashboard windows', () => {
     expect(k.preCompromise).toBeGreaterThan(0);
     expect(k.revokedAtOrAfter).toBe(0);
     expect(k.revokedTimeUnverifiable).toBe(0);
+  });
+
+  // ── `features` (#97) ────────────────────────────────────────────────
+  it('advertises the feature flags a post-#178 control plane reports', () => {
+    const f = MOCK_DASHBOARD.features;
+    expect(f, 'MOCK_DASHBOARD has no features — the demo depicts a pre-#178 backend').toBeDefined();
+    expect(f!.keyRevocationCheck).toBe(true);
+    // Upstream THROWS at boot if the revocation check is enabled without the
+    // receipt audit (`app-config.service.ts:573-574`) rather than coercing the
+    // flag, so this pair is not a style choice: one without the other depicts a
+    // deployment that could not have started.
+    expect(f!.receiptAudit).toBe(true);
+    // And coherence with the witness fixture, where authority A carries
+    // fully-counted quorum figures. Quorum counts beside `witnessQuorum: false`
+    // would be the same kind of internal contradiction.
+    expect(f!.logWitness).toBe(true);
+    expect(f!.witnessQuorum).toBe(true);
+    // All six present and boolean, because the type requires all six and a
+    // partial object is not a shape upstream can emit.
+    for (const [k, v] of Object.entries(f!)) expect(typeof v, `features.${k}`).toBe('boolean');
+    expect(Object.keys(f!).sort()).toEqual([
+      'keyRevocationCheck',
+      'logInclusionAudit',
+      'logWitness',
+      'receiptAudit',
+      'witnessCosigning',
+      'witnessQuorum',
+    ]);
+  });
+
+  it('keeps features DEPLOYMENT-wide — no window may override it', () => {
+    // Upstream reads these from process config (`dashboard.service.ts:260-266`),
+    // so they are identical for every window of one deployment. A per-window
+    // `features` would teach the demo's viewer a state the real system cannot
+    // produce.
+    for (const w of ['1h', '6h', '24h', '7d', '30d']) {
+      expect(MockData.demoDashboardForWindow(w).features, w).toEqual(MOCK_DASHBOARD.features);
+    }
+  });
+
+  it('reaches checked-clean on 1h and reported on the rest, by hand', () => {
+    // The tri-state's arms through the DEMO data rather than through
+    // hand-built fixtures: `checked-clean` was unreachable in demo mode before
+    // #97, which is the "only correct in tests" gap this plan objects to
+    // elsewhere. `disabled` and `unknown` stay test-only on purpose — no window
+    // may return `keyRevocation: null`, because the window tests above
+    // dereference it for every window.
+    const kindFor = (w: string) => {
+      const d = MockData.demoDashboardForWindow(w);
+      return dashboardRevocationState(d.keyRevocation, d.features).kind;
+    };
+    expect(kindFor('1h')).toBe('checked-clean');
+    for (const w of ['6h', '24h', '7d', '30d']) expect(kindFor(w), w).toBe('reported');
   });
 
   it('aggregates grow monotonically with the window', () => {

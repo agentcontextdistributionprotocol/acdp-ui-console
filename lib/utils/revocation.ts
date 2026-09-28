@@ -24,7 +24,7 @@
 // had their own idea of it (or none), which is how a run carrying a live
 // `revoked_at_or_after` verdict came to render a green check-mark.
 // ══════════════════════════════════════════════════════════════════════
-import type { RunTrustSummary } from '@/lib/types';
+import type { CpDashboardFeatures, DashboardRevocation, RunTrustSummary } from '@/lib/types';
 
 export type RevocationEntry = NonNullable<RunTrustSummary['revoked']>[number];
 
@@ -201,16 +201,19 @@ export function violationCount(trust: RunTrustSummary): number {
 // ambiguous trust signal, per this console's standing invariant that it never
 // renders an unverified thing as verified.
 //
-// PROVISIONAL, AND NOW OUTLIVED UPSTREAM ON ONE SURFACE. When this heuristic
-// was written the control plane exposed `KEY_REVOCATION_CHECK_ENABLED` nowhere,
-// and acdp-control-plane#176 asked for a signal. **It shipped** (their PR #178):
-// `GET /dashboard/overview` now returns `keyRevocation: null` when the check is
-// off and carries a `features` object with all six audit/witness flags. So for
-// the DASHBOARD tile an explicit answer now exists and this inference is
-// obsolete — tracked here as issue #97, deliberately not folded into the plan
-// that wrote this. Do not build more inference on top of these; the run-scoped
-// half below is still the only option, because `features` rides on the overview
-// payload and nothing else.
+// RUN-SCOPED ONLY, AND THAT IS NOW THE WHOLE POINT. When this heuristic was
+// written the control plane exposed `KEY_REVOCATION_CHECK_ENABLED` nowhere.
+// Since acdp-control-plane#178 it does — `GET /dashboard/overview` returns
+// `keyRevocation: null` when the check is off and carries a `features` object
+// with all six audit/witness flags — so the DASHBOARD tile no longer infers
+// anything: `dashboardRevocationState()` below reads the flag and says which of
+// three states it is (#97).
+//
+// This run-scoped inference stays, because there is no equivalent signal for it.
+// `features` rides on the overview payload and nothing else; a run's trust
+// summary carries no flag, so for a single run "all zero" genuinely is all we
+// have. Do not build MORE inference on top of it, and do not copy this pattern
+// to a surface that has an explicit answer available.
 
 /**
  * Did this RUN's payload actually carry a revocation classification?
@@ -266,32 +269,44 @@ export function runRevocationReported(trust: RunTrustSummary): boolean {
   return counted > 0;
 }
 
-/** The dashboard overview's window-scoped revocation counters. */
-export type DashboardRevocation = {
-  preCompromise: number;
-  revokedAtOrAfter: number;
-  revokedTimeUnverifiable: number;
-};
+/**
+ * The dashboard overview's window-scoped revocation counters.
+ *
+ * Re-exported rather than declared here. It now lives in `lib/types.ts` beside
+ * `CpDashboardOverview`, which is the field's actual home — two structurally
+ * identical declarations of the same name in two modules is how a wire type and
+ * its consumer quietly drift apart. The re-export keeps this module's existing
+ * import surface intact.
+ */
+export type { DashboardRevocation };
 
 /**
- * Same question for the window-scoped dashboard tile. Written as a TYPE
- * PREDICATE so the three KPIs that follow a true result read
- * `d.keyRevocation.preCompromise` rather than asserting past the optional with
- * `!` — the guarantee is then checked by the compiler instead of promised in a
- * comment.
+ * SUPERSEDED by `dashboardRevocationState` below, and scheduled for removal.
  *
- * Heuristic, and now unnecessarily so. A post-#178 control plane answers this
- * question outright: `keyRevocation` arrives as `null` when the check is off
- * (which the `!keyRevocation` guard below already handles correctly, by luck of
- * falsiness rather than by design), and `features.keyRevocationCheck` states it
- * explicitly. Neither is read yet — `features` is not modelled in `lib/types.ts`
- * — so the all-zero fallback still runs against every deployment. Its one
- * remaining failure mode is the case the explicit flag exists to fix: a check
- * that IS enabled over a genuinely clean estate reads "not reported" forever.
- * Retiring this is issue #97.
+ * It survives this commit for one reason: its only call site is
+ * `app/dashboard/page.tsx`, which this phase deliberately does not touch, and a
+ * type predicate cannot be deleted before its consumer is rewritten without
+ * leaving `tsc` red at the phase boundary. The next phase deletes the predicate,
+ * its import, its call site and its tests in the diff that introduces the
+ * replacement — which is the only point at which removing it compiles.
+ *
+ * Written as a TYPE PREDICATE so the three KPIs following a true result could
+ * read `d.keyRevocation.preCompromise` without asserting past the optional with
+ * `!`. `state.kind === 'reported'` narrowing `state.counts` does the same job
+ * without the predicate-plus-optional dance, which is why this goes away rather
+ * than sitting alongside forever.
+ *
+ * Its remaining failure mode is exactly the one the explicit flag fixes: a
+ * check that IS enabled over a genuinely clean estate reads "not reported"
+ * forever, indistinguishable from a deployment that never looked.
+ *
+ * The parameter accepts `null` as well as `undefined`. That is not a behaviour
+ * change — `if (!keyRevocation)` below already handled `null` at runtime — it
+ * is the type catching up with the wire, now that `CpDashboardOverview` says
+ * `keyRevocation?: DashboardRevocation | null` as upstream actually sends it.
  */
 export function dashboardRevocationReported(
-  keyRevocation: DashboardRevocation | undefined,
+  keyRevocation: DashboardRevocation | null | undefined,
 ): keyRevocation is DashboardRevocation {
   if (!keyRevocation) return false; // pre-Phase-14 backend: genuinely absent
   return (
@@ -338,4 +353,75 @@ export const KEY_REVOCATION_TYPE_ALIASES: readonly string[] = [
  */
 export function isKeyRevocationFacet(type: string | undefined): boolean {
   return !!type && KEY_REVOCATION_TYPE_ALIASES.includes(type);
+}
+
+/**
+ * What the dashboard can honestly say about key revocation, as four states
+ * rather than a boolean.
+ *
+ * The boolean above collapses two genuinely different situations into "not
+ * reported": a deployment that ran the check and found nothing, and one that
+ * never looked. An operator seeing the same rendering for both cannot tell a
+ * clean estate from an unmonitored one, which is the entire content of #97.
+ *
+ * Four arms, because there really are four things that can be true:
+ *
+ *   `reported`       counters arrived with something in them — render them.
+ *   `checked-clean`  the flag says the check RAN, and it found nothing. This is
+ *                    the state that did not previously exist and is the reason
+ *                    the function exists.
+ *   `disabled`       the flag says the check is off. Nothing was measured, and
+ *                    saying so is different from saying nothing was found.
+ *   `unknown`        no `features` at all — a control plane predating
+ *                    acdp-control-plane#178. The legacy heuristic's answer, and
+ *                    the honest one: we cannot tell.
+ *
+ * `null` counters WITH `keyRevocationCheck === true` is a combination upstream
+ * cannot produce — both derive from the same config value
+ * (`dashboard.service.ts:39` and `:240`) — so it maps to `unknown` rather than
+ * `checked-clean`. A state the backend cannot reach must not be asserted from
+ * this side; if it ever appears, something is wrong and "we do not know" is the
+ * only defensible reading.
+ *
+ * Every flag read is `=== true` / `=== false`, never truthiness. `features` is
+ * typed with all six booleans required, so a partial object fails typecheck
+ * here — but a partial WIRE payload would leave a flag `undefined`, and
+ * `undefined` must fall to `unknown`, not silently to `disabled`. Same
+ * discipline `log-witness-card.tsx` uses for the nullable quorum counts.
+ */
+export type DashboardRevocationState =
+  | { kind: 'reported'; counts: DashboardRevocation }
+  | { kind: 'disabled' }
+  | { kind: 'checked-clean' }
+  | { kind: 'unknown' };
+
+export function dashboardRevocationState(
+  keyRevocation: DashboardRevocation | null | undefined,
+  features: CpDashboardFeatures | undefined,
+): DashboardRevocationState {
+  // Counters with something in them are self-evidencing: whatever the flags
+  // say, a non-zero count means the check ran and found that. Checked first so
+  // the tile renders figures even against a backend whose `features` is missing
+  // or contradicts them.
+  if (keyRevocation && dashboardRevocationReported(keyRevocation)) {
+    return { kind: 'reported', counts: keyRevocation };
+  }
+
+  // No flag object at all — the pre-#178 backend. Everything below this point
+  // needs `features` to say anything, so this is where "we cannot know" lives.
+  if (features === undefined) return { kind: 'unknown' };
+
+  if (features.keyRevocationCheck === false) return { kind: 'disabled' };
+
+  if (features.keyRevocationCheck === true) {
+    // The impossible combination described above: the flag says the check runs,
+    // but the counters are absent rather than zero. Do not report clean.
+    if (!keyRevocation) return { kind: 'unknown' };
+    return { kind: 'checked-clean' };
+  }
+
+  // `keyRevocationCheck` is neither `true` nor `false` — a wire payload with
+  // the flag missing or non-boolean. Unreachable through the type, reachable
+  // through the network.
+  return { kind: 'unknown' };
 }

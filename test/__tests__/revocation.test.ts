@@ -18,10 +18,12 @@ import {
   violationCount,
   runRevocationReported,
   dashboardRevocationReported,
+  dashboardRevocationState,
   isKeyRevocationFacet,
   KEY_REVOCATION_TYPE_ALIASES,
   type RevocationEntry,
 } from '@/lib/utils/revocation';
+import type { CpDashboardFeatures } from '@/lib/types';
 
 function entry(status: string, eventId = status): RevocationEntry {
   return {
@@ -290,6 +292,96 @@ describe('dashboardRevocationReported', () => {
     expect(
       dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 1 }),
     ).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// The tri-state that replaces the boolean (#97).
+//
+// The boolean above collapses "ran the check, found nothing" and "never looked"
+// into one rendering, so an operator could not tell a clean estate from an
+// unmonitored one. Every arm below is a thing the console could not previously
+// say, or a thing it was saying without warrant.
+// ══════════════════════════════════════════════════════════════════════
+describe('dashboardRevocationState', () => {
+  const ALL_ON: CpDashboardFeatures = {
+    receiptAudit: true,
+    keyRevocationCheck: true,
+    logWitness: true,
+    logInclusionAudit: true,
+    witnessCosigning: true,
+    witnessQuorum: true,
+  };
+  const CLEAN = { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 };
+  const SOME = { preCompromise: 0, revokedAtOrAfter: 2, revokedTimeUnverifiable: 0 };
+
+  it('counters with something in them are reported, and carry the counts through', () => {
+    const state = dashboardRevocationState(SOME, ALL_ON);
+    expect(state.kind).toBe('reported');
+    // The narrowing that replaces the type predicate: `counts` is reachable
+    // without a `!` because the discriminant guarantees it.
+    if (state.kind === 'reported') expect(state.counts).toBe(SOME);
+  });
+
+  it('reports non-zero counters even when the flag disagrees', () => {
+    // Self-evidencing: a non-zero count means the check ran and found that,
+    // whatever the deployment claims about itself. Rendering "disabled" over
+    // live figures would be the worse error.
+    expect(dashboardRevocationState(SOME, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('reported');
+    expect(dashboardRevocationState(SOME, undefined).kind).toBe('reported');
+  });
+
+  it('zeros WITH the check enabled is checked-clean — the state #97 exists for', () => {
+    expect(dashboardRevocationState(CLEAN, ALL_ON).kind).toBe('checked-clean');
+  });
+
+  it('the check explicitly off is disabled, not clean', () => {
+    expect(dashboardRevocationState(CLEAN, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
+    // And `null` counters — what upstream actually sends when it is off.
+    expect(dashboardRevocationState(null, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
+  });
+
+  it('no features at all is unknown — a pre-#178 control plane', () => {
+    // NOT `checked-clean`, and not `disabled`. Zeros from a backend that cannot
+    // tell us whether it looked are exactly the legacy heuristic's blind spot,
+    // and the honest answer is that we do not know.
+    expect(dashboardRevocationState(CLEAN, undefined).kind).toBe('unknown');
+    expect(dashboardRevocationState(undefined, undefined).kind).toBe('unknown');
+    expect(dashboardRevocationState(null, undefined).kind).toBe('unknown');
+  });
+
+  it('null counters WITH the check enabled is unknown — a state upstream cannot produce', () => {
+    // Both derive from one config value (`dashboard.service.ts:39` and `:240`),
+    // so this combination means something is wrong. Asserting `checked-clean`
+    // here would be claiming a clean estate on the strength of a contradiction.
+    expect(dashboardRevocationState(null, ALL_ON).kind).toBe('unknown');
+    expect(dashboardRevocationState(undefined, ALL_ON).kind).toBe('unknown');
+  });
+
+  it('reads the flag as === true / === false, never for truthiness', () => {
+    // A wire payload with the flag missing or non-boolean gets past the type but
+    // not past the function. Truthiness would send `undefined` to `disabled`,
+    // which asserts the operator turned the check off — a claim from an absence.
+    const partial = { ...ALL_ON, keyRevocationCheck: undefined } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, partial).kind).toBe('unknown');
+    const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringy).kind).toBe('unknown');
+    // The mirror image: a string 'false' must not read as disabled either.
+    const stringyFalse = { ...ALL_ON, keyRevocationCheck: 'false' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringyFalse).kind).toBe('unknown');
+  });
+
+  it('every arm is reachable and they are four distinct kinds', () => {
+    // Without this, three arms could collapse onto one name and the tests above
+    // would each still pass in isolation.
+    const kinds = [
+      dashboardRevocationState(SOME, ALL_ON).kind,
+      dashboardRevocationState(CLEAN, ALL_ON).kind,
+      dashboardRevocationState(CLEAN, { ...ALL_ON, keyRevocationCheck: false }).kind,
+      dashboardRevocationState(CLEAN, undefined).kind,
+    ];
+    expect(new Set(kinds).size).toBe(4);
+    expect(kinds).toEqual(['reported', 'checked-clean', 'disabled', 'unknown']);
   });
 });
 

@@ -792,6 +792,28 @@ export const MOCK_DASHBOARD: CpDashboardOverview = {
     { method: 'other', publish_count: 6 },
   ],
   keyRevocation: { preCompromise: 9, revokedAtOrAfter: 2, revokedTimeUnverifiable: 1 },
+  // Which checks this deployment runs (acdp-control-plane#178). Deployment-wide
+  // and therefore NOT overridden per window — see the note on
+  // `demoDashboardForWindow` below.
+  //
+  // `receiptAudit` must be true alongside `keyRevocationCheck`: upstream THROWS
+  // at boot if the revocation check is enabled without the receipt audit
+  // (`app-config.service.ts:573-574`) rather than coercing the flag, so a
+  // fixture setting one without the other would depict a deployment that could
+  // not have started.
+  //
+  // `logWitness` and `witnessQuorum` are true to stay coherent with
+  // `MOCK_LOG_WITNESS`, where authority A carries fully-counted quorum figures.
+  // A witness fixture with quorum counts beside `witnessQuorum: false` would be
+  // the same kind of internal contradiction.
+  features: {
+    receiptAudit: true,
+    keyRevocationCheck: true,
+    logWitness: true,
+    logInclusionAudit: false,
+    witnessCosigning: false,
+    witnessQuorum: true,
+  },
 };
 
 // ── Dashboard: per-window demo payloads ───────────────────────────────
@@ -822,6 +844,21 @@ const DEMO_WINDOW_SCALE: Record<string, number> = {
 //   6h → one non-zero    → figures render, INCLUDING the two genuine zeros
 //                          beside it — the heuristic's other arm, also
 //                          otherwise invisible to a human.
+// `features` is deliberately absent from this table and must stay absent.
+// Upstream reads it from process config (`dashboard.service.ts:260-266`), so it
+// is identical for every window of the same deployment — a per-window
+// `features` would teach the demo's viewer a state the real system cannot
+// produce, which is the objection this file already records for the witness
+// fixture further down.
+//
+// With one deployment-wide `features` where `keyRevocationCheck: true`, these
+// counters reach two of `dashboardRevocationState`'s four arms by hand:
+//   `1h`  → all-zero counters + the check enabled → `checked-clean`, the state
+//           #97 exists to make sayable, and previously unreachable in the demo.
+//   others → `reported`, figures render.
+// `disabled` and `unknown` stay test-only: no window may return
+// `keyRevocation: null`, because `mock-data.test.ts` dereferences
+// `demoDashboardForWindow(w).keyRevocation!` for every window and would throw.
 const DEMO_WINDOW_REVOCATION: Record<string, CpDashboardOverview['keyRevocation']> = {
   '1h': { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 },
   '6h': { preCompromise: 2, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 },
