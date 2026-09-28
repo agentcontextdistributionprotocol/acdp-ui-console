@@ -33,7 +33,14 @@ import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
 } from '../support/advertisable-profiles';
-import { profileCopyTable, assertModuleShape } from '../support/profile-copy-table';
+import {
+  profileCopyTable,
+  assertModuleShape,
+  assertNoCopyOutsideTable,
+  assertGlossChokePoint,
+  assertGlossIsGated,
+  advertisableIdsInComponent,
+} from '../support/profile-copy-table';
 
 afterEach(cleanup);
 
@@ -149,7 +156,10 @@ describe('an unknown profile id still reaches the screen', () => {
 });
 
 /**
- * The two ids #95 removed, rendered as if a registry advertised them.
+ * The ids a real registry refuses to boot with, rendered as if one advertised
+ * them. THREE of them; this said "the two ids #95 removed" for a commit after
+ * the third was added, which is how a guard's description drifts from the set
+ * it defends.
  *
  * A RENDER probe, not a source read. It is the only check here immune to
  * syntax: however an entry is written into `PROFILE_INFO` — on its own line, on
@@ -172,13 +182,40 @@ const CAPABILITY_FIXTURES: RegistryCapabilities[] = [
   MOCK_CAPABILITIES.a as RegistryCapabilities,
 ];
 
+/**
+ * The REGISTRY fixtures every render probe runs against — the second prop, and
+ * the one round 6 left fixed.
+ *
+ * `chipFor` pinned `registry` to registry-b and varied only `capabilities`, so
+ * the whole authority axis was unprobed. Two mutations went through it with the
+ * suite green, and they are opposite halves of #95:
+ *
+ *   `registry.authority === 'registry-a…' ? { 'acdp-consumer': {title} } : {}`
+ *       — the exact copy #95 deleted, back on screen for one registry.
+ *   `title={registry.authority === 'registry-b…' ? info?.title : undefined}`
+ *       — every tooltip silently gone for every registry but one, and
+ *         `app/registries/page.tsx` renders a card per OBSERVED registry, each
+ *         with its own authority.
+ *
+ * A gloss is a function of both props. A probe that fixes one of them bounds
+ * half the component. The third entry is deliberately an authority neither demo
+ * fixture uses, so "any real deployment" is covered rather than the two names
+ * that happen to be in the mock data.
+ */
+const REGISTRY_FIXTURES: KnownRegistry[] = [
+  REGISTRY_B,
+  { ...REGISTRY_B, authority: 'registry-a.playground.local', baseUrl: 'http://localhost:8100' },
+  { ...REGISTRY_B, authority: 'registry-z.example.test', baseUrl: undefined, eventCount: 0 },
+];
+
 function chipFor(
   profileId: string,
   capabilities: RegistryCapabilities = MOCK_CAPABILITIES.b as RegistryCapabilities,
+  registry: KnownRegistry = REGISTRY_B,
 ): HTMLElement {
   const { container } = render(
     <RegistryCard
-      registry={REGISTRY_B}
+      registry={registry}
       capabilities={{ ...capabilities, profiles: [profileId] } as RegistryCapabilities}
     />,
   );
@@ -241,22 +278,80 @@ describe('the dead tooltip copy is gone', () => {
     // So this refuses everything NOT on a short allow-list — any extra
     // variable, assignment, call, class or import — and an unanticipated
     // construct is therefore a loud failure rather than a silent pass.
-    // Its limit is stated where it lives: it bounds MODULE scope, and the
-    // render probes below are what bound the component body.
+    // Its limit is stated where it lives: it bounds MODULE scope and the
+    // BINDING NAMES of every import — an allow-listed module is not a bounded
+    // one, and for a revision it was treated as if it were.
     expect(() => assertModuleShape()).not.toThrow();
   });
 
-  it('renders NO tooltip for either id a real registry refuses to boot with', () => {
+  it('carries NO copy anywhere else in the file, component body included', () => {
+    // The bound round 6 gave up. Whitelisting module scope moved the blind spot
+    // into `RegistryCard`'s body and traded away five kills the version before
+    // it had — an in-body `Object.assign`, an in-body second table, an in-body
+    // authority-gated entry, a copy default in the parameter list, and a nested
+    // component with its own table were all red one revision earlier and green
+    // after. Every one of them is an object literal carrying a `title`, and
+    // this walks the whole file for exactly that.
+    expect(() => assertNoCopyOutsideTable()).not.toThrow();
+  });
+
+  it('routes every rendered gloss through the one lookup', () => {
+    // The literal walk above cannot see `title={registry.authority === 'x' ?
+    // info?.title : undefined}` — there is no literal to find — and that
+    // mutation dropped the tooltip from every registry but one with the whole
+    // suite green. The render matrix catches it behaviourally; this catches it
+    // structurally, and a claim worth one layer of defence on a surface that
+    // has regressed six times is worth two.
+    expect(() => assertGlossChokePoint()).not.toThrow();
+  });
+
+  it('gates that lookup on the advertisable list, and has only one lookup site', () => {
+    // Structural rather than rendered, and the distinction is the point. The
+    // mutation this kills — dropping the membership gate and indexing
+    // PROFILE_INFO raw — CANNOT be killed by a render probe today: the only ids
+    // whose answer changes are `Object.prototype` names, and for those the raw
+    // lookup returns a function whose `.title` is `undefined`, so no tooltip
+    // appears either way. It was measured surviving the whole suite before this
+    // assertion existed.
+    //
+    // It is still worth forbidding: `info` becomes truthy for `toString` and
+    // `constructor`, and the next thing rendered on `info` being truthy turns a
+    // latent difference into a visible one. Asserting it structurally and
+    // saying why beats a probe that would only appear to cover it.
+    expect(() => assertGlossIsGated()).not.toThrow();
+  });
+
+  it('the component’s own id mirror matches the shared one, entry for entry', () => {
+    // There are two copies of this list and there have to be: the component
+    // types `PROFILE_INFO` off its own `as const` array (which is what makes an
+    // eighth key a tsc error rather than a test assertion), and production code
+    // must not import from `test/`. Two copies of a mirror drift; this is what
+    // stops them. Order included — the component's array is the type's source,
+    // so a reorder there is a real change.
+    expect(advertisableIdsInComponent()).toEqual(ADVERTISABLE);
+  });
+
+  it('renders NO tooltip for any id a real registry refuses to boot with, on ANY registry', () => {
     // The operator-visible form of the assertion above, and the one that holds
-    // however a future entry is written. An `acdp-consumer` chip must still
-    // RENDER — the component must never drop a profile it does not recognise —
-    // but it must carry no gloss, because glossing an id nothing can advertise
-    // is what ratified both ids for the next reader.
+    // however a future entry is written. A forbidden chip must still RENDER —
+    // the component must never drop a profile it does not recognise — but it
+    // must carry no gloss, because glossing an id nothing can advertise is what
+    // ratified those ids for the next reader.
+    //
+    // Crossed over BOTH props. Fixed to registry-b, this passed against a
+    // component that re-added the `acdp-consumer` gloss for registry-a.
     for (const id of NOT_ADVERTISABLE) {
-      const chip = chipFor(id);
-      expect(chip.textContent).toBe(id);
-      expect(chip.getAttribute('title')).toBeNull();
-      cleanup();
+      for (const registry of REGISTRY_FIXTURES) {
+        for (const capabilities of CAPABILITY_FIXTURES) {
+          const chip = chipFor(id, capabilities, registry);
+          expect(chip.textContent).toBe(id);
+          expect(
+            chip.getAttribute('title'),
+            `${id} is glossed on ${registry.authority} @ ${capabilities.acdp_version}`,
+          ).toBeNull();
+          cleanup();
+        }
+      }
     }
   });
 
@@ -264,34 +359,66 @@ describe('the dead tooltip copy is gone', () => {
     // The behavioural half, and the one that survives anything the component
     // does at RUNTIME — a `Proxy` get-trap, a non-enumerable key, a second
     // lookup object, a synthesised title. The parser above reads the file; this
-    // reads the DOM. Between them the two cover each other's blind spot: a
-    // key the parser cannot see still has to render, and a render this probe
-    // does not cover still has to be written into the file.
+    // reads the DOM.
     //
-    // Its honest limit is its universe — it can only judge ids it renders —
-    // and that limit is why `assertModuleShape()` exists rather than this probe
-    // alone. It does NOT claim to catch every possible id.
+    // BE EXACT ABOUT WHAT THE TWO LAYERS DO AND DO NOT COVER. This comment used
+    // to say they "cover each other's blind spot: … a render this probe does
+    // not cover still has to be written into the file". That was false, and it
+    // was the sentence that let the next hole through: what has to be written
+    // into the file is not the same as what the parser SEES, and for one
+    // revision the parser saw module scope only, so copy written into the
+    // component body was in the file and invisible to both layers.
     //
-    // It renders across SEVERAL capability fixtures, not one. A probe pinned to
-    // a single fixture cannot see copy conditioned on the context: a fallback
-    // gated on `capabilities.acdp_version` disclosed a deleted tooltip on
-    // registry-a while staying invisible on registry-b, and the whole suite
-    // stayed green.
+    // The true division of labour:
+    //   - `tsc` bounds the copy table's key set. Not a test, not evadable.
+    //   - `assertNoCopyOutsideTable` bounds the rest of the FILE — whole-file,
+    //     which is what makes the sentence above true now rather than then.
+    //   - this probe bounds what REACHES THE SCREEN, for the ids it renders,
+    //     across both props.
+    //   - nothing bounds an arbitrary id string. The universe below is a
+    //     sample, and is written to be an adversarial one.
+    //
+    // Both prop axes vary. A probe pinned to one capability fixture cannot see
+    // copy conditioned on `acdp_version`; a probe pinned to one registry cannot
+    // see copy conditioned on `authority`, which is how the deleted
+    // `acdp-consumer` gloss came back for registry-a with the suite green.
     const PROBES = [
       ...ADVERTISABLE,
       ...NOT_ADVERTISABLE,
+      // Shape variants: near-misses of a real id, and the affix patterns a
+      // synthesised gloss is cheapest to write against (`p.startsWith`,
+      // `p.endsWith`, a case fold). An id-derived title survived when the
+      // universe held no id of the shape its predicate tested.
       'acdp-agent-core',
       'acdp-registry-quantum',
       'acdp-registry',
       'acdp-registry-receipts-v2',
+      'acdp-registry-core-mirror',
+      'acdp-registry-CORE',
+      'ACDP-REGISTRY-CORE',
+      ' acdp-registry-core',
+      'acdp-registry-core ',
       'registry-core',
+      'core',
+      'x',
+      '',
+      // `Object.prototype` names. `PROFILE_INFO[p]` without an own-property
+      // check returns a FUNCTION for these, which is truthy — so the chip
+      // reached `info.accent` on something that is not copy at all.
+      'toString',
+      'constructor',
+      'valueOf',
+      'hasOwnProperty',
+      '__proto__',
     ];
     const disclosing: string[] = [];
     for (const id of PROBES) {
-      for (const fixture of CAPABILITY_FIXTURES) {
-        const chip = chipFor(id, fixture);
-        if (chip.getAttribute('title') !== null && !disclosing.includes(id)) disclosing.push(id);
-        cleanup();
+      for (const registry of REGISTRY_FIXTURES) {
+        for (const fixture of CAPABILITY_FIXTURES) {
+          const chip = chipFor(id, fixture, registry);
+          if (chip.getAttribute('title') !== null && !disclosing.includes(id)) disclosing.push(id);
+          cleanup();
+        }
       }
     }
     expect(new Set(disclosing)).toEqual(new Set(ADVERTISABLE));
@@ -299,6 +426,41 @@ describe('the dead tooltip copy is gone', () => {
     // an empty `disclosing`, and set-equality against an empty ADVERTISABLE
     // would be true.
     expect(disclosing).toHaveLength(ADVERTISABLE.length);
+  });
+
+  it('every advertisable id keeps its gloss on EVERY registry, not just the demo two', () => {
+    // The opposite direction from the probe above, and the one a set-equality
+    // check cannot make: `disclosing` records an id that glossed on ANY
+    // fixture, so a component that glossed each id on exactly one registry
+    // would satisfy it. `app/registries/page.tsx` renders a card per observed
+    // registry with its own authority, so "tooltips work on registry-b" is not
+    // the claim an operator needs.
+    for (const registry of REGISTRY_FIXTURES) {
+      for (const capabilities of CAPABILITY_FIXTURES) {
+        for (const id of ADVERTISABLE) {
+          const chip = chipFor(id, capabilities, registry);
+          expect(
+            chip.getAttribute('title'),
+            `${id} has no gloss on ${registry.authority} @ ${capabilities.acdp_version}`,
+          ).toMatch(/RFC-ACDP-\d{4}/);
+          cleanup();
+        }
+      }
+    }
+  });
+
+  it('pins BOTH fixture axes, so neither probe loop can be silenced by emptying one', () => {
+    // `CAPABILITY_FIXTURES` had no such pin while `NOT_ADVERTISABLE` did:
+    // dropping it back to a single fixture was green, and it is the axis a
+    // version-gated gloss hides behind. Emptying either array turns every
+    // cross-product loop above into a no-op that asserts nothing.
+    expect(CAPABILITY_FIXTURES).toHaveLength(2);
+    expect(new Set(CAPABILITY_FIXTURES.map((c) => c.acdp_version)).size).toBe(2);
+    expect(REGISTRY_FIXTURES.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(REGISTRY_FIXTURES.map((r) => r.authority)).size).toBe(REGISTRY_FIXTURES.length);
+    // …and one of them is an authority no demo fixture uses, so the matrix is
+    // not just "the two names that happen to be in the mock data".
+    expect(REGISTRY_FIXTURES.some((r) => !r.authority.endsWith('.playground.local'))).toBe(true);
   });
 
   it('DISCRIMINATES: a real profile rendered the same way DOES get its tooltip', () => {

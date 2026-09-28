@@ -57,8 +57,16 @@ export const REGISTRY_ADVERTISABLE_PROFILES = [
 ];
 
 /**
- * The two ids #95 removed, kept by name so both consumers can assert they stay
- * gone without re-stating them.
+ * The ids a registry may NOT advertise, kept by name so both consumers can
+ * assert they stay gone without re-stating them.
+ *
+ * THREE, and only two of them are "the ids #95 removed" — this docblock said
+ * "the two ids #95 removed" for a commit after the third was added, above a
+ * three-element list. `acdp-log-witness` was never in the fixtures and so was
+ * never removed from them; it is here because upstream excludes it BY NAME and
+ * calls confusing it for a registry the most likely operator mistake. A guard
+ * named after the issue that prompted it, rather than after the set it
+ * defends, goes stale the moment the set grows — which is what happened.
  *
  *   `acdp-consumer`  — a real spec id, but a CONSUMER profile. The doc comment
  *                      on `REGISTRY_ADVERTISABLE_PROFILES` excludes it by name:

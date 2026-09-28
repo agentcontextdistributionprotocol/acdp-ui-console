@@ -624,21 +624,27 @@ function atLeast(actual: string, required: string): boolean {
 }
 
 describe('demo registry profiles are ones a real registry would start with', () => {
-  it('cannot be widened to launder either of the two ids #95 removed', () => {
+  it('cannot be widened to launder any id a real registry refuses to boot with', () => {
     // NOT a staleness guard — see the mirror's own docblock; a local literal
     // compared to a local number observes nothing upstream, and the first
     // version of this test claimed otherwise. What it guards is the local
     // shortcut: the cheapest way to make an invalid fixture pass the subset
-    // check below is to add the id here, and these are the two ids that would
-    // be added.
+    // check below is to add the id here, and `NOT_ADVERTISABLE` is the list of
+    // ids that would be added.
     //
-    // The title says "either of the two" rather than "an invalid id" because
-    // that is what the body delivers. Round 2 of the gate measured the wider
-    // claim and found it false: inventing a WELL-FORMED id and adding it to the
-    // mirror, the fixture, `PROFILE_MIN_VERSION` and `PROFILE_INFO` together —
-    // four coordinated edits — passes everything. Widening the mirror ALONE is
-    // caught; a four-file conspiracy is not, and no test in this repo claims to
-    // catch one.
+    // The title named "the two" while the list held THREE — it was written
+    // before `acdp-log-witness` joined, and a title that enumerates a set it
+    // does not own goes stale silently. It now names the PROPERTY, which is
+    // what the loop below actually delivers: whatever `NOT_ADVERTISABLE` holds,
+    // none of it may be laundered in here.
+    //
+    // Still narrower than "no invalid id can get through", and deliberately so.
+    // Round 2 of the gate measured the wider claim and found it false:
+    // inventing a WELL-FORMED id and adding it to the mirror, the fixture,
+    // `PROFILE_MIN_VERSION` and `PROFILE_INFO` together — four coordinated
+    // edits — passes everything. Widening the mirror ALONE is caught; a
+    // four-file conspiracy is not, and no test in this repo claims to catch
+    // one.
     for (const id of NOT_ADVERTISABLE) expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain(id);
     // Every entry must look like a registry profile id. `acdp-consumer` fails
     // this on its own shape, which is the property that generalises: a consumer

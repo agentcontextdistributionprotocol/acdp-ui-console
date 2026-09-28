@@ -6,50 +6,80 @@ import { formatNumber, timeAgo } from '@/lib/utils/format';
 import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 
 /**
+ * The ids a registry may advertise — a local mirror of
+ * `REGISTRY_ADVERTISABLE_PROFILES`
+ * (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`), the
+ * set `acdp-registry-server/src/main.rs:415-431` enforces at STARTUP, so a
+ * registry advertising anything outside it does not boot.
+ *
+ * It is `as const` and it types the copy table below, which is the point:
+ * "`PROFILE_INFO` has copy for exactly these seven ids" then stops being a
+ * claim a test has to police and becomes a condition `tsc` enforces. An eighth
+ * key is an excess-property error; a missing one is a missing-property error.
+ * Five successive test-shaped guards failed to hold that line (the list is in
+ * `test/support/profile-copy-table.ts`); the type system holds it for free.
+ *
+ * It is mirrored rather than imported because the shared mirror lives under
+ * `test/`, and production code must not import from the test tree.
+ * `registry-card-profiles.test.tsx` asserts the two mirrors are identical, so
+ * they cannot drift.
+ */
+const ADVERTISABLE_PROFILE_IDS = [
+  'acdp-registry-core',
+  'acdp-registry-discovery',
+  'acdp-registry-federated',
+  'acdp-registry-receipts',
+  'acdp-registry-head-receipts',
+  'acdp-registry-transparency-log',
+  'acdp-registry-lifecycle',
+] as const;
+
+type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
+
+/**
  * Tooltip copy for known registry profiles (registries/profiles.md). The
  * 0.3.0 trust profiles get an accent chip so they stand out in the list.
- *
- * The seven keys here are exactly `REGISTRY_ADVERTISABLE_PROFILES`
- * (`acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340`), which
- * is the set a real registry will start with — and "exactly" is enforced, not
- * asserted in prose. How it is enforced is described below, and it is NOT by
- * reading this object: a guard that did that is what round 3 shipped, and it
- * is the reason this constant is no longer exported.
- *
- * **This constant is deliberately NOT EXPORTED, and that is a fix, not an
- * oversight.** Three gate rounds were spent here and each one failed
- * differently:
- *
- *   1. a substring check for two names — an eighth key under any other name,
- *      or either deleted name re-added in bracket form, passed;
- *   2. a line-anchored literal-only regex — strictly worse: a key on an
- *      existing entry's line, a computed `[IDENT]:` key, a `...spread` and a
- *      post-literal `Object.assign` all passed;
- *   3. exporting it so the guard could read `Object.keys` through the language
- *      — which OPENED A ROUTE THAT DID NOT EXIST BEFORE. Any module could then
- *      `import { PROFILE_INFO }` and assign a key at module scope; because
- *      Vitest isolates module graphs per test file, the guard kept seeing a
- *      pristine seven while the shipped app rendered the tooltip copy #95
- *      deleted, on the id a registry is forbidden to advertise.
- *
- * The lesson of (3) is that a guard which reads this OBJECT vouches for the
- * object, while the claim being made is about WHAT THE COMPONENT RENDERS. So
- * the guard no longer reads it at all. `registry-card-profiles.test.tsx` now
- * checks two independent things: it parses this file with the TypeScript
- * compiler API — a real parser, which FAILS CLOSED on any syntax it cannot
- * account for, rather than silently seeing nothing — and, separately, it
- * RENDERS cards and reads the tooltips off the DOM. The first cannot be fooled
- * by a second lookup object; the second cannot be fooled by anything the
- * component does at runtime. Neither needs this symbol to be public.
  *
  * Entries for `acdp-consumer` and `acdp-federated` were removed with #95: the
  * first is a profile a registry is forbidden to advertise and the second is not
  * a spec id at all, so copy for either was unreachable text that ratified two
  * invalid ids for whoever read it next. An id with no entry here still renders
- * — see the fallback below — so removing them costs nothing if one somehow
- * reappears.
+ * — see `glossFor` and the fallback below — so removing them costs nothing if
+ * one somehow reappears.
+ *
+ * **Not exported, and that is a fix rather than an oversight.** Exporting it so
+ * a test could read `Object.keys` OPENED A ROUTE THAT DID NOT EXIST BEFORE: any
+ * module could then `import { PROFILE_INFO }` and assign a key at module scope,
+ * and because Vitest isolates module graphs per test file the guard went on
+ * seeing a pristine seven while the app rendered the copy #95 deleted.
+ *
+ * WHAT GUARDS THIS, honestly, because five earlier versions of this comment
+ * each over-claimed and the over-claim is how the next hole got missed:
+ *
+ *   - `tsc` bounds THE KEYS OF THIS OBJECT, via the type above. Exactly seven,
+ *     exactly these. Nothing else is needed for that claim.
+ *   - `assertNoCopyOutsideTable()` bounds THE REST OF THIS FILE: it walks the
+ *     whole file, not just module scope, and refuses any other object literal
+ *     carrying a `title`. A second lookup table, a gloss built inside the
+ *     component, a parameter default, a nested component with its own table
+ *     and a JSX-spread `{...{title}}` are all that shape. A module-scope-only
+ *     guard shipped once and lost five kills the version before it had.
+ *   - `assertModuleShape()` bounds WHAT MAY BE IMPORTED — by binding name, not
+ *     just by module specifier. Allow-listing a specifier alone left four
+ *     unbounded suppliers of copy: `import { PROFILE_GLOSS } from
+ *     '@/lib/utils/format'` was on the allow-list.
+ *   - The render probes bound WHAT REACHES THE SCREEN, across a matrix of both
+ *     props. Neither prop axis may be fixed: copy conditioned on
+ *     `registry.authority` was invisible to a probe that always passed
+ *     registry-b, and that is exactly the defect #95 is — copy for an id one
+ *     deployment cannot advertise.
+ *
+ * Their honest residual: no test can quantify over every possible id string, so
+ * the probe universe is a sample (the seven, the three forbidden ones, shape
+ * variants, and the `Object.prototype` names). That gap is why the type bound
+ * and the file bound exist, and why none of them is described as complete.
  */
-const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
+const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-discovery': { title: 'Search / discovery endpoints (RFC-ACDP-0001 §9.1)' },
   'acdp-registry-federated': { title: 'Cross-registry federation (RFC-ACDP-0001 §9.1)' },
@@ -69,6 +99,34 @@ const PROFILE_INFO: Record<string, { title: string; accent?: boolean }> = {
     accent: true,
   },
 };
+
+/**
+ * The ONE place a profile chip's gloss may come from.
+ *
+ * A single choke point rather than an inline `PROFILE_INFO[p]`, for three
+ * reasons.
+ *
+ * It gates on the ID LIST, not on the table, so the advertisable set decides
+ * what may be glossed in the running app as well as at typecheck time. The two
+ * cannot disagree — the list is the table's key type — but the gate is where a
+ * future edit that breaks that would show up.
+ *
+ * It refuses an inherited property. `PROFILE_INFO['toString']` walks the
+ * prototype chain and returns a FUNCTION, which is truthy, so a registry
+ * advertising a profile called `constructor` or `toString` would have reached
+ * `info.accent` on an object that is not copy at all.
+ *
+ * And a named lookup gives the render probes and `assertNoCopyOutsideTable()`
+ * one thing to bound. A gloss appearing from anywhere else is then a visible,
+ * checkable second source rather than one more expression among many.
+ */
+function glossFor(p: string): { title: string; accent?: boolean } | undefined {
+  // `as readonly string[]` only to widen the `as const` tuple for `.includes`,
+  // which otherwise refuses an arbitrary string — the runtime check is the
+  // point and is not weakened by it.
+  if (!(ADVERTISABLE_PROFILE_IDS as readonly string[]).includes(p)) return undefined;
+  return PROFILE_INFO[p as AdvertisableProfileId];
+}
 
 export function RegistryCard({
   registry,
@@ -115,7 +173,7 @@ export function RegistryCard({
               <span className="metric-name">Profiles</span>
               <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {capabilities.profiles.map((p) => {
-                  const info = PROFILE_INFO[p];
+                  const info = glossFor(p);
                   return (
                     <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>
                       {p}

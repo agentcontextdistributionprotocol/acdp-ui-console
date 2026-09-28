@@ -891,6 +891,16 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
   // inside a signed fixture's hash preimage: editing it breaks the signature.
   // A grep-driven "align the versions" pass is exactly what would hit both.
   //
+  // WHAT THESE SIX ARE AND ARE NOT. #95 grounded registry-b's two in the
+  // playground it depicts (`acdp-playground/config/registry-b.toml:8`) and left
+  // this comment implying the same standard applied here. It does not:
+  // `config/registry-a.toml:9` configures the SAME two ids as b, so a's six are
+  // a demo-narrative choice — A is the richer peer — not a transcription. That
+  // is a legitimate choice and the six are all advertisable, which is what
+  // `mock-data.test.ts` pins; but a guard that says "evidence-backed" for one
+  // registry and nothing for its sibling reads as if both were checked. They
+  // are checked against the ADVERTISABLE SET, not against the playground.
+  //
   // `profiles` is deliberately NOT extended. registry-rs advertises a closed
   // set (`acdp-registry-types/src/config.rs`, `REGISTRY_ADVERTISABLE_PROFILES`)
   // and none of it is version- or witness-specific — a registry may aggregate
