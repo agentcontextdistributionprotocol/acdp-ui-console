@@ -129,6 +129,8 @@ export default function TrustPage() {
                 // receiptCoverage/didMethods are window-scoped. Saying "window"
                 // would describe a scope this page does not apply.
                 revocationCheckOff
+                // Split on `runs.length`, and the split is the whole point.
+                //
                 // NOT "no figures are sent while it is off". That is true of the
                 // DASHBOARD overview payload, where `keyRevocation` really is
                 // `null` — it is false here. These figures are run-scoped, from
@@ -140,7 +142,31 @@ export default function TrustPage() {
                 // not the check ran"). Two surfaces giving contradictory
                 // explanations of one suppression is exactly what
                 // `lib/utils/revocation.ts` exists to prevent.
-                ? 'Revocation checking is switched off on this deployment — the counters still arrive, but a zero from a check that never ran is not a finding'
+                //
+                // But "the counters still arrive" is a POSITIVE existential,
+                // and it is false over the empty set. `useTrust` builds `runs`
+                // as the runs that came back carrying a `trust` member, and
+                // `summarizeByRun` returns `null` outright when a run has no
+                // audit rows — so on a deployment with `RECEIPT_AUDIT_ENABLED`
+                // off (the upstream default, and the only posture in which the
+                // revocation flag is *forced* false) no run carries a summary,
+                // nothing arrives, and the previous single sentence told the
+                // operator counters were flowing while the console held none.
+                // `revocationReportedRuns === 0` is satisfied vacuously by an
+                // empty run set; the sentence beneath it was not.
+                //
+                // The sibling arm below needs no such split: "no run in this
+                // view carried a revocation classification" is a NEGATIVE
+                // existential, and it is true over the empty set. That
+                // asymmetry is the bug in miniature — round 5 replaced a
+                // negative claim with a positive one and inherited its gate.
+                ? runs.length > 0
+                  ? 'Revocation checking is switched off on this deployment — the counters still arrive with every audited run, but a zero from a check that never ran is not a finding'
+                  // Says only what the console can see: nothing audited reached
+                  // this view. Deliberately NOT "the control plane sent no
+                  // audits" — a run also lands outside `runs` when its detail
+                  // fetch failed, so the cause is not ours to name.
+                  : 'Revocation checking is switched off on this deployment, and no audited run reached this view — so there are no counters here at all, zero or otherwise'
                 : 'Not reported by this deployment — no run in this view carried a revocation classification'
           }
         />

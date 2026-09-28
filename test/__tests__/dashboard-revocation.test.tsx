@@ -138,6 +138,15 @@ describe('dashboard — Key Revocation with no feature flags (the pre-#178 backe
     expect(text).toContain('window');
     expect(text).not.toMatch(/not reported by this deployment/);
     expect(text).not.toMatch(/this deployment (does not|never)/);
+    // GUARDS THE GUARD, the same way the `checked-clean` sibling does. Without
+    // these two lines the scoping fix above is itself unpinned: reverting
+    // `proseText()` to `revocationCard().textContent` left this green, because
+    // the subtitle's own "older than this window" supplies the substring. The
+    // pair below cannot both hold on the whole card, so the revert now fails.
+    expect(revocationCard().textContent).toMatch(/older than this window/);
+    expect(text).not.toMatch(/older than this window/);
+    // Whole-card reading would also pick up the header; the prose must not.
+    expect(text).not.toMatch(/RFC-ACDP-0014/);
   });
 
   it('records that the counters are window-scoped and counted at audit time', () => {
@@ -212,13 +221,21 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
 
   it('checked-clean does NOT claim the check ran over this window\u2019s events', () => {
     // The gate's finding. The console holds two facts: a flag describing the
-    // deployment NOW, and counters persisted AT AUDIT TIME. Enabling the check
-    // does not re-classify rows already audited (`lib/types.ts` records that
-    // `key_revocation_status` is NOT NULL DEFAULT 'none'), and the console
+    // deployment NOW, and counters persisted AT AUDIT TIME. An event audited
+    // before the check was switched on was classified `none` then and nothing
+    // about flipping the flag revisits it on its own (`lib/types.ts` records
+    // that `key_revocation_status` is NOT NULL DEFAULT 'none'), and the console
     // cannot know when the flag was flipped — so "the check ran over this
     // window" is exactly the inference that does not follow. It is the same
     // argument this change uses to deny /trust a clean arm; it transfers here
     // unchanged.
+    //
+    // NB what this comment must NOT say, and said until round 5's gate: that
+    // "enabling the check does not re-classify rows already audited". Flipping
+    // the flag does not, but the §7 sweep does — upstream re-audits
+    // known-revoked fingerprints and amends already-sealed rows in place, which
+    // is the very fact the test 130 lines below pins. Two comments in one file
+    // contradicting each other is how a false claim gets back into the copy.
     renderWith(overview({ keyRevocation: CLEAN, features: FEATURES }));
     const text = revocationCard().textContent ?? '';
     expect(text).not.toMatch(/checking ran over this window/i);
@@ -323,6 +340,31 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     // be deleted. This is that tail.
     renderWith(overview({ keyRevocation: undefined, features: { ...FEATURES, keyRevocationCheck: 'yes' } as never }));
     expect(proseText()).toMatch(/whether anything was measured is exactly what could not be established/i);
+    cleanup();
+
+    // `no-flags` — the arm this test skipped for two rounds while being
+    // extended to each of its neighbours in turn. Both of its explanatory
+    // tails were freely deletable: the window-scoping sentence survived
+    // deletion because the `<strong>` headline lives in the same `<p>` and
+    // supplies "window" on its own, and the closing sentence was covered by
+    // nothing at all. Neither is a claim that turns false when deleted, but
+    // together they are the whole of what distinguishes "this window is
+    // quiet" from "this deployment does not check" — which is #97.
+    renderWith(overview({ keyRevocation: CLEAN, features: undefined }));
+    const noFlags = proseText();
+    expect(noFlags).toMatch(/a statement about the selected window, not about the deployment/i);
+    expect(noFlags).toMatch(/a different window may well show figures/i);
+    expect(noFlags).toMatch(/they appear as soon as anything is classified/i);
+  });
+
+  it('GUARDS THE GUARD: proseText throws on the arm that renders no paragraph', () => {
+    // `proseText()` is the scoping mechanism the three window tests depend on,
+    // and its `throw` shipped with nothing exercising it: reverting it to
+    // `return p?.textContent ?? ''` left the suite green. An empty string
+    // satisfies every `not.toMatch` in this file silently, so that revert would
+    // turn a whole class of assertions into no-ops without a single red test.
+    renderWith(overview({ keyRevocation: SOME, features: FEATURES }));
+    expect(() => proseText()).toThrow(/no <p> in the revocation card/);
   });
 
   it('disabled: pins the CAUSE it gives, not merely the cause it withholds', () => {
@@ -358,6 +400,17 @@ describe('dashboard — Key Revocation says which of four states it is', () => {
     expect(text).toMatch(/re-audits and amends already-sealed events in place/i);
     expect(text).toMatch(/does not update the audit timestamp/i);
     expect(text).not.toMatch(/does not re-classify them/i);
+    // The CONSEQUENT, pinned in the positive direction — the half the change
+    // that added it called "the part that matters for this tile", and the half
+    // that was free. Round 5's gate rewrote it to "moves these figures wherever
+    // the amended event sits" — the opposite claim, and false: `checked_at` is
+    // what this window filters on, so an amendment to an event that has already
+    // scrolled out of the window cannot move these figures at all. Deleting the
+    // clause was tested; rewriting it was not, which is the same "unpinned in
+    // the positive direction" gap the `disabled` cause had one round earlier.
+    expect(text).toMatch(
+      /moves these figures only where the amended event already sits inside this window/i,
+    );
   });
 
   it('the array payload reaches no-flags, not a claim that a report arrived', () => {

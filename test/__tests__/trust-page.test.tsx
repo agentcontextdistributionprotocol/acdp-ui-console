@@ -319,12 +319,54 @@ describe('/trust — the deployment revocation flag', () => {
     // they arrive as zeros and the suppression is this console's own. Saying
     // the control plane withheld them contradicts `run-trust-panel.tsx`, which
     // renders the correct explanation on the identical predicate.
-    expect(text).toContain('the counters still arrive');
+    // Asserted with its scope attached. `toContain('the counters still
+    // arrive')` on its own is satisfied by the unscoped sentence that round 5's
+    // gate found false over an empty run set, so the phrase that makes it a
+    // claim about audited runs is part of the pin.
+    expect(text).toContain('the counters still arrive with every audited run');
     expect(text).toContain('a zero from a check that never ran is not a finding');
     expect(text).not.toContain('nothing was measured');
     expect(text).not.toMatch(/no figures are sent|stops sending/i);
     // And the card subtitle agrees with the KPI hint — two strings, one fact.
     expect(text).toContain('revocation checking off');
+  });
+
+  it('DISCRIMINATES: with no audited run at all it does NOT say counters arrive', () => {
+    // Round 5's blocking finding, and the reason the arm above is gated on
+    // `runs.length`. `revocationReportedRuns === 0` is satisfied vacuously by
+    // an empty run set: `useTrust` keeps only the runs that came back carrying
+    // a `trust` member, and `summarizeByRun` returns `null` outright for a run
+    // with no audit rows. On the upstream default posture — `RECEIPT_AUDIT_
+    // ENABLED=false`, which is also the only posture that FORCES the revocation
+    // flag false — no run carries a summary, so nothing arrives and the
+    // previous single sentence told the operator counters were flowing while
+    // the console held none.
+    //
+    // The fixture is the payload the defect needed and the old test lacked:
+    // zero runs, flag explicitly off.
+    const { container } = renderWith(overview([], NONE, { ...FEATURES_ON, keyRevocationCheck: false }));
+    const text = container.textContent ?? '';
+    // Still says the deployment fact, which does not depend on any run…
+    expect(text).toContain('Revocation checking is switched off on this deployment');
+    // …but must not assert the arrival of counters it does not hold.
+    expect(text).not.toContain('the counters still arrive');
+    // It says the second fact positively rather than merely dropping the first.
+    expect(text).toContain('no audited run reached this view');
+    expect(text).toContain('no counters here at all, zero or otherwise');
+    // And it still does not blame the control plane for the absence — a failed
+    // detail fetch lands a run outside `runs` too, so the cause is not ours.
+    expect(text).not.toMatch(/sent no|withheld|stops sending|no figures are sent/i);
+  });
+
+  it('the check-ON arm needs no such split: its claim is true over the empty set', () => {
+    // The asymmetry that produced the defect, pinned so a future edit does not
+    // "fix" this arm by making it positive too. "No run in this view carried a
+    // revocation classification" is a NEGATIVE existential and holds over zero
+    // runs; the sentence it replaced was positive and did not.
+    const { container } = renderWith(overview([], NONE, FEATURES_ON));
+    const text = container.textContent ?? '';
+    expect(text).toContain('Not reported by this deployment — no run in this view carried a revocation classification');
+    expect(text).not.toMatch(/counters .{0,20}arrive/i);
   });
 
   it('keeps the old not-reported wording when the check IS on', () => {

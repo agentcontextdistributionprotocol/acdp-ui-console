@@ -356,9 +356,20 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  * Four arms, because there really are four things that can be true:
  *
  *   `reported`       counters arrived with something in them — render them.
- *   `checked-clean`  the flag says the check RAN, and it found nothing. This is
- *                    the state that did not previously exist and is the reason
- *                    the function exists.
+ *   `checked-clean`  the flag says the check is ON, and the counters that
+ *                    arrived are all zero. This is the state that did not
+ *                    previously exist and is the reason the function exists.
+ *                    NOT "the flag says the check RAN": the flag is current
+ *                    config and describes the deployment NOW, while the
+ *                    counters were persisted at audit time — so it cannot say
+ *                    the check was on when each event in the window was
+ *                    classified. `app/dashboard/page.tsx` renders exactly that
+ *                    caveat ("It does not follow that every event in the window
+ *                    was checked") and `dashboard-revocation.test.tsx` forbids
+ *                    the stronger reading outright. This bullet said "the check
+ *                    RAN" for one commit after the `disabled` bullet below was
+ *                    corrected for the same over-claim; a neighbouring arm is
+ *                    where these keep surviving.
  *   `disabled`       the flag says the check is off, so any counters that did
  *                    arrive are zeros a check never produced — not a finding.
  *                    NOT "nothing was measured": the console cannot establish
