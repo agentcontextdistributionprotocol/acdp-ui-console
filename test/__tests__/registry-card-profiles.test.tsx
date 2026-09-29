@@ -3017,6 +3017,48 @@ describe('every source guard is exercised against a subject it must reject', () 
   // (ROUND 17's NB-6: this sentence said "Three of those" and then named four,
   // which is the same defect as the docblocks this gate spends its rounds
   // correcting, one size down. The commit that added it says four.)
+  //
+  // MEASURED (round 18), same protocol. Round 17 re-opened four of round 16's
+  // five fixes with a one-edit re-spelling and found two entirely new channels.
+  // Every one of the six, reproduced from its report, is now KILLED:
+  //
+  //   BL-1  `capabilities.profiles.flatMap((p, i) => i > 2 ? [p] : [])`
+  //         as a second per-profile surface                    → 5 red
+  //   BL-2  the profiles row behind `||`                       → 5 red
+  //   BL-2b an early `return` above the real one               → 11 red
+  //   BL-3  `.chip::after { CONTENT: ' (see acdp-consumer)'; }` → 1 red
+  //   BL-3  `@IMPORT url('./not-scanned.css');`                 → 1 red
+  //   BL-4  `const Tag = 'style'` + `<Tag>` in app/layout.tsx   → 1 red
+  //   BL-4  `createElement('style', null, css)` in app/layout   → 1 red
+  //   BL-5  `acdp:consumer` inside a gloss                      → 2 red
+  //   BL-6  `@media (max-width: 640px) { .metric-row .chip {
+  //         display: none; } }` in app/globals.css              → 1 red
+  //
+  // …and each new mechanism is load-bearing, measured by disabling it and
+  // re-running the escape it closes:
+  //
+  //   the `cardRules` product pin gutted, then BL-6   → SURVIVED (115 pass)
+  //   the AST half of the style bound gutted, then BL-4 → SURVIVED (115 pass)
+  //   `assertComponentBodyIsOneReturn` unwired from
+  //     RUN_ON_READ, then BL-2b                        → 3 red, but from the
+  //     read-time list pins, not the escape: the guard cannot be unwired
+  //     quietly, which is the other half of load-bearing.
+  //   the deref count loosened to `> 99`, then BL-1    → 5 red (the subject
+  //     table refuses the loosening before the escape is reached)
+  //   the PATH_NODE_KINDS walk short-circuited, then round 15's B2 → 3 red
+  //   `VACUITY_FRACTION` 0.8 → 0.05                    → 3 red
+  //
+  // One result is worth more than the kills. With every CSS scanner's `i` flag
+  // reverted — round 17's BL-3 exactly — the `CONTENT:` escape is STILL 1 red,
+  // because `contentOccurrences` now tokenises instead of matching the same
+  // word a second way, and the two counts disagree. That is round 17's NB-2
+  // paying off: the point of a second derivation is that it fails where the
+  // first one does, and this one now does.
+  //
+  // Two mutations in this sweep were confounded and are recorded as such: the
+  // early-return escape invalidates this file's own `mutate()` anchor, so the
+  // raw form of it is red for a reason that is not the guard. The number above
+  // is from the repaired form, where the anchor is updated in the same edit.
   // ══════════════════════════════════════════════════════════════════
   type FailSite = {
     fn: string;
