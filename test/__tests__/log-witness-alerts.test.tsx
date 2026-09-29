@@ -2018,6 +2018,61 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     lead.replaceWith(a, b);
   }
 
+  /**
+   * Move the first word of `to` onto the end of `from`.
+   *
+   * ROUND 6's B5. The block half's wiring injection was `splitFirstParagraph`,
+   * and its docblock claimed "each injection has a known owner, established
+   * separately above". That stopped being true the moment round 5 added the
+   * reachability half: splitting a paragraph adds a BLOCK, and the
+   * reachability half's anti-vacuity pin is `checked === expected.length`, so
+   * the split fires that too. Two owners, and the measurement is exact —
+   * deleting `expectBlocksPinned` from the composite left 1122/1122 green, and
+   * deleting it TOGETHER WITH the reachability count pin killed one test. The
+   * half that pins per-block wording, order and count could be dropped from
+   * the composite silently, which is the masking shape the halves were split
+   * apart to remove, reintroduced by the fix for round 5's own finding.
+   *
+   * This is the injection with exactly one owner. Moving a word across a block
+   * boundary leaves:
+   *
+   *   - the SQUASHED concatenation identical, because the words keep their
+   *     order and `squash` is blind to the space between them → the
+   *     nothing-outside half cannot see it;
+   *   - the block COUNT identical → the reachability half cannot see it;
+   *   - every attribute untouched → the announced half cannot see it;
+   *   - nothing suppressed → the reachability half cannot see it that way
+   *     either;
+   *   - and BOTH block texts different → only the block half can see it.
+   *
+   * It is also the defect that matters most in this file: a sentence whose
+   * words have drifted across the boundary between "what the dialog is doing"
+   * and "what confirming records" reads as the same paint and means something
+   * else.
+   *
+   * The two elements must be ADJACENT in block order for the concatenation to
+   * be preserved, which is asserted rather than assumed — a refactor that puts
+   * a block between them would otherwise turn this into a two-owner injection
+   * again without anybody noticing.
+   */
+  function moveWordAcrossBoundary(from: HTMLElement, to: HTMLElement) {
+    const blocks = [...dialog().querySelectorAll<HTMLElement>(BLOCK_SELECTOR)];
+    expect(
+      blocks.indexOf(to) - blocks.indexOf(from),
+      'the boundary this injection moves a word across is no longer a boundary between adjacent blocks',
+    ).toBe(1);
+    const walker = to.ownerDocument.createTreeWalker(to, NodeFilter.SHOW_TEXT);
+    let first: Text | null = null;
+    while (walker.nextNode() && first === null) {
+      if ((walker.currentNode as Text).data.trim() !== '') first = walker.currentNode as Text;
+    }
+    expect(first, 'the receiving block carries no text to move').toBeTruthy();
+    const words = first!.data.trimStart().split(/\s+/);
+    const moved = words.shift()!;
+    first!.data = ' ' + words.join(' ');
+    from.append(to.ownerDocument.createTextNode(' ' + moved));
+  }
+
   it('the block pin catches a change of STRUCTURE that changes no text', () => {
     // The block half's own job, and it needs an injection the other halves
     // cannot see — otherwise deleting its call site from the composite is
@@ -2310,15 +2365,93 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     expect(() => expectNothingAnnounced('none')).toThrow();
   });
 
+  it('each injection is seen by EXACTLY ONE half — the wiring test measures its own premise', () => {
+    // ROUND 6's B5, and the reason it is a test rather than a paragraph. The
+    // wiring test below says "each injection has a known owner, established
+    // separately above". That sentence was TRUE when it was written and FALSE
+    // one commit later, because round 5 added a fourth half whose anti-vacuity
+    // pin counts blocks — and the block half's injection was a paragraph split,
+    // which adds one. Nothing noticed, because the claim lived in a comment.
+    //
+    // An injection with two owners measures neither of them: with it, dropping
+    // either owner from the composite is green. So the premise is measured
+    // here, as a matrix — every injection against every half — and the
+    // requirement is exactly one `throw` per row. A future half that happens to
+    // see an existing injection is then a red test on the day it is added,
+    // which is the day the information is cheap.
+    const expectedFor = () =>
+      expectedDialogBlocks({
+        stage: 'alerting',
+        consequence: 'stays-listed',
+        outcome: 'none',
+        footer: 'confirmable',
+        authority: AUTH,
+        reason: MISMATCH,
+      });
+    const halves: Array<[string, () => void]> = [
+      ['blocks', () => expectBlocksPinned(expectedFor())],
+      ['outside', () => expectNothingOutside(expectedFor())],
+      ['announced', () => expectNothingAnnounced('none')],
+      ['reachable', () => expectNothingSilenced(expectedFor())],
+    ];
+    const injections: Array<[string, () => void]> = [
+      ['a word moved across a block boundary', () => {
+        moveWordAcrossBoundary(
+          modalBody().querySelector('p') as HTMLElement,
+          modalBody().querySelector('li') as HTMLElement,
+        );
+      }],
+      ['a bare span', () => {
+        const el = document.createElement('span');
+        el.textContent = 'and the retained head has been cleared';
+        modalBody().appendChild(el);
+      }],
+      ['a title attribute', () => {
+        modalBody().setAttribute('title', 'Confirming clears the alert.');
+      }],
+      ['a silenced fact list', () => {
+        (modalBody().querySelector('ul') as HTMLElement).setAttribute('aria-hidden', 'true');
+      }],
+    ];
+    // The matrix is square and each injection is meant for the half at the same
+    // index, so a reordering of either list is a failure rather than a silent
+    // re-attribution.
+    expect(injections.length, 'the matrix is not square').toBe(halves.length);
+
+    for (const [index, [what, inject]] of injections.entries()) {
+      cleanup();
+      renderWith({ data: rows([row()]) });
+      openConfirm();
+      // Every half passes before the injection, or the row proves nothing.
+      for (const [name, half] of halves) {
+        expect(half, `${what}: the ${name} half fails before the injection`).not.toThrow();
+      }
+      inject();
+      const seenBy = halves.filter(([, half]) => {
+        try {
+          half();
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      expect(
+        seenBy.map(([name]) => name),
+        `${what} must be visible to exactly the ${halves[index][0]} half and no other`,
+      ).toEqual([halves[index][0]]);
+    }
+  });
+
   it('all four halves are WIRED IN, not merely present', () => {
     // The per-half tests above prove each half catches its own injection. They
-    // say nothing about whether `expectPinnedDialog` still CALLS all three — a
+    // say nothing about whether `expectPinnedDialog` still CALLS all four — a
     // deleted call site leaves every one of them green.
     //
     // This is not the masking the halves were split to avoid: masking is when
     // one assertion stands for two checks and either can satisfy it. Here each
-    // injection has a known owner, established separately above, and this test
-    // only adds that the composite fires for each.
+    // injection has EXACTLY ONE owner, and that is measured by the test
+    // immediately above rather than asserted here — round 6's B5 is what
+    // happens when it is only asserted.
     const pin = () =>
       expectPinnedDialog({
         stage: 'alerting',
@@ -2330,10 +2463,21 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       });
 
     const injections: Array<[string, () => void]> = [
-      // block half — a STRUCTURE change with no text change, because an
-      // appended element is caught by the nothing-outside half as well and so
-      // cannot tell whether this half is still wired in.
-      ['a split paragraph', splitFirstParagraph],
+      // block half — a word moved ACROSS a block boundary. Round 6's B5: the
+      // injection here used to be `splitFirstParagraph`, and once round 5 added
+      // the reachability half that injection had two owners (a split adds a
+      // block, and the reachability half counts blocks), so deleting
+      // `expectBlocksPinned` from the composite was silent. A moved word leaves
+      // the concatenation, the count, the attributes and the reachability all
+      // identical, and only the per-block texts different. See
+      // `moveWordAcrossBoundary`, and the exclusivity is measured in the test
+      // below rather than argued here.
+      ['a word moved across a block boundary', () => {
+        moveWordAcrossBoundary(
+          modalBody().querySelector('p') as HTMLElement,
+          modalBody().querySelector('li') as HTMLElement,
+        );
+      }],
       // nothing-outside half
       ['a bare span', () => {
         const el = document.createElement('span');
