@@ -395,7 +395,7 @@ export const ACK_CLOSE_CONTROL = 'Close dialog';
  * axis, which turned N9 from an observation into a red test — which is the
  * whole argument for enumerating inputs rather than outcomes.
  *
- * `hasDiagnostic` defaults to `true` so the two dozen call sites that pass an
+ * `hasDiagnostic` defaults to `true` so the fifteen call sites that pass an
  * `ApiError` keep their meaning; the caller that knows otherwise says so.
  */
 export function expectedAnnounced(outcome: AckOutcome, hasDiagnostic = true): string[] {
@@ -568,3 +568,79 @@ export function squash(text: string | null | undefined): string {
 export const ALL_STAGES = Object.keys(ACK_LEAD) as AckStage[];
 export const ALL_CONSEQUENCES = Object.keys(ACK_LISTING) as AckListingConsequence[];
 export const ALL_RECORD_EFFECTS = Object.keys(ACK_FACT_KEY) as AckRecordEffect[];
+
+/**
+ * Every inline style declaration on a surface and on everything above it, as
+ * `<tag.class> prop: value` — the PRODUCT, for the caller to pin.
+ *
+ * ── ROUND 8's B1: PERCEIVABILITY HAS A SECOND CHANNEL ────────────────
+ *
+ * `expectNothingSilenced` models three ATTRIBUTES — `aria-hidden`, `hidden`,
+ * `inert` — and both of its walks are built on them, under a docblock saying
+ * everything pinned is still REACHABLE. Measured on this dialog:
+ *
+ *   <div style={{ display: 'none', ...}}>  around the body grid   SURVIVED
+ *   <div style={{ visibility: 'hidden' }}> around the bullets     SURVIVED
+ *
+ * each with the whole suite green, while `aria-hidden="true"` on the same
+ * element is red. `display: none` is a STRICTLY STRONGER suppression — it
+ * removes the subtree from the accessibility tree AND from the visual render —
+ * so the walk caught the weaker channel and not the stronger one.
+ *
+ * The excuse available for this is "jsdom applies no stylesheet", and it is
+ * about STYLESHEETS. jsdom reflects an INLINE `style` attribute exactly, and
+ * `CLAUDE.md` mandates inline styles for this repository — so the one styling
+ * channel this component actually uses is the one that argument excuses itself
+ * from. This dialog's own body is `<div style={{ display: 'grid', gap: 10 }}>`.
+ *
+ * A denylist (`display`, `visibility`, `opacity`, `font-size: 0`, `clip-path`,
+ * `color: transparent`, `content-visibility`, `transform: scale(0)`, …) is an
+ * open set, and an open set under a closed-set sentence is the defect this
+ * whole branch keeps finding. So the ALLOW side is bounded instead: this
+ * returns every inline declaration on and above the pinned surface, and the
+ * caller pins the whole product. A new inline style anywhere on the path is
+ * then a reviewable diff whatever property it sets, and nobody has to have
+ * anticipated it.
+ *
+ * KNOWN DUPLICATE, said plainly rather than left for the next gate to find:
+ * the sibling branch for #97 carries the same instrument for its own two
+ * surfaces in `test/support/revocation-prose.ts`. The two cannot be unified
+ * before both land, because neither branch has the other's module. Unifying
+ * them is filed as a follow-up.
+ */
+export function inlineStyleDeclarations(
+  root: Element,
+  blocks: readonly Element[],
+): string[] {
+  const seen = new Set<Element>();
+  const out = new Set<string>();
+  const describe = (el: Element): string => {
+    const cls = el.getAttribute('class');
+    return `${el.tagName.toLowerCase()}${cls ? '.' + cls.trim().split(/\s+/).join('.') : ''}`;
+  };
+  const visit = (el: Element): void => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    // The AUTHORED declarations, read off the `style` ATTRIBUTE rather than off
+    // the expanded `CSSStyleDeclaration`. Same information and the same
+    // strength — jsdom writes every imperative `style.setProperty` back to the
+    // attribute — but `border: none` stays one declaration instead of becoming
+    // eleven longhands. A product a reviewer will not read is a product nobody
+    // reviews, and this one is meant to be diffed.
+    const attr = el.getAttribute('style');
+    if (attr === null) return;
+    for (const decl of attr.split(';')) {
+      const colon = decl.indexOf(':');
+      if (colon === -1) continue;
+      out.add(`${describe(el)} ${decl.slice(0, colon).trim()}: ${decl.slice(colon + 1).trim()}`);
+    }
+  };
+  for (const el of [root, ...root.querySelectorAll('*')]) visit(el);
+  // …and UPWARDS to the document, because suppression is inherited: an element
+  // above the pinned surface removes it exactly as one inside it does. This is
+  // the ancestor half of the attribute walk, in the styling channel.
+  for (const block of blocks) {
+    for (let n: Element | null = block; n !== null; n = n.parentElement) visit(n);
+  }
+  return [...out].sort();
+}

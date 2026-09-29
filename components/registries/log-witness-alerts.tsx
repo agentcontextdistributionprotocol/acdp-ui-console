@@ -142,7 +142,10 @@ function AcknowledgedCell({ row }: { row: LogWitnessAlertRow }) {
  *     later alert on the same authority is unacknowledged again). The row stays
  *     in `log_witness_cursors` and keeps its retained head — deliberately, per
  *     that repository's own docblock, so the pre-failure root stays available
- *     as §9.2 `first_root` evidence. What removes it from THIS screen is
+ *     as §9.2 `first_root` evidence. (Read from upstream's source, not
+ *     verified against a running control plane from here — this console never
+ *     sees `log_witness_cursors`. What this component DEPENDS on is only the
+ *     next sentence.) What removes it from THIS screen is
  *     `listAlerted`'s `alerted = true` filter, which is a different fact and
  *     the one this component actually depends on.
  */
@@ -169,10 +172,16 @@ const ACK_ALREADY_RESOLVED =
  *   - `left-listing` — it does not, and upstream has not answered. This console
  *                      does not know why the row left, so nothing here may say.
  *                      The reason comes from the SNAPSHOT, in the past tense.
- *   - `resolved`     — the ack returned 404, which upstream only does when the
- *                      row is no longer `alerted = true`. The one state where
- *                      the console can say the alert is gone, because upstream
- *                      said so about this very write.
+ *   - `resolved`     — the ack returned 404. `acknowledgeAlert` filters on
+ *                      `and(eq(tenantId), eq(registryAuthority),
+ *                      eq(alerted, true))`, so a 404 means "no row matched all
+ *                      three" — the alert cleared, OR this tenant has no
+ *                      cursor row for that authority at all. The stage is
+ *                      named for the first reading because this console only
+ *                      ever sends an authority it just listed from that same
+ *                      tenant's feed; the copy hedges with "most likely"
+ *                      rather than asserting it, and so does this bullet. See
+ *                      the correction above `ACK_ALREADY_RESOLVED`.
  *
  * `resolved` dominates `left-listing`: a direct answer about our own write
  * outranks an inference from a listing that may simply be filtered.

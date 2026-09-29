@@ -58,6 +58,7 @@ import {
   expectedDialogBlocks,
   normalize,
   squash,
+  inlineStyleDeclarations,
   type AckFooterState,
 } from '@/test/support/witness-ack-prose';
 import * as PROSE from '@/test/support/witness-ack-prose';
@@ -135,6 +136,115 @@ function section(): HTMLElement {
 
 function rows(rs: LogWitnessAlertRow[]) {
   return { data: rs, total: rs.length };
+}
+
+/**
+ * Every text-bearing LEAF inside `root`, in document order.
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ * ROUND 8's B2/B3. The DIALOG's copy is bounded by a closed set — every
+ * block pinned by wording, order and count, plus "and nothing else". The
+ * CARD's copy was bounded by four regexes: `/healthy/i`, `/all (logs|
+ * registries) (are )?(ok|fine|verified)/i`, `/no (problems|issues)\b/i` and
+ * `/logs? (are|is) healthy|all clear|everything is fine/i`.
+ *
+ * That is an enumeration of four ways to over-claim, on a surface whose
+ * entire reason for existing is that an absence of rows must not read as an
+ * all-clear. "Nothing to worry about here", "Transparency looks good",
+ * "You're covered" and "No alerts — you're all set" all pass every one of
+ * them. The dialog got the closed set because round 4 found the open one
+ * failing; the card never got the same treatment.
+ *
+ * ── WHY A DERIVED LEAF WALK AND NOT A TAG LIST ───────────────────────
+ *
+ * `BLOCK_SELECTOR` (`h2, p, li, .card, .modal-footer button`) is itself an
+ * enumeration — closed for the dialog only because `expectNothingOutside`
+ * bounds whatever it missed. It could not be reused here: the card's copy
+ * arrives through `EmptyState`, which renders its title and description in
+ * bare `<div>`s, through `ErrorPanel`, and through `<th>`/`<td>`. The list
+ * would have to grow once per component wired into this card, and a
+ * component added later would contribute copy no pin could see.
+ *
+ * So a LEAF is defined structurally: an element carrying text with no
+ * descendant element that also carries text — plus any text node sitting
+ * loose beside such children, which is the bare-sentence case half two of
+ * the dialog pin exists to catch. Every string a reader can see is in the
+ * product exactly once, and a new component contributes its copy to the pin
+ * by construction rather than by somebody remembering to widen a selector.
+ *
+ * Because the walk is total, there is no "and nothing else" half to write:
+ * the dialog needs one because its selector can miss, and this cannot. The
+ * guard-the-guard below proves that by feeding it the two shapes
+ * `BLOCK_SELECTOR` does miss.
+ * ══════════════════════════════════════════════════════════════════════
+ */
+function textLeaves(root: HTMLElement): string[] {
+  const out: string[] = [];
+  const hasText = (n: Node): boolean => (n.textContent ?? '').trim() !== '';
+  const walk = (el: Element): void => {
+    const textBearingKids = [...el.children].filter(hasText);
+    if (textBearingKids.length === 0) {
+      const t = normalize(el.textContent);
+      if (t !== '') out.push(t);
+      return;
+    }
+    for (const node of el.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (hasText(node)) out.push(normalize(node.textContent));
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        walk(node as Element);
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** The card's copy, closed. */
+function cardCopy(): string[] {
+  return textLeaves(section());
+}
+
+/**
+ * The table's header row, in the order the cells are rendered.
+ *
+ * Shared between the header test and the card's copy pin. Written out once and
+ * asserted twice: a column renamed in the component is red in both places, and
+ * neither copy of the list can drift into agreeing with a stale one.
+ */
+const TABLE_COLUMNS: readonly string[] = [
+  'Authority',
+  'Reason',
+  'Detail',
+  // "environmental" is load-bearing: the counter tracks transport failures
+  // only, so unqualified beside "Root mismatch (split view)" the number reads
+  // as this alert's recurrence count. Pinned so the qualification cannot
+  // quietly revert.
+  'Consecutive environmental failures',
+  'Detected',
+  'State',
+  // Phase 3's column. The header is `Acknowledge`; the CELL's control is
+  // labelled per row ("Acknowledge <authority>" / "Re-acknowledge …"), so the
+  // two are checked separately.
+  'Acknowledge',
+];
+
+/**
+ * The chrome every arm of the card carries: heading, subtitle, toggle.
+ *
+ * Written once and spread into each arm's expectation rather than repeated,
+ * so the six arms differ in exactly the part that is supposed to differ. The
+ * subtitle's third clause is a function of the toggle, which is why it takes
+ * the flag.
+ */
+function cardChrome(showAcknowledged: boolean): string[] {
+  return [
+    'Witness alert worklist',
+    showAcknowledged
+      ? 'Durable transparency-log detections · one row per alerting authority · acknowledged alerts stay listed until the condition clears'
+      : 'Durable transparency-log detections · one row per alerting authority · acknowledged alerts are filtered out of this view, but stay open until the condition clears',
+    showAcknowledged ? 'Acknowledged shown' : 'Acknowledged hidden',
+  ];
 }
 
 /**
@@ -355,6 +465,13 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
     // The title is a function of the filter too — "at all" is only sayable
     // because the default listing includes acknowledged rows.
     expect(screen.getByText(EMPTY_TITLE_ALL)).toBeInTheDocument();
+    // ROUND 8's B3: these three are a FAST LINT, not the bound. They name the
+    // specific over-claims this surface was built to avoid, so a reader learns
+    // why the copy is worded as it is — but "Nothing to worry about here"
+    // passes all three. The bound is the closed set in "the CARD says exactly
+    // what it says", which pins this arm's copy word for word, and which
+    // asserts these same regexes over the union of all six arms so the two
+    // cannot drift apart.
     expect(text).not.toMatch(/healthy/i);
     expect(text).not.toMatch(/all (logs|registries) (are )?(ok|fine|verified)/i);
     expect(text).not.toMatch(/no (problems|issues)\b/i);
@@ -390,8 +507,10 @@ describe('witness alert worklist — the empty state claims nothing it cannot', 
     expect(text).toMatch(/acknowledged alerts are still alerts and are hidden in this view/i);
     // And it keeps the never-witnessed caveat, which is true of both arms.
     expect(text).toMatch(/never witnessed/i);
-    // The same prohibitions as the default arm: a filtered emptiness is even
-    // further from an all-clear than a full one.
+    // The same prohibitions as the default arm — and, as there, a fast lint
+    // over the closed set that actually bounds this arm (see "the CARD says
+    // exactly what it says"). A filtered emptiness is even further from an
+    // all-clear than a full one.
     expect(text).not.toMatch(/healthy/i);
     expect(text).not.toMatch(/no (problems|issues)\b/i);
   });
@@ -592,6 +711,8 @@ describe('witness alert worklist — it asks for the listing its copy describes'
     // inside a denial. This matcher cannot read negation, and neither can a
     // reader skimming the sentence, so the reassuring words must simply be
     // absent.
+    // Fast lint again; the word-for-word bound on this arm is the card copy
+    // pin at the bottom of this file.
     expect(text).not.toMatch(/logs? (are|is) healthy|all clear|everything is fine/i);
     expect(text).toMatch(/never witnessed/i);
   });
@@ -632,7 +753,7 @@ describe('witness alert worklist — the State column actually varies', () => {
 });
 
 describe('witness alert worklist — the header row means what the cells hold', () => {
-  it('names all six columns, in the order the cells are rendered', () => {
+  it('names all seven columns, in the order the cells are rendered', () => {
     // The whole `<thead>` was unguarded: deleting `<th>State</th>`, or swapping
     // `Reason` and `Detail` so the detail text sits under a "Reason" heading,
     // left the entire suite green. On a surface whose stated job is saying
@@ -643,22 +764,7 @@ describe('witness alert worklist — the header row means what the cells hold', 
     // header-vs-cell. This is that check.
     renderWith({ data: rows([row()]) });
     const headers = [...section().querySelectorAll('thead th')].map((h) => h.textContent);
-    expect(headers).toEqual([
-      'Authority',
-      'Reason',
-      'Detail',
-      // "environmental" is load-bearing: the counter tracks transport failures
-      // only, so unqualified beside "Root mismatch (split view)" the number
-      // reads as this alert's recurrence count. Pinned so the qualification
-      // cannot quietly revert.
-      'Consecutive environmental failures',
-      'Detected',
-      'State',
-      // Phase 3's column. The header is `Acknowledge`; the CELL's control is
-      // labelled per row ("Acknowledge <authority>" / "Re-acknowledge …"), so
-      // the two are checked separately.
-      'Acknowledge',
-    ]);
+    expect(headers).toEqual(TABLE_COLUMNS);
   });
 
   it('each header sits above the cell that carries that fact', () => {
@@ -1006,7 +1112,6 @@ function expectNothingSilenced(expected: string[], label?: string) {
         `${label ?? ''} — ${where} is inside an element carrying ${suppressorOn(el)} and is ` +
           'announced to nobody',
       ).toBeNull();
-      if (el === dialog()) break;
     }
     // DOWN: a suppressor on a descendant hides only what that descendant
     // holds, so it is a defect exactly when what it holds is text.
@@ -1036,7 +1141,51 @@ function expectNothingSilenced(expected: string[], label?: string) {
   // …and the attribute list is itself pinned, because "three attributes" is the
   // kind of claim that goes stale by one the next time somebody adds a rule.
   expect([...SUPPRESSING_ATTRS]).toEqual(['aria-hidden', 'hidden', 'inert']);
+
+  // ── ROUND 8's B1: THE STYLING CHANNEL, WHICH THIS COMPONENT USES ────
+  //
+  // Everything above reads ATTRIBUTES. `<div style={{ display: 'none' }}>`
+  // around the body grid was green on the whole suite while `aria-hidden` on
+  // the same element is red — the walk caught the weaker suppression and not
+  // the stronger one. See `inlineStyleDeclarations` for why the ALLOW side is
+  // bounded rather than a denylist of properties.
+  //
+  // The scan root is the OVERLAY, not the dialog: the overlay covers the
+  // viewport and is above every block.
+  const unpinned = inlineStyleDeclarations(dialogScanRoot(), blocks).filter(
+    (d) => !INLINE_STYLES_ON_DIALOG.includes(d),
+  );
+  expect(
+    unpinned,
+    `${label ?? ''} — inline style declarations on or above the dialog that nothing has pinned`,
+  ).toEqual([]);
 }
+
+/** Every inline style declaration on or above the confirm dialog. Measured. */
+const INLINE_STYLES_ON_DIALOG: readonly string[] = [
+  'button background: none',
+  'button border: medium',
+  'button color: var(--muted)',
+  'button cursor: pointer',
+  'button display: flex',
+  'div align-items: center',
+  'div color: var(--muted)',
+  'div display: flex',
+  'div display: grid',
+  'div font-size: 12px',
+  'div gap: 10px',
+  'div.card align-items: center',
+  'div.card align-items: stretch',
+  'div.card display: flex',
+  'div.card flex-direction: column',
+  'div.card gap: 10px',
+  'div.card padding: 20px',
+  'p margin: 0px',
+  'ul display: grid',
+  'ul gap: 6px',
+  'ul margin: 0px',
+  'ul padding-left: 18px',
+];
 
 type PinOpts = {
   stage: AckStage;
@@ -1883,6 +2032,34 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     demoMode: boolean;
     /** Round 6's B1: whether the dialog was opened from a Re-acknowledge row. */
     reAcknowledge: boolean;
+    /**
+     * Whether the row is acknowledged AS THE LISTING HOLDS IT NOW — which is a
+     * different fact from `reAcknowledge`, the snapshot the dialog opened on.
+     *
+     * ── ROUND 8's B5: TWO INPUTS, ONE AXIS ───────────────────────────
+     *
+     * `ackRecordEffect(live, openedOn)` reads `(live ?? openedOn)
+     * .acknowledgedAt`, and the preference for the LIVE row is the whole
+     * reason the function takes two arguments. Round 7 gave the product ONE
+     * axis for both — `subjectRow(reAcknowledge)` was handed over as the
+     * snapshot AND put in the listing — so `live.acknowledgedAt !==
+     * openedOn.acknowledgedAt` was never rendered, and rewriting the function
+     * as `openedOn.acknowledgedAt === null ? 'first' : 'replaces'` was green.
+     * The two-argument signature was untested in the one respect that made it
+     * two arguments.
+     *
+     * Both disagreements are reachable, and neither is exotic:
+     *
+     *   live acked, snapshot not — another operator acknowledged the row while
+     *     this dialog stood open, and the listing refetched underneath it.
+     *   live NOT acked, snapshot acked — the alert re-fired with a DIFFERENT
+     *     reason, which is the one case upstream clears `acknowledgedAt` on
+     *     (see the resurfacing rule this dialog's own copy states).
+     *
+     * Meaningless when `live` is `gone`, and constrained to one value there by
+     * `reachableInputs` so the arm space does not double with duplicates.
+     */
+    liveAcked: boolean;
   };
 
   type Arm = {
@@ -1909,19 +2086,36 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
 
   function armOf(i: DialogInput): Arm {
     const error = ACK_ERRORS[i.error]();
-    const subject = subjectRow(i.reAcknowledge);
-    const stage = ackStage(i.live === 'listed' ? subject : null, error);
+    // The row AS THE LISTING HOLDS IT — round 8's B5. Built from `liveAcked`,
+    // not from `reAcknowledge`, so the two can disagree.
+    const liveRow = i.live === 'listed' ? subjectRow(i.liveAcked) : null;
+    const stage = ackStage(liveRow, error);
     return {
       stage,
       consequence: ackListingConsequence(stage, i.showAcknowledged),
       outcome: ackOutcome(stage, error),
-      // Derived by CALLING the component's own function on the same two
-      // arguments the component gets — the live row (gone once the listing has
-      // dropped it) and the snapshot the dialog opened on — rather than
-      // re-expressing `reAcknowledge ? 'replaces' : 'first'` here. The
-      // fall-back to `openedOn` when the row is gone is the whole point of the
-      // function and a hand copy would not have it.
-      recordEffect: ackRecordEffect(i.live === 'listed' ? subject : null, subject),
+      // ══════════════════════════════════════════════════════════════
+      // ROUND 8's B5, SECOND HALF: THE EXPECTATION CAME FROM THE SUBJECT
+      //
+      // This read `ackRecordEffect(liveRow, subject)` — the component's own
+      // function, on the component's own arguments — under a docblock saying a
+      // hand copy "would not have" the fall-back to `openedOn`. It is a
+      // tautology: rewriting the function as `openedOn.acknowledgedAt === null
+      // ? 'first' : 'replaces'` — deleting the live-row preference that is the
+      // entire reason it takes two arguments — was 101/101 green WITH the new
+      // disagreement axis in place, because the expectation moved with the
+      // mutation.
+      //
+      // So it is expressed from the INPUT AXES instead. A hand expression that
+      // drifts from a correct component change is RED, which is the right
+      // outcome: copy that chooses between two sentences is a thing a reviewer
+      // should have to re-state. A tautology has no such failure mode and no
+      // such value.
+      //
+      // `ackRecordEffect`'s own truth table is pinned separately, below, so
+      // this expression and the function are two derivations rather than one.
+      // ══════════════════════════════════════════════════════════════
+      recordEffect: (i.live === 'listed' ? i.liveAcked : i.reAcknowledge) ? 'replaces' : 'first',
       // The footer is the one axis the component tests inline rather than
       // through a named function, so this expression is a hand copy of
       // `log-witness-alerts.tsx`'s footer conditions, and
@@ -1949,7 +2143,12 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
           for (const showAcknowledged of [true, false]) {
             for (const demoMode of [true, false]) {
               for (const reAcknowledge of [false, true]) {
+               for (const liveAcked of [false, true]) {
                 if (pending && error !== 'none') continue;
+                // ROUND 8's B5. With no live row there is nothing for
+                // `liveAcked` to describe, so the `gone` arm takes one value
+                // rather than two identical ones.
+                if (live === 'gone' && liveAcked) continue;
                 // A row that has never been acknowledged cannot be re-opened
                 // from a Re-acknowledge control, and a row that HAS been
                 // acknowledged is hidden from the filtered view — so it cannot
@@ -1957,7 +2156,12 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
                 // not about the dialog, and stating it here is what keeps it
                 // from being spread through a hand-written table.
                 if (reAcknowledge && !showAcknowledged) continue;
-                out.push({ live, error, pending, showAcknowledged, demoMode, reAcknowledge });
+                // The same fact about the listing, applied to the row as it is
+                // NOW: an acknowledged row is not in the unacknowledged-only
+                // view, so it cannot be the live row there.
+                if (liveAcked && !showAcknowledged) continue;
+                out.push({ live, error, pending, showAcknowledged, demoMode, reAcknowledge, liveAcked });
+               }
               }
             }
           }
@@ -1972,9 +2176,12 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
    *
    * ROUND 7's N12 found this hand-written as `${a.stage} / ${a.consequence} /
    * ${a.outcome} / ${a.footer}` — four members spelled out — so adding
-   * `recordEffect` to `Arm` left the coverage set counting 13 arms while the
-   * loop rendered 26, and the "every enumerated arm was rendered" check
+   * `recordEffect` to `Arm` left the coverage set collapsing arms that differ
+   * only in the new member, and the "every enumerated arm was rendered" check
    * silently compared a coarser partition than the one the copy depends on.
+   * (The absolute counts that used to be quoted here went stale within two
+   * rounds — the same defect in miniature. The arm count is asserted below,
+   * against the enumeration, rather than narrated in a comment.)
    * `tsc` cannot catch that: a template literal that reads four of five
    * members is well typed.
    *
@@ -2037,6 +2244,11 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // bullet, so it is `modelled` and `DialogInput`'s `reAcknowledge` axis is
     // the thing that renders both of its values.
     recordEffect: 'modelled',
+    // ROUND 8's B4. `const resolved = stage === 'resolved'` is a read, and it
+    // was invisible to this guard for as long as the guard skipped every
+    // lower-case identifier. It is `modelled` because it is a function of
+    // `stage`, which the product renders every value of.
+    resolved: 'modelled',
   };
 
   /** Identifiers that are structure, not data: components, helpers, hooks. */
@@ -2092,6 +2304,16 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // reaching `leaves-view` means switching AWAY from the default.
     if (!i.showAcknowledged) fireEvent.click(ackToggle());
     openConfirm(AUTH, i.reAcknowledge);
+
+    // ROUND 8's B5: the listing refetches while the dialog stands, and the row
+    // comes back with a DIFFERENT acknowledgement state from the snapshot the
+    // dialog captured. Both directions are reachable — someone else
+    // acknowledged it, or the alert re-fired with a new reason and upstream
+    // cleared the marker — and neither had ever been rendered, because one
+    // fixture was handed over as both inputs.
+    if (i.live === 'listed' && i.liveAcked !== i.reAcknowledge) {
+      refetchTo([subjectRow(i.liveAcked)], rerender);
+    }
 
     // Only confirm when the input says something came back or is still out. On
     // `error: none, pending: false` the dialog is in its pre-confirm state, and
@@ -2173,16 +2395,57 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
         if (node.initializer) visit(node.initializer);
         return;
       }
+      // ══════════════════════════════════════════════════════════════
+      // ROUND 8's B4: "LOWER-CASE" WAS NOT "A TAG NAME"
+      //
+      // This used to read `if (/^[a-z]/.test(name) || licensed.has(name))
+      // return;` ANYWHERE an identifier appeared, with the comment "lower-case
+      // ones are intrinsic HTML tags and are not reads at all". Intrinsic-ness
+      // is a property of the POSITION, not of the spelling: `<p>` is markup and
+      // `{p}` is a read, and both are the identifier `p`. So every lower-case
+      // name in the dialog's JSX was unlicensed and invisible — which is most
+      // of the names a component has.
+      //
+      // The tag-name position is a node KIND, so it is decided that way. An
+      // intrinsic tag (lower-case, in a tagName slot) is markup; a COMPONENT
+      // tag in the same slot is a read of that component's binding and goes
+      // through the licence like any other.
+      // ══════════════════════════════════════════════════════════════
+      if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const tag = node.tagName;
+        const intrinsic = ts.isIdentifier(tag) && /^[a-z]/.test(tag.text);
+        if (!intrinsic) visit(tag);
+        visit(node.attributes);
+        return;
+      }
+      // A closing tag names the same element the opening one did.
+      if (ts.isJsxClosingElement(node)) return;
+      // A property NAME in an object literal is a key, not a read — `{ display:
+      // 'grid' }` depends on nothing. Its INITIALIZER is a read. Same rule as
+      // the JSX attribute above, and both are positions rather than spellings.
+      if (ts.isPropertyAssignment(node)) {
+        if (ts.isComputedPropertyName(node.name)) visit(node.name.expression);
+        visit(node.initializer);
+        return;
+      }
+      // …but SHORTHAND is both at once (`{ stage }` is a read of `stage`), so
+      // it goes through the licence.
+      if (ts.isShorthandPropertyAssignment(node)) {
+        visit(node.name);
+        return;
+      }
       if (ts.isIdentifier(node)) {
         const name = node.text;
-        // JSX element names are handled by `DIALOG_CALLS`; lower-case ones are
-        // intrinsic HTML tags and are not reads at all.
-        if (/^[a-z]/.test(name) || licensed.has(name)) {
-          if (licensed.has(name)) seen.add(name);
-          if (!licensed.has(name) && !/^[a-z]/.test(name)) unlicensed.push(name);
+        // `undefined` is a language value, not a name this component supplies.
+        // Listed here rather than in a licence table because licensing it
+        // would say the dialog's copy may DEPEND on it, which is not what it
+        // means — it is the second argument of `mutate(undefined, …)`.
+        if (name === 'undefined') return;
+        if (licensed.has(name)) {
+          seen.add(name);
           return;
         }
-        if (!licensed.has(name)) unlicensed.push(name);
+        unlicensed.push(name);
         return;
       }
       ts.forEachChild(node, visit);
@@ -2300,6 +2563,50 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     expect(comparisons.length, 'the comparison walk found no comparisons').toBeGreaterThan(5);
   });
 
+  it('ackRecordEffect prefers the LIVE row, which is why it takes two arguments', () => {
+    // ═════════════════════════════════════════════════════════════════
+    // ROUND 8's B5. The function's whole contract is `(live ?? openedOn)`: the
+    // listing as it is NOW decides, and the snapshot is the fall-back for when
+    // the row has gone. Nothing asserted that. The product above derived its
+    // expectation by calling this function, so deleting the live-row
+    // preference moved both sides together and was 101/101 green.
+    //
+    // The table is written out by hand, against every combination of the two
+    // arguments, because the point of a truth table is that it is not derived
+    // from the thing it is about. Six cells, and the two that matter are the
+    // DISAGREEMENTS — rows 3 and 4 — which are reachable in production two
+    // ways: another operator acknowledging the row under an open dialog, and
+    // the alert re-firing with a different reason, which is the one case
+    // upstream clears the marker on.
+    // ═════════════════════════════════════════════════════════════════
+    const acked = subjectRow(true);
+    const fresh = subjectRow(false);
+    expect(acked.acknowledgedAt, 'the acknowledged fixture is not acknowledged').not.toBeNull();
+    expect(fresh.acknowledgedAt, 'the fresh fixture is already acknowledged').toBeNull();
+    const table: Array<[label: string, live: LogWitnessAlertRow | null, openedOn: LogWitnessAlertRow, want: AckRecordEffect]> = [
+      ['live fresh, snapshot fresh', fresh, fresh, 'first'],
+      ['live acked, snapshot acked', acked, acked, 'replaces'],
+      ['live ACKED, snapshot fresh — someone else acknowledged it', acked, fresh, 'replaces'],
+      ['live FRESH, snapshot acked — the alert re-fired on a new reason', fresh, acked, 'first'],
+      ['row gone, snapshot fresh', null, fresh, 'first'],
+      ['row gone, snapshot acked', null, acked, 'replaces'],
+    ];
+    for (const [label, live, openedOn, want] of table) {
+      expect(ackRecordEffect(live, openedOn), label).toBe(want);
+    }
+    // Anti-vacuity: both values appear, and the two DISAGREEMENT rows disagree
+    // with what the snapshot alone would have said — which is the property that
+    // makes the second argument a fall-back rather than the answer.
+    expect(new Set(table.map((t) => t[3])), 'the truth table lost a value').toEqual(
+      new Set(ALL_RECORD_EFFECTS),
+    );
+    expect(table, 'the truth table is no longer complete over both arguments').toHaveLength(6);
+    expect(
+      table.filter(([, live, openedOn]) => live !== null && live.acknowledgedAt !== openedOn.acknowledgedAt),
+      'no row of the table has the two arguments disagreeing',
+    ).toHaveLength(2);
+  });
+
   it('renders exactly the pinned copy, in every reachable arm', async () => {
     const inputs = reachableInputs();
     const armsWanted = new Set(inputs.map((i) => armKey(armOf(i))));
@@ -2314,7 +2621,14 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // measurement that matters: 9 of the arms this file has rendered since
     // round 3 were two distinct arms wearing one key, and the first bullet of
     // the dialog said the same thing in both.
-    expect(inputs.length, 'the input enumeration collapsed').toBe(72);
+    //
+    // ROUND 8's B5 took the input space from 72 to 96 without changing the arm
+    // count, and that is the point rather than a disappointment: the new axis
+    // does not add an arm, it makes `ackRecordEffect`'s two arguments actually
+    // two. The 24 new tuples are the ones where the live row and the snapshot
+    // DISAGREE about acknowledgement, and rewriting the function to read the
+    // snapshot alone is red on them and was green on all 72 before.
+    expect(inputs.length, 'the input enumeration collapsed').toBe(96);
     expect(armsWanted.size, 'the reachable arm space changed shape').toBe(22);
     // The marginals are still asserted, because a product can be the right SIZE
     // while missing a member of one axis — and each set is read off a `Record`
@@ -3195,5 +3509,204 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
 
     resolveAck({ authority: 'first.example.com', alerted: true });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+describe('witness alert worklist — the CARD says exactly what it says', () => {
+  /**
+   * ROUND 8's B3. The four forbidden-phrase regexes elsewhere in this file stay
+   * where they are as a fast lint that names the specific over-claims this
+   * surface was built to avoid — but they are not the bound. This is.
+   *
+   * Six arms, because the card has six reachable copy states and the empty ones
+   * are where an all-clear would be written. Each is pinned as a LIST: wording,
+   * order and count together, so a sentence added anywhere in the card — an
+   * `EmptyState` `action`, a caption, a footnote under the table, a word moved
+   * across a boundary — is a diff a reviewer reads rather than a string four
+   * regexes happen not to match.
+   */
+  const FIXTURE_ROW = row({ at: null });
+
+  const ARMS: { label: string; enter: () => void; expected: string[] }[] = [
+    {
+      label: 'loading',
+      enter: () => renderWith({ isLoading: true }),
+      expected: [...cardChrome(true)],
+    },
+    {
+      label: 'error (stamped 500)',
+      enter: () =>
+        renderWith({ error: new ApiError(500, 'boom', 'control-plane', '/x', true) }),
+      expected: [
+        ...cardChrome(true),
+        'Could not load the witness alert worklist — the control plane did not answer successfully (500).',
+        'Technical detail',
+        '500 from control-plane /x — boom',
+      ],
+    },
+    {
+      label: 'forbidden (stamped 403)',
+      enter: () =>
+        renderWith({
+          error: new ApiError(403, JSON.stringify({ message: 'nope' }), 'control-plane', '/x', true),
+        }),
+      expected: [
+        ...cardChrome(true),
+        'Could not load the witness alert worklist — not authorized by the control plane.',
+        'Technical detail',
+        '403 from control-plane /x — {"message":"nope"}',
+      ],
+    },
+    {
+      label: 'empty — all',
+      enter: () => renderWith({ data: rows([]) }),
+      expected: [
+        ...cardChrome(true),
+        EMPTY_TITLE_ALL,
+        'The control plane is reporting no transparency-log detection, acknowledged or not. Authorities it has never witnessed produce no row here either way, so an empty worklist says nothing about them.',
+      ],
+    },
+    {
+      label: 'empty — filtered',
+      enter: () => {
+        renderWith({ data: rows([]) });
+        fireEvent.click(ackToggle());
+      },
+      expected: [
+        ...cardChrome(false),
+        EMPTY_TITLE_FILTERED,
+        'The control plane is reporting no UNACKNOWLEDGED transparency-log detection. Acknowledged alerts are still alerts and are hidden in this view — show them to check. Authorities it has never witnessed produce no row either way, so this says nothing about them.',
+      ],
+    },
+    {
+      label: 'populated — one row',
+      enter: () => renderWith({ data: rows([FIXTURE_ROW]) }),
+      expected: [
+        ...cardChrome(true),
+        // The header row, from the same list the header test asserts against.
+        ...TABLE_COLUMNS,
+        // The one fixture row. Data, but it arrives through the same leaves as
+        // the copy does, and excluding `tbody` would leave the cell that says
+        // "Detail not readable" — a sentence, not a datum — outside every bound
+        // on this surface.
+        'registry-c.playground.local',
+        'Root mismatch (split view)',
+        'two distinct roots witnessed at tree_size 100',
+        '2',
+        // `at: null` on the fixture, so this arm pins COPY and not a clock. The
+        // discriminator below proves the masking is honest: with a real `at`,
+        // this is the ONLY leaf that moves.
+        'Time not recorded',
+        'Open',
+        'Acknowledge',
+      ],
+    },
+  ];
+
+  it.each(ARMS)('pins every word the card renders — $label', ({ enter, expected, label }) => {
+    enter();
+    expect(cardCopy(), label).toEqual(expected);
+  });
+
+  it('GUARDS THE GUARD: the leaf walk sees the two shapes a tag list misses', () => {
+    // The reason this pin is a derived walk and not `BLOCK_SELECTOR`. Both
+    // injections are copy an operator reads; neither is an `h2`, `p`, `li`,
+    // `.card` or `.modal-footer button`.
+    renderWith({ data: rows([]) });
+    const clean = cardCopy();
+    const body = section().querySelector('.card-body');
+    expect(body, 'the card renders no .card-body').toBeTruthy();
+
+    // (1) A bare text node, loose beside element children.
+    const bare = document.createTextNode('Nothing to worry about here.');
+    body!.appendChild(bare);
+    // (2) A sentence in a `<div>` — the shape `EmptyState` itself uses, and the
+    //     shape every future panel component will use.
+    const wrapped = document.createElement('div');
+    wrapped.textContent = 'Transparency looks good.';
+    body!.appendChild(wrapped);
+
+    const withBoth = cardCopy();
+    expect(withBoth).toContain('Nothing to worry about here.');
+    expect(withBoth).toContain('Transparency looks good.');
+    expect(withBoth).not.toEqual(clean);
+
+    // …and the tag list this file's dialog pin uses sees NEITHER, which is the
+    // measurement that makes the previous three assertions worth having.
+    const viaTagList = [...section().querySelectorAll<HTMLElement>(BLOCK_SELECTOR)].map((n) =>
+      normalize(n.textContent),
+    );
+    expect(viaTagList).not.toContain('Nothing to worry about here.');
+    expect(viaTagList).not.toContain('Transparency looks good.');
+  });
+
+  it('GUARDS THE GUARD: the six arms are six different card states', () => {
+    // A pin whose arms all render the same thing tests one arm six times. Each
+    // list is compared against every other, so an arm that stops being
+    // reachable — a toggle that no longer changes the copy, an error state that
+    // falls through to the empty one — is red here rather than silently
+    // collapsing the coverage this describe claims.
+    const seen = new Map<string, string>();
+    for (const arm of ARMS) {
+      cleanup();
+      arm.enter();
+      const key = JSON.stringify(cardCopy());
+      const clash = seen.get(key);
+      expect(clash, `"${arm.label}" renders exactly what "${clash}" renders`).toBeUndefined();
+      seen.set(key, arm.label);
+      // …and each arm's measured copy really is the list the pin above holds,
+      // so this guard and that pin cannot disagree about what was rendered.
+      expect(JSON.parse(key), arm.label).toEqual(arm.expected);
+    }
+    expect(seen.size).toBe(ARMS.length);
+  });
+
+  it('GUARDS THE GUARD: nulling the fixture clock masks ONE leaf and no other', () => {
+    // The populated arm pins `at: null` so the expectation is copy rather than
+    // a wall-clock difference. That is only honest if the null changes exactly
+    // the cell it is supposed to change — otherwise the arm is quietly pinning
+    // a reduced surface and calling it the populated one.
+    renderWith({ data: rows([FIXTURE_ROW]) });
+    const nulled = cardCopy();
+    cleanup();
+    renderWith({ data: rows([row({ at: '2026-09-27T10:00:00.000Z' })]) });
+    const dated = cardCopy();
+
+    expect(dated).toHaveLength(nulled.length);
+    const moved = dated.map((v, i) => (v === nulled[i] ? null : i)).filter((i) => i !== null);
+    expect(moved, 'more than the Detected cell moves when the fixture clock is real').toHaveLength(
+      1,
+    );
+    expect(nulled[moved[0]!]).toBe('Time not recorded');
+    expect(dated[moved[0]!]).not.toBe('Time not recorded');
+    // And it is the cell under the Detected header, not some other cell that
+    // happens to differ.
+    expect(
+      nulled.indexOf('Time not recorded') - nulled.indexOf('Detected'),
+      'the masked leaf is not the cell sitting under the Detected header',
+    ).toBe(TABLE_COLUMNS.length);
+  });
+
+  it('SUBSUMES the four forbidden-phrase regexes kept elsewhere as a fast lint', () => {
+    // ROUND 8's B3. The regexes stay — they name the specific over-claims this
+    // surface exists to avoid, and a reader of those tests learns why the copy
+    // is worded as it is. What they are NOT is the bound: this is.
+    //
+    // Asserted as a relationship rather than as four more `not.toMatch` calls,
+    // so the two cannot drift into disagreeing about which strings ship.
+    const LINT = [
+      /healthy/i,
+      /all (logs|registries) (are )?(ok|fine|verified)/i,
+      /no (problems|issues)\b/i,
+      /logs? (are|is) healthy|all clear|everything is fine/i,
+    ];
+    const everything = ARMS.flatMap((a) => a.expected).join(' ');
+    for (const re of LINT) {
+      expect(everything, `the pinned card copy contains ${re}`).not.toMatch(re);
+    }
+    // Anti-vacuity: the union is the real copy, not an empty string — and it is
+    // big enough that a regex passing over it means something.
+    expect(everything.length).toBeGreaterThan(1000);
+    expect(everything).toContain('never witnessed');
   });
 });
