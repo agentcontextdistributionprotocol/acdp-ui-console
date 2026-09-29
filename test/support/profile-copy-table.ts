@@ -1208,16 +1208,23 @@ export function assertNoForeignProfileId(source?: string): void {
   // the `JsxText` arm added in round 15 could have been deleted the day after
   // it was written with this check still green. The component demonstrably has
   // both — every `className` is a literal, every metric label is JSX text.
-  if (scanned < 5) {
+  //
+  // THE FLOORS ARE SET NEAR THE MEASUREMENT, NOT NEAR ZERO. Round 15's N3 made
+  // that point about the sibling guard, whose floor was 20 against a file with
+  // 68 literal nodes: two-thirds of them could be deleted with the pin green,
+  // so the pin was not measuring the walk any more. This guard's floors were
+  // looser still at 5 and 5. A floor's job is to notice that the walk stopped
+  // visiting a node kind, which it can only do if crossing it means something.
+  if (scanned < 60) {
     fail(
-      `found only ${scanned} strings in the component — it has many more, so this walk ` +
+      `found only ${scanned} strings in the component — it has 68 literal nodes, so this walk ` +
         'is looking at the wrong nodes and is passing vacuously',
     );
   }
-  if (jsxTexts < 5) {
+  if (jsxTexts < 8) {
     fail(
-      `found only ${jsxTexts} pieces of JSX text in the component — it renders at least eight ` +
-        'labels as JSX text, so this walk has stopped visiting them',
+      `found only ${jsxTexts} pieces of JSX text in the component — it renders ten, so this ` +
+        'walk has stopped visiting them',
     );
   }
 }

@@ -2484,13 +2484,21 @@ describe('every source guard is exercised against a subject it must reject', () 
         },
         { label: 'a file with almost no literals (vacuity)', source: 'export const X = 1;' },
         {
-          // The JsxText arm's own anti-vacuity. A count over literals alone was
-          // satisfied by a file with no JSX in it at all, so the arm round 15
-          // added could have been deleted the day after with that pin green.
-          label: 'a file with literals but no JSX text (vacuity)',
-          source:
-            "const a='one'; const b='two'; const c='three'; const d='four'; const e='five';\n" +
-            'export function R() { return <span className="chip" />; }',
+          // The JsxText arm's own anti-vacuity, and it has to be a REAL card
+          // rather than a five-literal sketch. Round 16 raised this guard's
+          // floors from 5/5 to 60/8 — round 15's N3 argument, applied to the
+          // guard the verifier had not looked at — and the sketch that used to
+          // reach the JSX floor stopped being able to: with 5 literals it now
+          // trips the literal floor first, which is a different branch. A
+          // subject has to satisfy every earlier branch by construction, so
+          // this is the real source with three labels replaced by `{null}`:
+          // 68 literals, 7 of the 10 JSX texts left.
+          label: 'a card that renders too few of its labels as JSX text (vacuity)',
+          source: mutate(
+            ['<span className="metric-name">ACDP version</span>', '<span className="metric-name">{null}</span>'],
+            ['<span className="metric-name">Algorithms</span>', '<span className="metric-name">{null}</span>'],
+            ['<span className="metric-name">Max payload</span>', '<span className="metric-name">{null}</span>'],
+          ),
         },
       ],
     },
