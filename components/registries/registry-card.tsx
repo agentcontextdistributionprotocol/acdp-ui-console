@@ -117,11 +117,17 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     `capabilities.profiles.map` in source order, and an earlier one carrying
  *     `i > 2` was green; then it recognised a second map by comparing receiver
  *     TEXT, and `capabilities.profiles.filter(() => true).map(...)` carrying
- *     `i > 8` was green too (round 15's B3, 975/975). The enumeration is
- *     inverted now: every `.map` in the file is collected and each one's
- *     receiver must be exactly `capabilities.profiles`, because the set of
- *     spellings that reach an array is open and the set of `.map` calls in one
- *     file is not.
+ *     `i > 8` was green too (round 15's B3, 975/975). Round 16 inverted the
+ *     enumeration — collect every `.map` in the file, require each one's
+ *     receiver to be exactly `capabilities.profiles` — and round 17 beat THAT
+ *     with `capabilities.profiles.flatMap(…)`, which is not a `.map` at all and
+ *     so was collected by nothing.
+ *
+ *     What is bounded now is the SUPPLY rather than the uses: the expression
+ *     `capabilities.profiles` may be dereferenced EXACTLY ONCE in this file,
+ *     and that one dereference must be the receiver of a `.map` that is called.
+ *     There is no second iteration to spell, under any method name, because
+ *     there is no second read of the array to spell it on.
  *   - `assertGlossIsPureOfId()` also bounds THE PATH FROM THIS COMPONENT'S
  *     RETURN DOWN TO THAT MAP: the only condition allowed to stand between them
  *     is `capabilities`. Round 15's B2 wrapped the whole Profiles row in
@@ -131,6 +137,23 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     rather than a contrivance. Nothing inside the row had changed, so every
  *     guard that reads the row was satisfied; the escape was in the JSX above
  *     it, which nothing was looking at.
+ *
+ *     Round 16 answered that by walking the ancestry and refusing the
+ *     conditional FORMS it knew — `&&`, `?:`, `if` — which is an enumeration,
+ *     and round 17 spelled a fourth: `||`. So the walk is inverted too. Every
+ *     ancestor between the map and this component's declaration must be a
+ *     member of `PATH_NODE_KINDS` — JSX, a parenthesis, a return, a block — or
+ *     an `&&` whose left side is on `CONDITION_ALLOW_LIST`, which holds one
+ *     entry. An unfamiliar construct on that path is refused for being
+ *     unfamiliar, not for being recognised.
+ *
+ *     An ancestor walk cannot see a gate that is not an ancestor, and round 17
+ *     used one: `if (registry.authority.length > 40) return <div className=
+ *     "card" />;` above the real return leaves the map's ancestry untouched and
+ *     drops the whole card. `assertComponentBodyIsOneReturn()` closes that —
+ *     this component's body is one statement and it is a `return` — which is
+ *     also what makes `PATH_NODE_KINDS` a bound on the whole render rather than
+ *     on one branch of it.
  *   - `assertNoProseOutsideLabelTable()` bounds the STRING LITERALS IN JSX
  *     CHILD POSITIONS and the `JsxText`, read from the source rather than the
  *     DOM. It was described here as bounding "the SET OF STRINGS this card may
@@ -176,6 +199,14 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     profile-id-shaped string literal, template literal or piece of `JsxText`
  *     naming an id outside the seven (case-insensitively matched, compared
  *     exactly as written).
+ *
+ *     Round 17: that shape was `acdp[-_]…` and RFC-ACDP-0014 §10 gives a third
+ *     separator this repository already ships — `lib/utils/revocation.ts` fans
+ *     the Contexts facet out over `key-revocation` AND `acdp:key-revocation`.
+ *     So `acdp:consumer` was a profile id by the spec's own spelling and not
+ *     one by this guard's, and it walked past every check here. The separator
+ *     set is `[-_:]` now, which is all three the RFC permits; the comparison
+ *     afterwards is still exact, so matching loosely costs nothing.
  *   - the RENDERED closed world (`registry-card-profiles.test.tsx`) is what
  *     bounds what is on the screen. Over a fixture matrix, every text node and
  *     every announced attribute must be derivable FROM THE FIXTURE — so it asks
@@ -215,9 +246,12 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     statements, the callback's two statements, and — since B2 — every
  *     condition on the ancestry from `RegistryCard`'s return down to the map,
  *     which may only be `capabilities`. A conditional anywhere on that path,
- *     however spelled, is refused rather than recognised. What remains outside
- *     it is genuinely outside this file: `glossFor` reading a global, and the
- *     CSS channel, which `test/support/stylesheet-text.ts` bounds separately.
+ *     however spelled, is refused rather than recognised — and, since round 17,
+ *     an early `return` ABOVE that path is refused too, because the body is
+ *     required to be one return. What remains outside it is genuinely outside
+ *     this file: `glossFor` reading a global, and the CSS channel, which
+ *     `test/support/stylesheet-text.ts` bounds separately — in BOTH directions
+ *     as of round 17, which it did not before; see the CSS bullet below.
  *   - COMMENTS are exempt from the source walks — a guard that banned discussing
  *     the problem would be uncomfortable enough to get deleted — and a string
  *     can still be DERIVED at runtime from licensed parts (a `.slice`, a
@@ -240,6 +274,36 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     `test/support/stylesheet-text.ts`, over the union of the stylesheets this
  *     repository HOLDS and the ones the app LOADS — the second set is larger,
  *     and finding out that it was larger is what the enumeration was for.
+ *
+ *     Round 17 got past that bound three more ways, and each fix is a widening
+ *     rather than a case:
+ *
+ *     CASE. Every scanner was case-sensitive and CSS property and at-rule names
+ *     are not, so `CONTENT:` was invisible — and so was the "independent" count
+ *     meant to catch exactly that, because it shared the blind spot and agreed
+ *     loudly. The scanners are case-insensitive now and the count is taken by
+ *     tokenising rather than by matching the same word a second way.
+ *
+ *     INDIRECTION. A `style` element was found by a text scan, under a comment
+ *     arguing that a tag name is a fixed string. A JSX tag name is an
+ *     IDENTIFIER: `const Tag = 'style'` in `app/layout.tsx` was 977/977 green,
+ *     and so was `createElement('style', …)`, which that same comment named as
+ *     the case an AST walk would miss. Both mechanisms run now, over the same
+ *     files, and the module no longer claims either is the bound.
+ *
+ *     (The literal tag spelling is not written in this file, deliberately: the
+ *     text half cannot tell prose from an element, which is the cost its own
+ *     docblock records and the reason the AST half exists. Writing it here
+ *     turned this comment red, which is the guard behaving correctly.)
+ *
+ *     SUPPRESSION. Everything above asks how CSS can ADD a character; nothing
+ *     asked how it can take one away, while this bullet said the channel was
+ *     "bounded". `@media (max-width: 640px) { .metric-row .chip { display:
+ *     none; } }` was 977/977 green and removed every profile id from every card
+ *     at phone width. What is bounded now is the PRODUCT — every rule in the
+ *     app's stylesheets whose selector names a class this card renders, pinned
+ *     selector and declaration block — because a denylist of suppressing
+ *     properties is the open set this gate has now been beaten by six times.
  */
 const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },

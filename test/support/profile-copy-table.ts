@@ -252,8 +252,50 @@ export function CHIP_ATTRIBUTES(param: string): Record<string, string> {
  * payload — would match, which is why the walks that use this pattern read the
  * nodes that carry TEXT (string literals, template literals, and since round
  * 16's B4, `JsxText`) and never identifiers or property names.
+ *
+ * ── ROUND 17's BL-5: THE SEPARATOR CLASS MISSED THE SPELLING THIS ────
+ * ── REPOSITORY ITSELF SHIPS ──────────────────────────────────────────
+ *
+ * `[-_]` omitted `:`, and `acdp:` is a live ACDP id spelling right here:
+ * `lib/utils/revocation.ts` exports `KEY_REVOCATION_INTERIM_TYPE =
+ * 'acdp:key-revocation'` for RFC-ACDP-0014 §10, and `lib/data/mock-data.ts`
+ * emits it. So `acdp:consumer` is a string an operator would read as a real
+ * id, and no guard in this file could see one.
+ *
+ * Measured: round 13's harm, re-spelled with a colon — appending "not
+ * acdp:consumer or acdp:federated" to the federation gloss, edited in the two
+ * files that gloss copy is DESIGNED to be edited in — left 977/977 green,
+ * while the hyphen spelling of the identical edit is 11 red. The separator was
+ * the entire difference, and bounding the content of exactly that two-file
+ * diff is this guard's whole job.
+ *
+ * It also silently weakened round 16's own B1/B4 backstop, which is the part
+ * worth noticing: `CARD_LABELS` and `STRUCTURAL_LITERALS` are shape-bounded by
+ * `not.toMatch(PROFILE_ID_SHAPE)`, so `'acdp:consumer'` — thirteen characters,
+ * one word — passed all three shape rules and could have licensed itself as a
+ * card label. A pattern that under-matches does not merely miss things; it
+ * hands every rule derived from it the same blind spot.
+ *
+ * `:` in the trailing class as well, since a real id may carry more than one
+ * separator (`acdp:key-revocation` has both).
  */
-export const PROFILE_ID_SHAPE = /acdp[-_][a-z][a-z0-9_-]*/gi;
+export const PROFILE_ID_SHAPE = /acdp[-_:][a-z][a-z0-9_:-]*/gi;
+
+/**
+ * A FRESH matcher, because `PROFILE_ID_SHAPE` carries `/g`.
+ *
+ * ROUND 17's NB-4. A `/g` regex holds `lastIndex`, and this constant is used
+ * two ways: `matchAll` (which per spec clones the regex, so it is safe) and
+ * `expect(...).not.toMatch(...)`, which calls `.test()` and MUTATES
+ * `lastIndex` on a match. Three files share the constant. Nothing is
+ * exploitable today — a `.test()` that matches is itself a failing assertion,
+ * so the mutated state never outlives a green run — but a live cross-test
+ * coupling in the one pattern every id rule derives from is not a thing to
+ * leave standing on the argument that today's call order is lucky.
+ */
+export function profileIdMatcher(): RegExp {
+  return new RegExp(PROFILE_ID_SHAPE.source, PROFILE_ID_SHAPE.flags);
+}
 
 /**
  * The component's AST — or, when `text` is given, an arbitrary one.
@@ -303,6 +345,98 @@ function sourceFile(text?: string): ts.SourceFile {
  */
 export function componentSource(): string {
   return readFileSync(REGISTRY_CARD_PATH, 'utf8');
+}
+
+/** How many string-bearing nodes of each kind a file holds. */
+export type LiteralCensus = {
+  /** `StringLiteral` + `NoSubstitutionTemplateLiteral`. */
+  stringLiterals: number;
+  /** `TemplateHead` + `TemplateMiddle` + `TemplateTail` — one per `check()` call. */
+  templateParts: number;
+  /** Non-blank `JsxText`. */
+  jsxTexts: number;
+};
+
+/**
+ * A full TOKEN descent over a file, counting the node kinds the two supply
+ * walks below visit. This is what their anti-vacuity floors are derived from.
+ *
+ * ── ROUND 17's NB-1: THE FLOORS WERE HAND-WRITTEN NUMBERS ────────────
+ *
+ * They were `scanned < 60` and `jsxTexts < 8`, with `68`, `around seventy` and
+ * `ten` written into the messages beside them. Two problems, and the second is
+ * the one that would actually bite:
+ *
+ *   - The prose goes stale silently. Nothing checks that the component still
+ *     has 68 literals, so the sentence a maintainer reads while deciding
+ *     whether a floor is meaningful is a number from a previous round.
+ *   - CLAUDE.md prefers the semantic classes in `app/globals.css` to inline
+ *     style objects, and this component has seven inline `style={{…}}` props.
+ *     Moving them to classes is the refactor the repository's own rules ask
+ *     for, and it deletes roughly twenty string literals — straight through a
+ *     floor of 60, turning a correct edit into a red test whose message says
+ *     the walk is "looking at the wrong nodes". A guard that cries wolf at the
+ *     house style is a guard that gets its floor lowered to 5 again, which is
+ *     what round 15 found it at.
+ *
+ * So the floor is MEASURED from the component instead, every run, by a descent
+ * that shares no code with the walk it bounds: `getChildren()` visits the token
+ * stream — including the `SyntaxList` and punctuation nodes `forEachChild`
+ * skips — where the walks use `forEachChild` and an `if`/`else if` chain over
+ * `ts.isX` predicates. A walk that stops visiting a node kind loses ground
+ * against a census that cannot, whatever the file has been edited into.
+ *
+ * The residual, stated rather than papered over: both descents come from ONE
+ * `ts.createSourceFile`, so a parse that stopped producing `JsxText` would move
+ * both. That is the shared blind spot, and it is why the floor is a PROPORTION
+ * of a live measurement rather than an equality — an equality between two
+ * descents of the same tree is satisfied by `0 === 0`, and the file this guards
+ * is one deletion away from having no JSX at all.
+ */
+export function literalCensus(sf: ts.SourceFile): LiteralCensus {
+  let stringLiterals = 0;
+  let templateParts = 0;
+  let jsxTexts = 0;
+  const descend = (node: ts.Node): void => {
+    for (const child of node.getChildren(sf)) {
+      switch (child.kind) {
+        case ts.SyntaxKind.StringLiteral:
+        case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+          stringLiterals += 1;
+          break;
+        case ts.SyntaxKind.TemplateHead:
+        case ts.SyntaxKind.TemplateMiddle:
+        case ts.SyntaxKind.TemplateTail:
+          templateParts += 1;
+          break;
+        case ts.SyntaxKind.JsxText:
+          if ((child as ts.JsxText).text.trim() !== '') jsxTexts += 1;
+          break;
+        default:
+          break;
+      }
+      descend(child);
+    }
+  };
+  descend(sf);
+  return { stringLiterals, templateParts, jsxTexts };
+}
+
+/**
+ * How much of the component's own census a supply walk must still reach.
+ *
+ * Not `1` — a subject derived from the real source by one textual mutation
+ * drops a node or two by construction, and so does an ordinary edit. Not `0.5`
+ * either: round 15's N3 is that a floor at a third of the measurement stops
+ * measuring the walk. At 0.8 the component's 78 string-bearing nodes give 63
+ * and its ten pieces of JSX text give eight, which is where the hand-written
+ * floors had drifted to — the number is the same, the way it is obtained is the
+ * fix.
+ */
+export const VACUITY_FRACTION = 0.8;
+
+function vacuityFloor(of: number): number {
+  return Math.ceil(of * VACUITY_FRACTION);
 }
 
 /**
@@ -865,6 +999,92 @@ export function assertGlossIsGated(source?: string): void {
  * that points at another guard is only as good as that guard, and pointing is
  * how this one went a full round without anybody checking.
  */
+/**
+ * The node kinds allowed to stand between `RegistryCard`'s return and the
+ * profiles map.
+ *
+ * EXPORTED and pinned by the test file, which is round 17's BL-2c: round 16
+ * answered "two licensing lists are unpinned" by pinning five and creating a
+ * sixth in the same commit — `CONDITION_ALLOW_LIST`, local, read by nothing.
+ * Widening it by one entry plus one component edit was 977/977 green. A
+ * licensing list that no test reads is not a bound, whatever its docblock says,
+ * and that is true of the list a fix introduces as much as of the ones it
+ * pins.
+ *
+ * These are structure, not decisions: an element, a fragment, the `{…}` that
+ * holds an expression, parentheses, the return and its block. None of them can
+ * choose whether the row renders. Every kind that CAN — a conditional, a
+ * logical operator, a statement — is absent, and the single exception is
+ * written as an exception in the walk rather than added here.
+ */
+export const PATH_NODE_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.JsxElement,
+  ts.SyntaxKind.JsxSelfClosingElement,
+  ts.SyntaxKind.JsxFragment,
+  ts.SyntaxKind.JsxExpression,
+  ts.SyntaxKind.JsxAttribute,
+  ts.SyntaxKind.JsxAttributes,
+  ts.SyntaxKind.JsxOpeningElement,
+  ts.SyntaxKind.ParenthesizedExpression,
+  ts.SyntaxKind.ReturnStatement,
+  ts.SyntaxKind.Block,
+  ts.SyntaxKind.SyntaxList,
+]);
+
+/** The one condition allowed on that path. Exported so a test pins it. */
+export const CONDITION_ALLOW_LIST: readonly string[] = ['capabilities'];
+
+/**
+ * `RegistryCard`'s body is exactly one statement, and it is a `return`.
+ *
+ * ROUND 17's BL-2b. A path bound cannot see a statement that is not on the
+ * path, and the sharpest escape round 17 found was exactly that:
+ *
+ *   if (registry.authority.length >= 40) return <div className="card" />;
+ *
+ * inserted above the real return. The ancestor walk breaks at the
+ * `FunctionDeclaration`, and this `if` is a SIBLING of the return it
+ * short-circuits, so nothing on the path was different and 977 tests stayed
+ * green while every capability on the card vanished for any authority of forty
+ * characters or more. The alias variant (`const capabilities =
+ * registry.authority.length < 64 ? caps : undefined;`) is the same shape.
+ *
+ * One statement is the closed form of "there is nothing above the return".
+ * It refuses an early return, a local alias, a `let` reassigned later, a
+ * `useMemo` that gates, and whatever the next one is, without naming any of
+ * them. The cost is that a genuine local would have to be justified in a diff
+ * that turns this red — which is the correct price for a component whose whole
+ * contract is that it renders one thing unconditionally.
+ */
+export function assertComponentBodyIsOneReturn(source?: string): void {
+  const sf = sourceFile(source);
+  let fn: ts.FunctionDeclaration | undefined;
+  const find = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.getText(sf) === 'RegistryCard') fn = node;
+    ts.forEachChild(node, find);
+  };
+  find(sf);
+  if (!fn) fail('declares no `RegistryCard` function — this guard lost its subject');
+  const body = fn!.body;
+  if (!body) fail('`RegistryCard` has no body');
+  const statements = body!.statements;
+  if (statements.length !== 1) {
+    fail(
+      `\`RegistryCard\`'s body has ${statements.length} statements, and it may have exactly one. ` +
+        'A statement above the return is invisible to every path bound in this file — an early ' +
+        '`return <div className="card" />` behind `registry.authority.length >= 40` emptied the ' +
+        'whole card on ordinary regional deployment names with 977 tests green',
+    );
+  }
+  if (!ts.isReturnStatement(statements[0])) {
+    fail(
+      `\`RegistryCard\`'s only statement is a \`${ts.SyntaxKind[statements[0].kind]}\`, not a ` +
+        '`return`. Anything else is a place to compute what the return will be, which is the ' +
+        'same suppression channel one step earlier',
+    );
+  }
+}
+
 export function assertGlossIsPureOfId(source?: string): void {
   const sf = sourceFile(source);
   // EVERY such call, not the last one. This collected into a single variable
@@ -902,41 +1122,76 @@ export function assertGlossIsPureOfId(source?: string): void {
   // them and require the file to contain exactly one, whose receiver is the
   // pinned spelling. The component has one; a second `.map` of any kind over
   // anything is a construct a reviewer should see.
-  const mapCalls: ts.CallExpression[] = [];
-  const findMap = (node: ts.Node): void => {
+  // ── ROUND 17's BL-1: A METHOD NAME IS AN ENUMERATION TOO ────────────
+  //
+  // Round 16 inverted the RECEIVER check and left the COLLECTOR keyed on
+  // `node.expression.name.getText(sf) === 'map'`. `flatMap` is not `map`, so a
+  // second per-profile rendering surface spelled
+  //
+  //   {capabilities.profiles.flatMap((q, i) => (
+  //     <span key={q} className="did">{i > 8 ? glossFor(q)?.title : null}</span>
+  //   ))}
+  //
+  // was never collected, never receiver-checked, and never counted — 977/977
+  // green, typecheck clean, lint clean. Round 15's B3 verbatim, one method name
+  // over. `Array.prototype.map.call(capabilities.profiles, …)` is the same hole
+  // (the callee's name is `call`).
+  //
+  // Three rounds have now replaced one enumeration with a narrower one here:
+  // the LAST map in source order, then the receiver's exact text, then the
+  // method's name. So this stops enumerating ways to reach the array and binds
+  // the one thing that must be true instead:
+  //
+  //   `capabilities.profiles` IS DEREFERENCED EXACTLY ONCE IN THE FILE, AND
+  //   THAT DEREFERENCE IS THE RECEIVER OF A `.map` CALL.
+  //
+  // Every escape this guard has ever admitted is a second dereference or a
+  // differently-spelled use of the one: `.flatMap`, `.filter().map()`,
+  // `.slice()`, `.toSorted()`, `[...capabilities.profiles]`, a local alias, a
+  // destructure, `Array.prototype.map.call`. None of them survives a rule that
+  // counts dereferences, and none of them needed to be anticipated to be
+  // refused. There is no list here for the next author to keep complete.
+  const PROFILES_EXPR = 'capabilities.profiles';
+  const derefs: ts.Node[] = [];
+  const findDeref = (node: ts.Node): void => {
     if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.name.getText(sf) === 'map'
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      node.getText(sf).replace(/\s+/g, '') === PROFILES_EXPR
     ) {
-      mapCalls.push(node);
+      derefs.push(node);
     }
-    ts.forEachChild(node, findMap);
+    ts.forEachChild(node, findDeref);
   };
-  findMap(sf);
-  for (const call of mapCalls) {
-    const receiver = (call.expression as ts.PropertyAccessExpression).expression
-      .getText(sf)
-      .replace(/\s+/g, '');
-    if (receiver !== 'capabilities.profiles') {
-      fail(
-        `calls \`${receiver.slice(0, 40)}.map(...)\`, and the only \`.map\` this component may ` +
-          'contain is `capabilities.profiles.map(...)`. A second one is a second, unbounded place ' +
-          'to render per-profile copy — and comparing the RECEIVER TEXT let ' +
-          '`capabilities.profiles.filter(() => true).map(...)` past this check with every guard green',
-      );
-    }
-  }
-  if (mapCalls.length === 0) {
-    fail('no `capabilities.profiles.map(...)` found — this guard lost its subject');
-  }
-  if (mapCalls.length > 1) {
+  findDeref(sf);
+  if (derefs.length === 0) {
     fail(
-      `renders ${mapCalls.length} \`capabilities.profiles.map(...)\` calls; this guard bounds the ` +
-        'callback of ONE. A second map is a second, unbounded place to render per-profile copy',
+      'never dereferences `capabilities.profiles` — either this guard has lost its subject, or ' +
+        'the array now reaches the render through an alias or a destructure, which is the same ' +
+        'thing with a different name and is refused for the same reason',
     );
   }
-  const call: ts.CallExpression = mapCalls[0];
+  if (derefs.length > 1) {
+    fail(
+      `dereferences \`capabilities.profiles\` ${derefs.length} times. Exactly one is allowed, ` +
+        'because a second dereference is a second place to render per-profile copy however it is ' +
+        'spelled — a `.flatMap`, a `.filter().map()`, a spread, an alias. Enumerating the ' +
+        'SPELLINGS failed in rounds 9, 15 and 17; the dereference count does not have to be ' +
+        'kept complete',
+    );
+  }
+  const deref = derefs[0];
+  const access = deref.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.name.getText(sf) !== 'map') {
+    fail(
+      `dereferences \`capabilities.profiles\` for \`${deref.parent.getText(sf).replace(/\s+/g, '').slice(0, 50)}\`, ` +
+        'and the one dereference this component may contain must be the receiver of `.map` — not ' +
+        'of `.flatMap`, not an argument, not the right-hand side of an assignment',
+    );
+  }
+  if (!ts.isCallExpression(access.parent) || access.parent.expression !== access) {
+    fail('`capabilities.profiles.map` is referenced without being called, so nothing here bounds what does call it');
+  }
+  const call: ts.CallExpression = access.parent;
 
   // ── SUPPRESSION'S THIRD HOME: the JSX ABOVE the callback ─────────────
   //
@@ -957,28 +1212,65 @@ export function assertGlossIsPureOfId(source?: string): void {
   // the rendered closed world cannot see it either: its "every field varies"
   // detector walks JSON leaves, and no leaf changes.
   //
-  // So the PATH is bounded, not another coordinate. Between the map and the
-  // component's return there may be exactly one condition, and it is the one
-  // this component is written with: `{capabilities && …}`. Anything else — a
-  // ternary, a second `&&`, an early `return null` above it — fails here.
-  const CONDITION_ALLOW_LIST = ['capabilities'];
-  for (let n: ts.Node | undefined = call; n; n = n.parent) {
+  // So the PATH is bounded, not another coordinate.
+  //
+  // ── ROUND 17's BL-2: RECOGNISING CONDITIONS IS AN ENUMERATION ───────
+  //
+  // Round 15's fix walked the ancestry and RECOGNISED three constructs —
+  // `ConditionalExpression`, a `&&` `BinaryExpression`, and `IfStatement` —
+  // comparing each one's condition text to an allow-list. Its docblock said
+  // "anything else … fails here" and the component's said "a conditional
+  // anywhere on that path, however spelled, is refused rather than
+  // recognised". Both were false, three ways, each at 977/977 green with
+  // typecheck and lint clean:
+  //
+  //   `{capabilities && (registry.authority.length >= 40 || (…))}`
+  //       The `||` node is on the chain and `gate` was simply never assigned
+  //       for it, so the loop skipped it. Measured on a 44-character regional
+  //       deployment name: every chip, every id, every gloss and the entire
+  //       capabilities block gone from the card.
+  //
+  //   `if (registry.authority.length >= 40) return <div className="card" />;`
+  //       An early return is a SIBLING of the return, never an ancestor — so
+  //       the one construct the docblock named by name was the one construct
+  //       the walk could not see.
+  //
+  //   `CONDITION_ALLOW_LIST` widened by one entry, plus a matching gate.
+  //       The same round that pinned five licensing lists created a sixth,
+  //       unexported, read by no test. Round 15's B1 one level down.
+  //
+  // So the enumeration is INVERTED, the move every other guard in this file
+  // has had to make. The chain from the map up to `RegistryCard` may contain
+  // only NODE KINDS on a closed list — JSX structure, parentheses, the return
+  // and its block — plus exactly one `&&` whose left-hand side is
+  // `capabilities`. A `||`, a `??`, a ternary, a `switch`, an `if`, and a node
+  // kind nobody has thought of are all refused by the same rule, because the
+  // rule is what may be there rather than what may not.
+  //
+  // The early return is closed separately and structurally, by
+  // `assertComponentBodyIsOneReturn` — a path bound cannot see a statement
+  // that is not on the path.
+  for (let n: ts.Node | undefined = call.parent; n; n = n.parent) {
     if (ts.isFunctionDeclaration(n)) break;
-    let gate: ts.Expression | undefined;
-    if (ts.isConditionalExpression(n)) gate = n.condition;
-    else if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
-      gate = n.left;
-    } else if (ts.isIfStatement(n)) gate = n.expression;
-    if (!gate) continue;
-    const text = gate.getText(sf).replace(/\s+/g, '');
-    if (!CONDITION_ALLOW_LIST.includes(text)) {
-      fail(
-        `renders the profiles row behind the condition \`${text.slice(0, 50)}\`, and the only ` +
-          `condition allowed above it is \`${CONDITION_ALLOW_LIST.join('`, `')}\`. A gate here ` +
-          'suppresses every chip, every id and every gloss on whichever deployments fail it, ' +
-          'with nothing inside the row changed and every other guard in this file satisfied',
-      );
+    if (PATH_NODE_KINDS.has(n.kind)) continue;
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      CONDITION_ALLOW_LIST.includes(n.left.getText(sf).replace(/\s+/g, ''))
+    ) {
+      continue;
     }
+    const what = ts.isBinaryExpression(n)
+      ? `the condition \`${n.left.getText(sf).replace(/\s+/g, '').slice(0, 50)}\``
+      : `a \`${ts.SyntaxKind[n.kind]}\``;
+    fail(
+      `renders the profiles row behind ${what}. The path from this component's return down to ` +
+        'the profiles map may contain only JSX structure and one `&&` whose left side is ' +
+        `\`${CONDITION_ALLOW_LIST.join('`, `')}\`. Anything on that path suppresses every chip, ` +
+        'every id and every gloss on whichever deployments fail it, with nothing inside the row ' +
+        'changed and every other guard in this file satisfied — and RECOGNISING conditions ' +
+        'rather than bounding the path let `||` straight through with 977 tests green',
+    );
   }
 
   const cb = call.arguments[0];
@@ -1170,7 +1462,7 @@ export function assertNoForeignProfileId(source?: string): void {
 
   const check = (text: string, where: ts.Node): void => {
     scanned += 1;
-    for (const m of text.matchAll(PROFILE_ID_SHAPE)) {
+    for (const m of text.matchAll(profileIdMatcher())) {
       // Matched loosely, compared STRICTLY — see `PROFILE_ID_SHAPE`. An id that
       // differs only in case is not a valid id and is refused, because a string
       // that merely looks like one is what misleads the reader.
@@ -1209,22 +1501,23 @@ export function assertNoForeignProfileId(source?: string): void {
   // it was written with this check still green. The component demonstrably has
   // both — every `className` is a literal, every metric label is JSX text.
   //
-  // THE FLOORS ARE SET NEAR THE MEASUREMENT, NOT NEAR ZERO. Round 15's N3 made
-  // that point about the sibling guard, whose floor was 20 against a file with
-  // 68 literal nodes: two-thirds of them could be deleted with the pin green,
-  // so the pin was not measuring the walk any more. This guard's floors were
-  // looser still at 5 and 5. A floor's job is to notice that the walk stopped
-  // visiting a node kind, which it can only do if crossing it means something.
-  if (scanned < 60) {
+  // THE FLOORS ARE SET NEAR THE MEASUREMENT, NOT NEAR ZERO, and round 17's NB-1
+  // is that "near the measurement" has to mean a measurement taken now rather
+  // than a number typed in a previous round. `literalCensus` takes it; see its
+  // docblock for why the census is a different descent from this walk, and for
+  // what the two still share.
+  const census = literalCensus(sourceFile());
+  const expected = census.stringLiterals + census.templateParts + census.jsxTexts;
+  if (scanned < vacuityFloor(expected)) {
     fail(
-      `found only ${scanned} strings in the component — it has 68 literal nodes, so this walk ` +
-        'is looking at the wrong nodes and is passing vacuously',
+      `found only ${scanned} strings in the component — a token census of it finds ${expected}, ` +
+        'so this walk is looking at the wrong nodes and is passing vacuously',
     );
   }
-  if (jsxTexts < 8) {
+  if (jsxTexts < vacuityFloor(census.jsxTexts)) {
     fail(
-      `found only ${jsxTexts} pieces of JSX text in the component — it renders ten, so this ` +
-        'walk has stopped visiting them',
+      `found only ${jsxTexts} pieces of JSX text in the component — a token census of it finds ` +
+        `${census.jsxTexts}, so this walk has stopped visiting them`,
     );
   }
 }
@@ -1445,18 +1738,22 @@ export function assertEveryStringLiteralIsLicensed(source?: string): void {
   // with every other string deleted.
   //
   // ROUND 15's N3: the floor was 20 against a measured 68, so two-thirds of the
-  // file's literals could go missing with this green. Measured now and set just
-  // under: 68 literal nodes and 10 pieces of JSX text.
-  if (scanned < 60) {
+  // file's literals could go missing with this green. ROUND 17's NB-1: the 60
+  // it was raised to was still a number typed into the source, and the prose
+  // beside it ("around seventy", "ten labels") was a claim no test checked. The
+  // census is taken now, by a descent that shares no code with this walk.
+  const census = literalCensus(sourceFile());
+  if (scanned < vacuityFloor(census.stringLiterals)) {
     fail(
-      `found only ${scanned} string literals — this file has around seventy, so this walk is ` +
-        'looking at the wrong nodes and is passing vacuously',
+      `found only ${scanned} string literals — a token census of this file finds ` +
+        `${census.stringLiterals}, so this walk is looking at the wrong nodes and is passing ` +
+        'vacuously',
     );
   }
-  if (jsxTexts < 8) {
+  if (jsxTexts < vacuityFloor(census.jsxTexts)) {
     fail(
-      `found only ${jsxTexts} pieces of JSX text — this card renders ten labels that way, so the ` +
-        'JsxText arm of this walk has stopped visiting them',
+      `found only ${jsxTexts} pieces of JSX text — a token census of this file finds ` +
+        `${census.jsxTexts}, so the JsxText arm of this walk has stopped visiting them`,
     );
   }
 }
@@ -1679,6 +1976,7 @@ export function advertisableIdsInComponent(source?: string): string[] {
  */
 export const RUN_ON_READ = [
   assertModuleShape,
+  assertComponentBodyIsOneReturn,
   assertNoCopyOutsideTable,
   assertNoRuntimeCopyForms,
   assertNoAlternateDisclosureChannel,
