@@ -116,6 +116,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { PROFILE_GLOSS_TEXT, REGISTRY_ADVERTISABLE_PROFILES } from './advertisable-profiles';
+import { memberReads, unwrapExpression } from './ts-reads';
 
 // Anchored to THIS FILE, not to `process.cwd()`. The guard should not depend on
 // which directory the runner was invoked from. Not exported: nothing outside
@@ -532,32 +533,79 @@ export function protocolEventNames(source?: string): string[] {
  * exclusion is structural, not a name on a list, and it is asserted as a case
  * where this is used so it cannot quietly become a hole.
  */
+function scanForeign(
+  src: string,
+  label: string,
+  extraAllowed: readonly string[],
+): { found: { id: string; where: string }[]; census: LiteralCensus } {
+  const sf = ts.createSourceFile(label, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const allowed = new Set<string>([...REGISTRY_ADVERTISABLE_PROFILES, ...extraAllowed]);
+  const found: { id: string; where: string }[] = [];
+  const census: LiteralCensus = { stringLiterals: 0, templateParts: 0, jsxTexts: 0 };
+  const check = (text: string, node: ts.Node): void => {
+    for (const m of text.matchAll(profileIdMatcher())) {
+      if (!allowed.has(m[0])) found.push({ id: m[0], where: node.getText(sf).slice(0, 80) });
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      // Counted BEFORE the type-node exclusion: the census answers "did this
+      // arm run", not "did it report". A `LiteralTypeNode` child is erased
+      // before anything renders and is legitimately not checked, but an arm
+      // that stopped visiting string literals altogether must still be red.
+      census.stringLiterals += 1;
+      if (!node.parent || !ts.isLiteralTypeNode(node.parent)) check(node.text, node);
+    } else if (ts.isTemplateExpression(node)) {
+      census.templateParts += 1 + node.templateSpans.length;
+      check(node.head.text, node);
+      for (const span of node.templateSpans) check(span.literal.text, node);
+    } else if (ts.isJsxText(node)) {
+      if (node.text.trim() !== '') {
+        census.jsxTexts += 1;
+        check(node.text, node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { found, census };
+}
+
 export function foreignProfileIdsIn(
   src: string,
   label = 'module',
   extraAllowed: readonly string[] = [],
 ): { id: string; where: string }[] {
-  const sf = ts.createSourceFile(label, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const allowed = new Set<string>([...REGISTRY_ADVERTISABLE_PROFILES, ...extraAllowed]);
-  const out: { id: string; where: string }[] = [];
-  const check = (text: string, node: ts.Node): void => {
-    for (const m of text.matchAll(profileIdMatcher())) {
-      if (!allowed.has(m[0])) out.push({ id: m[0], where: node.getText(sf).slice(0, 80) });
-    }
-  };
-  const visit = (node: ts.Node): void => {
-    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      if (!node.parent || !ts.isLiteralTypeNode(node.parent)) check(node.text, node);
-    } else if (ts.isTemplateExpression(node)) {
-      check(node.head.text, node);
-      for (const span of node.templateSpans) check(span.literal.text, node);
-    } else if (ts.isJsxText(node)) {
-      if (node.text.trim() !== '') check(node.text, node);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return out;
+  return scanForeign(src, label, extraAllowed).found;
+}
+
+/**
+ * What the closure walk actually VISITED, per string-bearing node kind.
+ *
+ * ── ROUND 21's NB-1: A RULE WITH NO WITNESS ────────────────────
+ *
+ * `assertNoForeignProfileId` — the component's own copy of this rule — has a
+ * per-kind anti-vacuity floor, and deleting it is 3 red. This copy, generalised
+ * from it for round 19's import closure, had none: deleting the `JsxText` arm
+ * outright was SILENT, because all four of its guard-the-guard cases pass
+ * string literals. The discipline existed and was not carried across when the
+ * rule was moved, which is round 11's B4 in a third place.
+ *
+ * Adding a JsxText witness would fix the one arm somebody noticed. Instead the
+ * walk reports its own census, and the caller pins it against
+ * {@link literalCensus} — an independent TOKEN descent of the same source,
+ * which cannot stop visiting a kind because it switches on `SyntaxKind` over
+ * `getChildren()` rather than on an `if`/`else if` chain of `ts.isX`. An arm
+ * that stops visiting is then red AT THE KIND IT STOPPED AT, and a new arm is
+ * covered the day it is written rather than the day somebody writes a case for
+ * it.
+ *
+ * The residual is the same one `literalCensus` names: both descents come from
+ * one `ts.createSourceFile`, so a parse that stopped producing `JsxText` moves
+ * both.
+ */
+export function foreignScanCensus(src: string, label = 'module'): LiteralCensus {
+  return scanForeign(src, label, []).census;
 }
 
 /** How many string-bearing nodes of each kind a file holds. */
@@ -1299,25 +1347,17 @@ export function assertComponentBodyIsOneReturn(source?: string): void {
 }
 
 /**
- * Strip the wrappers that change an expression's TEXT and not its VALUE.
+ * Is this expression, after unwrapping, the identifier `capabilities`?
  *
- * `(x)`, `x!`, `x as T`, `x satisfies T`. Round 19's BL-1 is the whole reason
- * this exists: every one of these produces a different source string for the
- * same read, and a guard that compares source strings is an enumeration of
- * spellings wearing the word "structural".
+ * `unwrapExpression` — `(x)`, `x!`, `x as T`, `x satisfies T`, `<T>x` — lives
+ * in `test/support/ts-reads.ts` now rather than here. Round 19's BL-1 is why
+ * it exists at all: every one of those produces a different source string for
+ * the same read, and a guard that compares source strings is an enumeration of
+ * spellings wearing the word "structural". Round 21's BL-2 is why it MOVED:
+ * the sibling guard in `stylesheet-text.ts`, written the same day, matched one
+ * spelling of a `document` read and a destructured alias walked through it.
+ * One resolver, two callers, so the next widening lands on both.
  */
-function unwrapExpression(expr: ts.Expression): ts.Expression {
-  let cur: ts.Expression = expr;
-  for (;;) {
-    if (ts.isParenthesizedExpression(cur)) cur = cur.expression;
-    else if (ts.isNonNullExpression(cur)) cur = cur.expression;
-    else if (ts.isAsExpression(cur) || ts.isSatisfiesExpression(cur)) cur = cur.expression;
-    else if (ts.isTypeAssertionExpression(cur)) cur = cur.expression;
-    else return cur;
-  }
-}
-
-/** Is this expression, after unwrapping, the identifier `capabilities`? */
 function isCapabilitiesBase(expr: ts.Expression): boolean {
   const base = unwrapExpression(expr);
   return ts.isIdentifier(base) && base.text === 'capabilities';
@@ -1329,70 +1369,14 @@ function isCapabilitiesBase(expr: ts.Expression): boolean {
  * object destructuring.
  */
 export function capabilityReads(sf: ts.SourceFile): { member: string; text: string }[] {
-  const out: { member: string; text: string }[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(node) && isCapabilitiesBase(node.expression)) {
-      out.push({ member: node.name.text, text: node.getText(sf).replace(/\s+/g, '') });
-    } else if (
-      ts.isElementAccessExpression(node) &&
-      isCapabilitiesBase(node.expression) &&
-      (ts.isStringLiteral(node.argumentExpression) ||
-        ts.isNoSubstitutionTemplateLiteral(node.argumentExpression))
-    ) {
-      out.push({
-        member: node.argumentExpression.text,
-        text: node.getText(sf).replace(/\s+/g, ''),
-      });
-    } else if (
-      ts.isVariableDeclaration(node) &&
-      ts.isObjectBindingPattern(node.name) &&
-      node.initializer &&
-      isCapabilitiesBase(node.initializer)
-    ) {
-      for (const el of node.name.elements) {
-        const key = el.propertyName ?? el.name;
-        out.push({
-          member: ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : key.getText(sf),
-          text: node.getText(sf).replace(/\s+/g, ''),
-        });
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return out;
+  return memberReads(sf, isCapabilitiesBase).map(({ member, text }) => ({ member, text }));
 }
 
 /** The reads of one member of `capabilities`, as nodes, for the count rule. */
 function derefsOfCapabilityMember(sf: ts.SourceFile, member: string): ts.Node[] {
-  const out: ts.Node[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(node) && isCapabilitiesBase(node.expression)) {
-      if (node.name.text === member) out.push(node);
-    } else if (
-      ts.isElementAccessExpression(node) &&
-      isCapabilitiesBase(node.expression) &&
-      (ts.isStringLiteral(node.argumentExpression) ||
-        ts.isNoSubstitutionTemplateLiteral(node.argumentExpression)) &&
-      node.argumentExpression.text === member
-    ) {
-      out.push(node);
-    } else if (
-      ts.isVariableDeclaration(node) &&
-      ts.isObjectBindingPattern(node.name) &&
-      node.initializer &&
-      isCapabilitiesBase(node.initializer) &&
-      node.name.elements.some((el) => {
-        const key = el.propertyName ?? el.name;
-        return (ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === member;
-      })
-    ) {
-      out.push(node);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return out;
+  return memberReads(sf, isCapabilitiesBase)
+    .filter((r) => r.member === member)
+    .map((r) => r.node);
 }
 
 /**

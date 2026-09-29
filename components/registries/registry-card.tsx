@@ -186,9 +186,15 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     B4: `JsxText` is source, is a sentence, and is not a string literal.
  *     Neither this guard nor `assertNoForeignProfileId` visited that node kind,
  *     so `<span className="metric-val">acdp-consumer advertised</span>` was
- *     975/975 green. Both walks visit `JsxText` now, each with its own
- *     anti-vacuity floor so a walk that stops finding any is red rather than
- *     quiet.
+ *     975/975 green. Both walks visit `JsxText` now. ROUND 21's NB-1
+ *     CORRECTION: this said "each with its own anti-vacuity floor", and that
+ *     is true of `assertNoForeignProfileId` (deleting its floor is 3 red) and
+ *     was NOT true of the import-closure copy in `foreignProfileIdsIn` —
+ *     deleting that walk's `JsxText` arm outright was silent, because all four
+ *     of its guard-the-guard cases pass string literals. The closure walk
+ *     reports its own per-kind census now, pinned against an independent
+ *     descent of the same modules, so an arm that stops visiting is red where
+ *     it stopped rather than red only if somebody wrote a witness for it.
  *
  *     B1: a sentence spelled in a licensed SET is licensed. Two of the five
  *     sets had no pin and no shape rule — `grep` found `STRUCTURAL_LITERALS`
@@ -327,14 +333,32 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     against the classes this card paints, and round 19 walked past it through
  *     a selector naming a class of the PAGE and again through an attribute
  *     selector naming no class at all; applicability is decided by a selector
- *     ENGINE now, against this card rendered inside the page ancestry it ships
- *     in.
+ *     ENGINE now.
+ *
+ *     Round 21 then showed that the engine was never the weak part. It was
+ *     asked about a two-element PROBE — `.page > .grid-2 > .card` — under the
+ *     sentence "rendered inside the page ancestry it ships in", and the
+ *     ancestry it ships in is `html > body > .shell > .content > .page >
+ *     .grid-2`. Four rules walked through the difference at 979/979 green:
+ *     two naming an ancestor the probe did not have, one targeting `:root`
+ *     (which could not match, because the element universe started at the
+ *     card), and one needing a SECOND card for `:nth-child(2)`. None of them
+ *     is a narrowing of the matcher; all four are narrowings of the document
+ *     it was handed. The chain is DERIVED from the four files that build it
+ *     now (`jsxAncestry`), the probe is constructed from the derivation so it
+ *     cannot drift from it, the universe is the whole document, and three
+ *     cards are rendered as siblings as well as alone.
  *
  *     A THIRD WAY, which four rounds of this bullet did not have: CSS with no
  *     file and no element. `new CSSStyleSheet()` + `document.adoptedStyleSheets`
- *     was 977/977 green. The member names this repository reads off `document`
- *     and `window` are pinned per file, which bounds the handle rather than
- *     enumerating the sinks.
+ *     was 977/977 green. What bounds it is the SUPPLY — a handle on a document
+ *     — resolved structurally and reported from the root, so
+ *     `const { document: doc } = window; doc.adoptedStyleSheets` is the same
+ *     reach as `document.adoptedStyleSheets`. Round 21 walked through the
+ *     version of this that compared one SPELLING, with the destructured alias;
+ *     the resolver is shared with `capabilityReads` now (`test/support/ts-reads.ts`)
+ *     so the next widening lands on both guards rather than on whichever one
+ *     somebody remembers.
  */
 const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },

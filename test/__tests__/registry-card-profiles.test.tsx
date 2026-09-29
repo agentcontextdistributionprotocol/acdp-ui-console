@@ -871,48 +871,157 @@ describe('the dead tooltip copy is gone', () => {
     // attribute selectors, `:has()`, `*`, tag selectors and whatever is next
     // stop being cases, because the matcher is the one the browser uses.
     // ══════════════════════════════════════════════════════════════════
-    const rulesFor = (caps?: RegistryCapabilities) => {
-      const { container } = render(
-        <div className="page">
-          <div className="grid-2">
-            <RegistryCard registry={REGISTRY_B} capabilities={caps} />
-          </div>
-        </div>,
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 21's BL-1: THE ENGINE WAS RIGHT, THE DOCUMENT WAS A FRAGMENT
+    //
+    // The matcher went to a selector engine in round 19 and that part held.
+    // What it was asked ABOUT was a two-element probe — `.page > .grid-2 >
+    // card` — under the sentence "rendered INSIDE THE PAGE ANCESTRY IT SHIPS
+    // IN". The ancestry it ships in is
+    //
+    //   html > body > div.shell > main.content > div.page > div.grid-2 > .card
+    //
+    // and `.shell` and `.content` are real classes in `app/globals.css`. Four
+    // one-line rules walked through the difference, each 979/979 green with
+    // typecheck and lint clean, and each taking every profile id off every
+    // registry card at phone width:
+    //
+    //   @media (max-width: 640px) { .content .metric-row .chip { display: none } }
+    //   @media (max-width: 640px) { .grid-2 > .card:nth-child(2) .chip { display: none } }
+    //   @media (max-width: 640px) { :root { --muted: transparent } }
+    //   @media (max-width: 640px) { .shell .chip { font-size: 0 } }
+    //
+    // Three separate narrowings, none of them of the matcher: the probe
+    // reproduced two ancestor levels rather than the ancestry; the element
+    // universe was the card's own subtree, so `html` was never a candidate and
+    // `:root` could not match; and one card was rendered, so no positional
+    // selector had a subject.
+    //
+    // Widening the probe BY HAND would put the same defect one frame further
+    // out. So the chain is DERIVED from the files that build it, and the probe
+    // is CONSTRUCTED from the derived chain — there is no hand-written markup
+    // left to drift. A layout change that adds or renames an ancestor moves the
+    // derivation, and the pin below moves with it.
+    // ══════════════════════════════════════════════════════════════════
+    const LAYOUT = SHEET.jsxAncestry('app/layout.tsx', 'children');
+    const PROVIDERS = SHEET.jsxAncestry('components/providers.tsx', 'children');
+    const SHELL = SHEET.jsxAncestry('components/layout/app-shell.tsx', 'children');
+    const PAGE = SHEET.jsxAncestry('app/registries/page.tsx', 'RegistryCard');
+    // Pinned, so the DERIVATION itself cannot silently collapse: an ancestry
+    // reader that started returning `[]` would build a probe of nothing and
+    // every applicability question below would answer "no rule applies".
+    expect(LAYOUT, 'the root layout no longer wraps children the way this probe assumes').toEqual([
+      'html.{computed}',
+      'body',
+      'Providers',
+      'AppShell',
+    ]);
+    expect(PROVIDERS, 'Providers started emitting a DOM element of its own').toEqual([
+      'QueryClientProvider',
+    ]);
+    expect(SHELL, 'the app shell changed the element it puts every page inside').toEqual([
+      'div.shell',
+      'main.content',
+    ]);
+    expect(PAGE, 'the registries page changed where it renders its cards').toEqual([
+      'div.page',
+      'div.grid-2',
+    ]);
+    // `html`'s own classes are the two `next/font` variables, generated at
+    // build time; a selector naming one of them is not writable by hand against
+    // a stable name, which is why `{computed}` is reported rather than guessed.
+    const intrinsic = (step: string) => /^[a-z]/.test(step);
+    const SHIPPED = [...LAYOUT, ...PROVIDERS, ...SHELL, ...PAGE].filter(intrinsic);
+    expect(SHIPPED, 'the shipped ancestry derived from four files has changed').toEqual([
+      'html.{computed}',
+      'body',
+      'div.shell',
+      'main.content',
+      'div.page',
+      'div.grid-2',
+    ]);
+    // …and every NON-intrinsic step is a component whose own ancestry is read
+    // above, so the composition has no gap somebody has to remember.
+    expect(
+      [...LAYOUT, ...PROVIDERS, ...SHELL, ...PAGE].filter((s) => !intrinsic(s)),
+      'a component in the shipped chain contributes an ancestry nothing here reads',
+    ).toEqual(['Providers', 'AppShell', 'QueryClientProvider']);
+
+    /** Build the shipped chain under jsdom's real `html`/`body`, and return the leaf. */
+    const mountShippedChain = (): HTMLElement => {
+      document.body.innerHTML = '';
+      expect(SHIPPED[0].startsWith('html'), 'the chain no longer starts at the document element').toBe(true);
+      expect(SHIPPED[1], 'the chain no longer passes through the body').toBe('body');
+      let cur: HTMLElement = document.body;
+      for (const step of SHIPPED.slice(2)) {
+        const [tag, ...classes] = step.split('.');
+        const el = document.createElement(tag);
+        if (classes.length > 0) el.className = classes.join(' ');
+        cur.append(el);
+        cur = el;
+      }
+      return cur;
+    };
+
+    const rulesFor = (postures: (RegistryCapabilities | undefined)[]) => {
+      const grid = mountShippedChain();
+      render(
+        <>
+          {postures.map((caps, i) => (
+            <RegistryCard key={i} registry={REGISTRY_B} capabilities={caps} />
+          ))}
+        </>,
+        { container: grid },
       );
-      const out = SHEET.applicableRules(container.firstElementChild!, universe);
+      // The universe is the WHOLE document, not the card's subtree: `:root`,
+      // `html` and `body` are candidates by construction rather than by
+      // somebody having thought of them.
+      const out = SHEET.applicableRules(document.documentElement, universe);
       cleanup();
+      document.body.innerHTML = '';
       return out;
     };
     // Three postures, for the reason round 18 found: one render is not the
     // card's surface. The `capabilities &&` arm decides six rows, and
     // `anonymous_public_reads` decides between `badge-pub` and `badge-neutral`.
-    const byKey = new Map<string, { sheet: string; selector: string; block: string }>();
-    const unmatchable = new Set<string>();
-    for (const caps of [
+    // Rendered as three SIBLINGS as well as alone, because round 21's second
+    // escape was `:nth-child(2)` and a lone card is `:only-child`.
+    const POSTURES: (RegistryCapabilities | undefined)[] = [
       undefined,
       MOCK_CAPABILITIES.b,
       { ...MOCK_CAPABILITIES.b, anonymous_public_reads: false },
-    ]) {
-      const got = rulesFor(caps);
+    ];
+    const byKey = new Map<string, { sheet: string; selector: string; block: string }>();
+    const unmatchable = new Set<string>();
+    for (const postures of [POSTURES, ...POSTURES.map((p) => [p])]) {
+      const got = rulesFor(postures);
       for (const r of got.applied) byKey.set(`${r.sheet}|${r.selector}|${r.block}`, r);
       for (const u of got.unmatchable) unmatchable.add(u);
     }
     const applied = [...byKey.values()];
     expect(applied, 'a stylesheet rule that applies to this card has changed').toEqual([
+      { sheet: 'app/globals.css', selector: ':root', block: '--bg: #0d0e14; --panel: #14151f; --panel-2: #1a1b28; --panel-3: #21223a; --border: #ffffff12; --border-2: #ffffff1f; --text: #e2e4ef; --muted: #8b90a8; --faint: #4a4e6a; --brand: #00e8c6; --brand-dim: #00e8c61a; --brand-glow: 0 0 24px #00e8c626; --success: #22d48f; --warning: #f5a623; --danger: #f05d7a; --info: #60a5fa; --purple: #a78bfa; --space-xs: 4px; --space-sm: 8px; --space-md: 12px; --space-lg: 16px; --space-xl: 24px; --space-2xl: 32px; --radius-sm: 5px; --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --font-display: var(--font-syne), "Syne", sans-serif; --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", monospace; --sidebar-w: 210px; --topbar-h: 48px;' },
       { sheet: 'app/globals.css', selector: '*', block: 'box-sizing: border-box; margin: 0; padding: 0;' },
+      { sheet: 'app/globals.css', selector: 'html, body', block: 'height: 100%;' },
+      { sheet: 'app/globals.css', selector: 'body', block: 'background: var(--bg); color: var(--text); font-family: var(--font-mono); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; font-size: 13px; line-height: 1.5;' },
       { sheet: 'app/globals.css', selector: '::-webkit-scrollbar', block: 'width: 7px; height: 7px;' },
       { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-track', block: 'background: none;' },
       { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-thumb', block: 'background: var(--panel-3); border-radius: 4px;' },
       { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-thumb:hover', block: 'background: var(--faint);' },
+      { sheet: 'app/globals.css', selector: '.shell', block: 'grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: minmax(var(--topbar-h), auto) 1fr; grid-template-areas: "sidebar topbar" "sidebar content"; height: 100vh; display: grid;' },
       { sheet: 'app/globals.css', selector: '.dot', block: 'border-radius: 50%; flex-shrink: 0; width: 6px; height: 6px;' },
       { sheet: 'app/globals.css', selector: '.dot.ok', block: 'background: var(--success); box-shadow: 0 0 6px var(--success);' },
+      { sheet: 'app/globals.css', selector: '.content', block: 'background: var(--bg); grid-area: content; overflow-y: auto;' },
       { sheet: 'app/globals.css', selector: '.page', block: 'padding: 20px 24px;' },
       { sheet: 'app/globals.css', selector: '.card', block: 'background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);' },
       { sheet: 'app/globals.css', selector: '.card-header', block: 'border-bottom: 1px solid var(--border); justify-content: space-between; align-items: center; padding: 14px 16px; display: flex;' },
       { sheet: 'app/globals.css', selector: '.card-header h2', block: 'font-family: var(--font-display); color: var(--text); font-size: 13px; font-weight: 600;' },
       { sheet: 'app/globals.css', selector: '.card-body', block: 'padding: 14px 16px;' },
+      { sheet: 'app/globals.css', selector: '.chip', block: 'border: 1px solid var(--border); color: var(--muted); background: var(--panel-2); border-radius: 4px; padding: 2px 7px; font-size: 10px;' },
       { sheet: 'app/globals.css', selector: '.badge', block: 'letter-spacing: .04em; border: 1px solid #0000; border-radius: 4px; align-items: center; gap: 4px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; display: inline-flex;' },
       { sheet: 'app/globals.css', selector: '.badge-complete', block: 'color: var(--success); background: #22d48f1a; border-color: #22d48f33;' },
+      { sheet: 'app/globals.css', selector: '.badge-pub', block: 'color: var(--brand); background: #00e8c61a; border-color: #00e8c633;' },
+      { sheet: 'app/globals.css', selector: '.badge-neutral', block: 'background: var(--panel-3); color: var(--muted); border-color: var(--border);' },
       { sheet: 'app/globals.css', selector: '.grid-2', block: 'grid-template-columns: 1fr 1fr; gap: 12px; display: grid;' },
       { sheet: 'app/globals.css', selector: '.metric-row', block: 'border-bottom: 1px solid var(--border); align-items: center; gap: 8px; padding: 7px 0; font-size: 12px; display: flex;' },
       { sheet: 'app/globals.css', selector: '.metric-row:last-child', block: 'border-bottom: none;' },
@@ -920,14 +1029,12 @@ describe('the dead tooltip copy is gone', () => {
       { sheet: 'app/globals.css', selector: '.metric-val', block: 'font-family: var(--font-display); color: var(--brand); font-size: 13px; font-weight: 700;' },
       { sheet: 'app/globals.css', selector: '*, :before, :after', block: 'transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important;' },
       { sheet: 'app/globals.css', selector: '.grid-2, .grid-3', block: 'grid-template-columns: 1fr;' },
+      { sheet: 'app/globals.css', selector: ':root', block: '--sidebar-w: 56px;' },
       { sheet: 'app/globals.css', selector: '.page', block: 'padding: 14px;' },
-      { sheet: 'app/globals.css', selector: '.chip', block: 'border: 1px solid var(--border); color: var(--muted); background: var(--panel-2); border-radius: 4px; padding: 2px 7px; font-size: 10px;' },
-      { sheet: 'app/globals.css', selector: '.badge-pub', block: 'color: var(--brand); background: #00e8c61a; border-color: #00e8c633;' },
-      { sheet: 'app/globals.css', selector: '.badge-neutral', block: 'background: var(--panel-3); color: var(--muted); border-color: var(--border);' },
     ]);
     // Anti-vacuity on the matcher: a `matches()` that stopped matching, or a
     // rule split that stopped splitting, makes the pin above `[] === []`.
-    expect(applied.length, 'the applicability walk found nothing at all').toBeGreaterThan(20);
+    expect(applied.length, 'the applicability walk found nothing at all').toBeGreaterThan(25);
     // A selector the matcher could not EVALUATE is returned, never skipped —
     // silence there would be the one failure indistinguishable from a clean
     // scan. These three are `@keyframes` stops, which cannot target an element
@@ -938,6 +1045,121 @@ describe('the dead tooltip copy is gone', () => {
       'app/globals.css: 100%',
       'app/globals.css: 50%',
     ]);
+
+    // ═════════════════════════════════════════════════════════════════
+    // ROUND 21's NB-5: ONE LAYER WHERE EVERY OTHER CHANNEL HAS TWO
+    //
+    // `content:` carries two independent halves — an emptiness rule over every
+    // declaration and an exact-set pin over every rule — because round 15 found
+    // that an assertion cannot guard its own deletion. Suppression carried ONE:
+    // the product pin above, backed by a length floor. Gut the pin and the
+    // whole class reopens on a single gutted assertion.
+    //
+    // This is the second half, and it is independent in the way that matters:
+    // it reads the DECLARATIONS and not the rule set, so it fails on an
+    // applicable rule being given a suppressing property without noticing that
+    // the set changed — and the pin above fails on the set changing without
+    // reading a single property. Neither deletion opens the channel alone.
+    //
+    // It is a DENYLIST, and a denylist of suppressing properties is the open
+    // set this file has been beaten by six times — so it is the FAST half, not
+    // the guarantee. Said plainly here so the next reader does not mistake
+    // which of the two is load-bearing.
+    // ═════════════════════════════════════════════════════════════════
+    const SUPPRESSING = [
+      /display\s*:\s*none/i,
+      /visibility\s*:\s*(hidden|collapse)/i,
+      /opacity\s*:\s*0(\D|$)/i,
+      /font-size\s*:\s*0(\D|$)/i,
+      /clip-path\s*:/i,
+      /content-visibility\s*:\s*hidden/i,
+      /transform\s*:\s*scale\(\s*0/i,
+      /color\s*:\s*transparent/i,
+    ];
+    for (const rule of applied) {
+      for (const re of SUPPRESSING) {
+        expect(
+          rule.block,
+          `\`${rule.selector}\` applies to this card and suppresses it (${re})`,
+        ).not.toMatch(re);
+      }
+    }
+    // GUARDS THE GUARD: every pattern still matches the thing it is about, and
+    // none of them matches a legitimate declaration this card actually has —
+    // `display: flex` and `font-size: 10px` are on applied rules above.
+    const SUPPRESSING_SAMPLES = [
+      'display: none;',
+      'visibility: hidden;',
+      'opacity: 0;',
+      'font-size: 0;',
+      'clip-path: inset(100%);',
+      'content-visibility: hidden;',
+      'transform: scale(0);',
+      'color: transparent;',
+    ];
+    expect(SUPPRESSING_SAMPLES, 'a suppressing pattern has no sample').toHaveLength(SUPPRESSING.length);
+    SUPPRESSING_SAMPLES.forEach((sample, i) => {
+      expect(sample, `suppression pattern ${i} stopped matching its own subject`).toMatch(SUPPRESSING[i]);
+      expect(
+        'display: flex; opacity: 1; font-size: 10px; color: var(--muted); transform: scale(1);',
+        `suppression pattern ${i} refuses a declaration this card legitimately has`,
+      ).not.toMatch(SUPPRESSING[i]);
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 21's NB-4: "CANNOT BE NAMED WITHOUT THE STRING 'style'"
+    //
+    // Three scanners look for a `<style>` tag, a `createElement('style', …)`
+    // call and a `dangerouslySetInnerHTML` prop, under the sentence that a
+    // style element "cannot be created without the string `'style'` appearing"
+    // and that "between the two there is no way to name a style element that
+    // neither sees". Measured in `app/layout.tsx`:
+    //
+    //   const CSS_TAG = ['sty','le'].join('') as unknown as React.ElementType;
+    //   <CSS_TAG>{".chip::after { content: ' (see acdp-consumer)'; }"}</CSS_TAG>
+    //
+    // mounts one with neither the literal nor a resolvable tag name. It cannot
+    // be written by accident, which is why it was non-blocking — but it is a
+    // closed-set sentence over an open set, and that is this branch's signature
+    // defect whatever the likelihood.
+    //
+    // The honest closed side is not "cannot be named". It is that a style
+    // element has to be MOUNTED to style anything. So the rendered tree is
+    // asked, and the three source scanners become corroboration of a
+    // measurement rather than the measurement itself.
+    // ══════════════════════════════════════════════════════════════════
+    const mountedSheets = (): string[] =>
+      [...document.querySelectorAll('style, link[rel~="stylesheet"]')].map(
+        (el) => `${el.tagName.toLowerCase()} ${el.getAttribute('href') ?? el.textContent ?? ''}`.trim(),
+      );
+    const styleProbe = mountShippedChain();
+    render(<RegistryCard registry={REGISTRY_B} capabilities={MOCK_CAPABILITIES.b} />, {
+      container: styleProbe,
+    });
+    expect(
+      mountedSheets(),
+      'a style element is mounted in the tree this card ships in, and no scanner named it',
+    ).toEqual([]);
+    // GUARDS THE GUARD: the reader sees one when there is one — however its
+    // tag name was arrived at, because the DOM has no memory of the spelling.
+    const smuggled = document.createElement(['sty', 'le'].join(''));
+    smuggled.textContent = ".chip:after { content: ' (see acdp-consumer)'; }";
+    styleProbe.append(smuggled);
+    expect(mountedSheets(), 'a mounted style element is invisible to the mounted-sheet reader').toEqual([
+      "style .chip:after { content: ' (see acdp-consumer)'; }",
+    ]);
+    smuggled.remove();
+    // …and a `<link rel="stylesheet">`, the other way a sheet reaches a
+    // document without a `<style>` tag anywhere in this repository's source.
+    const link = document.createElement('link');
+    link.setAttribute('rel', 'stylesheet');
+    link.setAttribute('href', 'https://cdn.example.com/x.css');
+    document.head.append(link);
+    expect(mountedSheets()).toEqual(['link https://cdn.example.com/x.css']);
+    link.remove();
+    cleanup();
+    document.body.innerHTML = '';
+
     // GUARDS THE GUARD, on the two selectors that beat the token matcher and
     // on the two it did catch — a synthetic sheet, against a synthetic DOM, so
     // the four cases are measured rather than argued.
@@ -1143,19 +1365,45 @@ describe('the dead tooltip copy is gone', () => {
     // codebase. `adoptedStyleSheets`, `styleSheets`, `head` and `createElement`
     // are all reads off `document`, and every one of them lands here.
     // ══════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 21's BL-2: A SPELLING OF A READ IS NOT A READ
+    //
+    // The walk above was `ts.isPropertyAccessExpression(node) &&
+    // ts.isIdentifier(node.expression)`. That is ONE spelling. Measured in
+    // `components/layout/app-shell.tsx`, an unconditional `'use client'`
+    // ancestor of every page:
+    //
+    //   const { document: doc } = window;
+    //   doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
+    //
+    // 979/979 green, tsc and lint clean, while the IDENTICAL injection written
+    // `document.adoptedStyleSheets` is 1 red. The only difference between the
+    // escape and the control is how the document read was spelled — and the
+    // sibling guard `capabilityReads`, written the same day forty lines away,
+    // already resolved exactly these forms under a docblock explaining why.
+    //
+    // Both now call one resolver (`test/support/ts-reads.ts`), and the reach is
+    // reported FROM THE ROOT — `window.document.adoptedStyleSheets`, never
+    // `doc.adoptedStyleSheets` — so renaming the local changes nothing and
+    // opening a new channel changes the pin.
+    // ══════════════════════════════════════════════════════════════════
     expect(
       SHEET.domHandleSites(sources),
       'a compiled source reached the document or a ref in a way this pin has not seen',
     ).toEqual([
       { file: 'components/config/connection-panel.tsx', reach: 'window.setTimeout' },
       { file: 'components/runs/event-feed.tsx', reach: 'useRef()' },
-      { file: 'components/ui/modal.tsx', reach: 'useRef()' },
       { file: 'components/ui/modal.tsx', reach: 'document.activeElement' },
       { file: 'components/ui/modal.tsx', reach: 'window.setTimeout' },
       { file: 'components/ui/modal.tsx', reach: 'window.addEventListener' },
       { file: 'components/ui/modal.tsx', reach: 'window.clearTimeout' },
+      { file: 'components/ui/modal.tsx', reach: 'window.setTimeout() (passed as a value)' },
       { file: 'components/ui/modal.tsx', reach: 'window.removeEventListener' },
+      { file: 'components/ui/modal.tsx', reach: 'document.activeElement.focus' },
+      { file: 'components/ui/modal.tsx', reach: 'useRef()' },
+      { file: 'lib/api/fetcher.ts', reach: 'window.location.pathname' },
       { file: 'lib/api/fetcher.ts', reach: 'window.location' },
+      { file: 'lib/api/fetcher.ts', reach: 'window.location.assign' },
       { file: 'lib/hooks/use-global-events.ts', reach: 'useRef()' },
       { file: 'lib/hooks/use-live-run.ts', reach: 'useRef()' },
     ]);
@@ -1168,6 +1416,53 @@ describe('the dead tooltip copy is gone', () => {
     const reaches = SHEET.domHandleSites(sources).map((d) => d.reach);
     for (const sink of ['document.adoptedStyleSheets', 'document.styleSheets', 'document.head', 'document.createElement']) {
       expect(reaches, `${sink} is reached and the CSS bound does not know`).not.toContain(sink);
+    }
+    // ── THE RESOLVER, MEASURED SPELLING BY SPELLING ─────────────────────
+    //
+    // Thirteen ways to reach `document.adoptedStyleSheets`, each parsed alone
+    // and each required to resolve to the SAME root-relative reach. The first
+    // is the one the old walk saw; the rest are what it did not. Three
+    // controls follow, because a resolver that says yes to everything bounds
+    // nothing: a shadowing parameter, a shadowing local, and `typeof window`,
+    // which yields a string and not a handle.
+    const reachesOf = (src: string): string[] => SHEET.domHandleReaches(src);
+    const ADOPT = 'adoptedStyleSheets';
+    const spellings: Array<[label: string, src: string, reach: string]> = [
+      ['property access', `document.${ADOPT} = [];`, `document.${ADOPT}`],
+      ['element access', `window['document'].${ADOPT} = [];`, `window.document.${ADOPT}`],
+      ['destructure + rename', `const { document: d } = window; d.${ADOPT} = [];`, `window.document.${ADOPT}`],
+      ['destructure', `const { document } = window; document.${ADOPT} = [];`, `window.document.${ADOPT}`],
+      ['parenthesised', `(window).document.${ADOPT} = [];`, `window.document.${ADOPT}`],
+      ['non-null', `window!.document.${ADOPT} = [];`, `window.document.${ADOPT}`],
+      ['cast', `(globalThis as unknown as Window).document.${ADOPT} = [];`, `globalThis.document.${ADOPT}`],
+      ['aliased local', `const d = document; d.${ADOPT} = [];`, `document.${ADOPT}`],
+      ['two hops', `const w = window; const d = w.document; d.${ADOPT} = [];`, `window.document.${ADOPT}`],
+      ['self', `self.document.${ADOPT} = [];`, `self.document.${ADOPT}`],
+      ['top', `top.document.${ADOPT} = [];`, `top.document.${ADOPT}`],
+      ['frames', `frames.document.${ADOPT} = [];`, `frames.document.${ADOPT}`],
+      ['computed key', `const k = 'document'; window[k].${ADOPT} = [];`, `window[computed].${ADOPT}`],
+    ];
+    for (const [label, src, reach] of spellings) {
+      expect(
+        reachesOf(src),
+        `\`${label}\` reaches the document and domHandleSites does not say so`,
+      ).toContain(reach);
+    }
+    expect(spellings, 'the spelling table collapsed').toHaveLength(13);
+    expect(new Set(spellings.map((s) => s[1])).size, 'two spellings are the same source').toBe(13);
+    // A handle passed OUT of the file is reported too — that is the one
+    // remaining way to reach a document without naming a member of it.
+    expect(reachesOf('inject(document);')).toContain('document (passed as a value)');
+    // The controls. A local that shadows a global is not that global, and
+    // calling its members browser reaches would put false entries in a pinned
+    // product — which is worse than a narrow one, because it teaches the reader
+    // to edit the pin.
+    for (const [label, src] of [
+      ['a shadowing parameter', 'function f(window: { document: number }) { return window.document; }'],
+      ['a shadowing local', 'const window = { document: 1 }; const x = window.document;'],
+      ['a typeof guard', "if (typeof window !== 'undefined') { }"],
+    ] as const) {
+      expect(reachesOf(src), `${label} is reported as a browser reach`).toEqual([]);
     }
 
     // ── NB-1 / NB-2: THE WALK'S OWN SCOPE, WHICH NO TEST READ ───────────
@@ -1245,12 +1540,42 @@ describe('the dead tooltip copy is gone', () => {
       'acdp.search',
       'acdp.verify',
     ]);
+    // ── ROUND 21's NB-1: THE WALK HAS TO SAY WHAT IT VISITED ────────────
+    //
+    // Deleting this walk's `JsxText` arm outright was SILENT — all four of the
+    // guard-the-guard cases below pass string literals, and the closure's own
+    // modules had no JSX text carrying an id. The component's copy of the same
+    // rule has a per-kind floor (deleting it is 3 red); this copy inherited the
+    // rule and not the floor.
+    //
+    // A `JsxText` witness would close the arm somebody noticed. The census
+    // closes the KIND: the walk reports what it visited, pinned per module
+    // against an independent TOKEN descent of the same source, so an arm that
+    // stops visiting is red where it stopped.
+    let visited = { stringLiterals: 0, templateParts: 0, jsxTexts: 0 };
     for (const rel of closure) {
+      const src = PCT.closureSource(rel);
       expect(
-        PCT.foreignProfileIdsIn(PCT.closureSource(rel), rel, events),
+        PCT.foreignProfileIdsIn(src, rel, events),
         `${rel} names a profile id no registry may advertise`,
       ).toEqual([]);
+      const seen = PCT.foreignScanCensus(src, rel);
+      const whole = PCT.literalCensus(
+        ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
+      );
+      expect(seen, `the closure walk skipped string-bearing nodes in ${rel}`).toEqual(whole);
+      visited = {
+        stringLiterals: visited.stringLiterals + seen.stringLiterals,
+        templateParts: visited.templateParts + seen.templateParts,
+        jsxTexts: visited.jsxTexts + seen.jsxTexts,
+      };
     }
+    // Anti-vacuity on the census itself: an equality between two descents of
+    // the same tree is satisfied by `0 === 0`, so each kind must be non-empty
+    // somewhere in the closure or the equality above proves nothing about it.
+    expect(visited.stringLiterals, 'the closure holds no string literals').toBeGreaterThan(50);
+    expect(visited.templateParts, 'the closure holds no template parts').toBeGreaterThan(0);
+    expect(visited.jsxTexts, 'no module in the closure has JSX text, so that arm is unwitnessed').toBeGreaterThan(0);
     // GUARDS THE GUARD, three ways. The escape itself is caught…
     expect(
       PCT.foreignProfileIdsIn(

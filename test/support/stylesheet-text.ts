@@ -83,9 +83,20 @@
  *        `div[class*="metric"]` (no class token at all) each took every metric
  *        row off every card at phone width, 977/977 green. "Rules that mention
  *        a class the card renders" is a proper subset of "rules that apply to
- *        the card". So `applicableRules()` asks a selector ENGINE, against the
- *        card rendered inside the page ancestry it ships in, and a selector
- *        the engine cannot evaluate is RETURNED rather than skipped.
+ *        the card". So `applicableRules()` asks a selector ENGINE, and a
+ *        selector the engine cannot evaluate is RETURNED rather than skipped.
+ *
+ *        ROUND 21's BL-1 CORRECTION. This used to end "against the card
+ *        rendered inside the page ancestry it ships in", and the engine was
+ *        never the weak part. What it was asked ABOUT was a two-element probe,
+ *        `.page > .grid-2 > .card`, while the shipped ancestry is `html > body
+ *        > .shell > .content > .page > .grid-2`. Four rules walked through the
+ *        difference at 979/979 green: `.content .metric-row .chip`, `.shell
+ *        .chip`, `.grid-2 > .card:nth-child(2) .chip` (which needs a SECOND
+ *        card) and `:root { --muted: transparent }` (which needs `html` in the
+ *        element universe). The chain is derived from the four files that
+ *        build it now — {@link jsxAncestry} — the probe is constructed FROM
+ *        that derivation, and the universe is `document.documentElement`.
  *
  * ── WHAT ACTUALLY BOUNDS THE CHANNEL ─────────────────────────────────
  *
@@ -102,23 +113,37 @@
  *   does. `stylesheetUniverse()` is the union of what the repository HOLDS and
  *   what the app LOADS, every member parsed and scanned.
  *
- *   AN ELEMENT — a `<style>` element, by any spelling. It cannot be created
- *   without the string `'style'` appearing as a literal or as a JSX tag name
- *   somewhere in the compiled source. `styleStringLiteralSites()` looks for
- *   the string, `styleElementSpellings()` resolves the tag, and
- *   `htmlInjectionSites()` scans the text; all three are pinned, and the first
- *   is the one with no list in it.
+ *   AN ELEMENT — a `<style>` element, and it has to be MOUNTED to style
+ *   anything. `styleStringLiteralSites()` looks for the string `'style'`,
+ *   `styleElementSpellings()` resolves the tag and `htmlInjectionSites()`
+ *   scans the text; all three are pinned. ROUND 21's NB-4 CORRECTION: this
+ *   used to say a style element "cannot be created without the string
+ *   `'style'` appearing", and `const CSS_TAG = ['sty','le'].join('')` in
+ *   `app/layout.tsx` creates one that none of the three can see. The
+ *   measurement is therefore on the RENDERED TREE — `document.querySelectorAll
+ *   ('style, link[rel~=stylesheet]')` over the mounted probe — and the three
+ *   source scanners corroborate it instead of standing in for it.
  *
  *   A HANDLE ON THE DOCUMENT — `document.adoptedStyleSheets`,
  *   `document.styleSheets[0].insertRule`, `document.head.appendChild`. A
  *   `CSSStyleSheet` constructed and never adopted styles nothing.
- *   `domHandleSites()` pins every member name this repository reads off
- *   `document`, `window` or `globalThis`, per file.
+ *   `domHandleSites()` reports every value transitively derived from
+ *   `document`, `window`, `globalThis`, `self`, `top` or `frames`, per file,
+ *   as the dotted path it was reached BY. ROUND 21's BL-2 CORRECTION: this
+ *   used to say it "pins every member name this repository reads off
+ *   `document`, `window` or `globalThis`", and what it actually matched was
+ *   one SPELLING — `ts.isPropertyAccessExpression(node) && ts.isIdentifier
+ *   (node.expression)`. `const { document: doc } = window; doc.adoptedStyleSheets`
+ *   was 979/979 green where the identical injection spelled `document.
+ *   adoptedStyleSheets` was 1 red. The resolver lives in
+ *   `test/support/ts-reads.ts` and is shared with `capabilityReads`, which had
+ *   resolved these forms since round 19.
  *
  * The residual, drawn where it can be checked rather than assumed: an element
- * handle that came from neither `document` nor a tag name — a React `ref`. So
- * `domHandleSites()` pins `useRef` call sites too, and what is genuinely left
- * is a handle obtained some third way, of which this codebase has none today.
+ * handle that came from neither a browser global nor a tag name — a React
+ * `ref`. So `domHandleSites()` pins `useRef` call sites too, and what is
+ * genuinely left is a handle obtained some third way, of which this codebase
+ * has none today.
  * Outside the repository entirely — a browser extension, an edge worker, a
  * `<link>` added by the host — remains beyond any test process, and that part
  * of the old sentence was the only part that was true.
@@ -193,6 +218,7 @@ import ts from 'typescript';
 import { transform } from 'lightningcss';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { globalReaches } from './ts-reads';
 
 /** Anchored to this file, not to the runner's working directory. */
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -469,6 +495,20 @@ export function contentRules(css: string, label = 'stylesheet'): { selector: str
  * property name — the parser's own model of what a declaration is — instead of
  * pattern-matching around the token. A case bug in one is not a case bug in
  * the other, and a regex that stops matching does not stop the splitter.
+ *
+ * ── ROUND 21's NB-2: THE DIFFERENCE IS ARGUED, NOT GUARDED ───────────
+ *
+ * Recorded rather than papered over. Replacing this body with
+ * `return contentDeclarations(css, label).length` — collapsing the two
+ * derivations into one — passes every case the caller gives it. So the
+ * paragraph above is an argument about how the code is written, and nothing
+ * fails if somebody unwrites it. Agreement is evidence only where difference
+ * is ESTABLISHED, and what would establish it is deriving the second count
+ * from `lightningcss`'s own visitor rather than from a second scan of its
+ * output string, plus a case on which a collapsed implementation could not
+ * agree. That is not done here, and this sentence is the honest version of
+ * what the second derivation is currently worth: a second chance to notice,
+ * not a checked independence.
  */
 export function contentOccurrences(css: string, label = 'stylesheet'): number {
   // Comments are gone already — `normalizeCss` drops them — but the strip is
@@ -525,6 +565,92 @@ export function contentOccurrences(css: string, label = 'stylesheet'): number {
  * matcher is the browser's. A selector the engine cannot evaluate is returned
  * to the caller to pin, never skipped.
  */
+/**
+ * The JSX ancestry of one site in a compiled source, outermost-first, as
+ * `tag.class` for an intrinsic element and `ComponentName` for a component.
+ *
+ * ── ROUND 21's BL-1: A PROBE IS NOT THE DOCUMENT ─────────────────────
+ *
+ * `applicableRules` asks a selector engine, which was round 19's fix and is
+ * right. What it asked the engine ABOUT was a two-element probe —
+ * `<div className="page"><div className="grid-2"><RegistryCard/></div></div>` —
+ * under a docblock saying the card is rendered "inside the page ancestry it
+ * ships in". The ancestry it ships in is
+ *
+ *   html > body > div.shell > main.content > div.page > div.grid-2 > div.card
+ *
+ * and `.shell` and `.content` are real classes in `app/globals.css`. Four
+ * one-line rules walked through the gap, each 979/979 green with typecheck and
+ * lint clean, and each removing every profile id from every registry card at
+ * phone width:
+ *
+ *   @media (max-width: 640px) { .content .metric-row .chip { display: none } }
+ *   @media (max-width: 640px) { .grid-2 > .card:nth-child(2) .chip { display: none } }
+ *   @media (max-width: 640px) { :root { --muted: transparent } }
+ *   @media (max-width: 640px) { .shell .chip { font-size: 0 } }
+ *
+ * The first is round 19's BL-3 one frame further up. The second needs a SECOND
+ * card, and the probe rendered one. The third targets `:root`, and the element
+ * universe started at the probe and so never contained `html`. Each is a
+ * narrowing of the probe, not of the matcher.
+ *
+ * Widening the probe by hand would leave the same class of defect one frame
+ * further out again, so the chain is DERIVED from the files that produce it and
+ * the probe is checked against it. A probe that drifts from the shipped DOM is
+ * then red, which is the thing the previous version could not tell apart from a
+ * correct one.
+ */
+export function jsxAncestry(file: string, needle: string): string[] {
+  const src = repoFileSource(file);
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found: ts.Node[] = [];
+  const isSite = (node: ts.Node): boolean => {
+    if (needle === 'children') {
+      return (
+        ts.isJsxExpression(node) &&
+        node.expression !== undefined &&
+        node.expression.getText(sf).trim() === 'children'
+      );
+    }
+    return (
+      (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) &&
+      node.tagName.getText(sf) === needle
+    );
+  };
+  const find = (node: ts.Node): void => {
+    if (found.length > 0) return;
+    if (isSite(node)) {
+      found.push(node);
+      return;
+    }
+    ts.forEachChild(node, find);
+  };
+  find(sf);
+  if (found.length === 0) {
+    throw new Error(`\`${file}\` renders no \`${needle}\` — this ancestry lost its subject`);
+  }
+  const describe = (open: ts.JsxOpeningElement | ts.JsxSelfClosingElement): string => {
+    const tag = open.tagName.getText(sf);
+    const attr = open.attributes.properties.find(
+      (p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText(sf) === 'className',
+    );
+    const init = attr?.initializer;
+    if (init && ts.isStringLiteral(init)) {
+      return `${tag}.${init.text.trim().split(/\s+/).join('.')}`;
+    }
+    // A computed className is reported as such rather than dropped: an
+    // ancestor whose classes this reader cannot name is exactly the case where
+    // silence is indistinguishable from an ancestor with none.
+    return init ? `${tag}.{computed}` : tag;
+  };
+  const chain: string[] = [];
+  for (let n: ts.Node | undefined = found[0].parent; n !== undefined; n = n.parent) {
+    if (ts.isJsxElement(n)) chain.push(describe(n.openingElement));
+    else if (ts.isJsxSelfClosingElement(n)) chain.push(describe(n));
+  }
+  return chain.reverse();
+}
+
 export type AppliedRule = { sheet: string; selector: string; block: string };
 
 export function applicableRules(
@@ -752,6 +878,33 @@ export type DomHandleSite = { file: string; reach: string };
  * handle obtained some third way, and there is no third way in this codebase
  * today, which is a claim the pin makes checkable instead of assumed.
  */
+export const BROWSER_GLOBALS = [
+  'document',
+  'window',
+  'globalThis',
+  // The three other names for the same window object. `self` and `frames` and
+  // `top` are not exotic — they are what a minifier and a bundler emit — and
+  // leaving them out would make this list an enumeration of the spellings
+  // somebody thought of, which is the defect this whole module keeps finding.
+  'self',
+  'top',
+  'frames',
+] as const;
+
+/**
+ * The reaches of ONE source text, root-relative and deduped.
+ *
+ * The source-level entry point, so the resolver can be measured spelling by
+ * spelling against synthetic inputs instead of only against whatever this
+ * repository happens to contain today. Round 21's BL-2 survived a pin over the
+ * repository's own reads precisely because the repository contains none of the
+ * spellings it walked through.
+ */
+export function domHandleReaches(source: string, file = 'probe.tsx'): string[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  return [...new Set(globalReaches(sf, BROWSER_GLOBALS).map((r) => r.reach))];
+}
+
 export function domHandleSites(files?: readonly string[]): DomHandleSite[] {
   const out: DomHandleSite[] = [];
   for (const file of files ?? renderedSourcePaths()) {
@@ -763,13 +916,12 @@ export function domHandleSites(files?: readonly string[]): DomHandleSite[] {
       seen.add(reach);
       out.push({ file, reach });
     };
+    // ROUND 21's BL-2. This used to be `ts.isPropertyAccessExpression(node) &&
+    // ts.isIdentifier(node.expression)`, which is one spelling of a read — see
+    // `test/support/ts-reads.ts` for the escape that walked through it and for
+    // why the resolver is shared with `capabilityReads` rather than copied.
+    for (const r of globalReaches(sf, BROWSER_GLOBALS)) add(r.reach);
     const visit = (node: ts.Node): void => {
-      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
-        const base = node.expression.text;
-        if (base === 'document' || base === 'window' || base === 'globalThis') {
-          add(`${base}.${node.name.text}`);
-        }
-      }
       if (ts.isCallExpression(node) && /(^|\.)useRef$/.test(node.expression.getText(sf))) {
         add('useRef()');
       }
