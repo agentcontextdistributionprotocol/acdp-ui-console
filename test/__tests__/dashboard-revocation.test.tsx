@@ -1212,6 +1212,101 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     );
   });
 
+  // ══════════════════════════════════════════════════════════════════
+  // THE COUNTER TRIPLE'S SHAPE SPACE, ENUMERATED AS SUBSETS.
+  //
+  // ROUND 10's B2 and B6. Two arms of this card are decided by the SHAPE of the
+  // counter object — which of the three keys arrived, and which of them are
+  // non-zero — and each was pinned with exactly one hand-picked payload:
+  //
+  //   `reported`          only ever rendered (9, 2, 1), three non-zero figures.
+  //                       The demo dataset's own posture is (9, 0, 0): a
+  //                       pre-compromise count with both fail-closed counters
+  //                       at zero. That renders two green-adjacent zeros beside
+  //                       a real figure and is the payload an operator is most
+  //                       likely to see, and no test rendered it.
+  //   `counters-partial`  only ever rendered `{ revokedAtOrAfter: 3 }`, one key
+  //                       of three. The 2-of-3 shapes — a payload that sent
+  //                       two counters and omitted one — were unreached, and
+  //                       they are the ones where `hasCounters` is most nearly
+  //                       true and a missing key most nearly looks like a zero.
+  //
+  // Both spaces are small and completely enumerable, so they are enumerated
+  // rather than sampled: the non-empty subsets of the three keys (7) decide
+  // `reported` vs `counters-partial`, and the non-zero subsets of a COMPLETE
+  // triple (8) decide `reported` vs `checked-clean`.
+  // ══════════════════════════════════════════════════════════════════
+  const COUNTER_KEYS = ['preCompromise', 'revokedAtOrAfter', 'revokedTimeUnverifiable'] as const;
+
+  /** Every subset of the three keys, as an array of key lists. */
+  function keySubsets(): (typeof COUNTER_KEYS)[number][][] {
+    const out: (typeof COUNTER_KEYS)[number][][] = [];
+    for (let mask = 0; mask < 8; mask += 1) {
+      out.push(COUNTER_KEYS.filter((_, i) => (mask & (1 << i)) !== 0));
+    }
+    return out;
+  }
+
+  it('pins the reported arm over EVERY complete triple, including the demo posture', () => {
+    const subsets = keySubsets().filter((s) => s.length > 0);
+    expect(subsets.length, 'the non-zero subset enumeration collapsed').toBe(7);
+    const seen = new Set<string>();
+    for (const nonZero of subsets) {
+      cleanup();
+      // A COMPLETE triple — all three keys present — with this subset non-zero.
+      const counts = Object.fromEntries(
+        COUNTER_KEYS.map((k, i) => [k, nonZero.includes(k) ? i + 7 : 0]),
+      ) as unknown as NonNullable<CpDashboardOverview['keyRevocation']>;
+      renderWith(overview({ keyRevocation: counts, features: FEATURES }));
+      const c = counts as unknown as Record<string, number>;
+      const figures: readonly [string, string, string] = [
+        String(c[COUNTER_KEYS[0]]),
+        String(c[COUNTER_KEYS[1]]),
+        String(c[COUNTER_KEYS[2]]),
+      ];
+      expectPinnedCard(
+        expectedDashboardCardBlocks({ key: null, counts: figures }),
+        `reported arm ${figures.join('/')}`,
+        DASHBOARD_REPORTED_TILES.map((t) => t.hint),
+      );
+      seen.add(figures.join('/'));
+    }
+    // The demo dataset's own posture is in there, by name rather than by
+    // coincidence: `MOCK_DASHBOARD` sends a pre-compromise count with both
+    // fail-closed counters at zero, and that is the card most operators see.
+    expect(seen, 'the pre-compromise-only posture was not rendered').toContain('7/0/0');
+    expect(seen.size, 'two subsets rendered the same figures').toBe(7);
+  });
+
+  it('routes EVERY partial counter shape to counters-partial, not to a flag arm', () => {
+    // The two zeros this arm exists to prevent. `undefined > 0` is `false`, so
+    // before `hasCounters` gated the reported arm, `{ revokedAtOrAfter: 3 }`
+    // rendered `['0', '3', '0']` — a green "Pre-compromise (authorized) 0" and
+    // an amber "Revoked time unverifiable 0" from a payload that sent neither.
+    //
+    // A 1-of-3 shape was pinned. A 2-of-3 shape was not, and it is the harder
+    // case: two thirds of a triple looks much more like a complete one.
+    const partials = keySubsets().filter((s) => s.length > 0 && s.length < 3);
+    expect(partials.length, 'the partial-shape enumeration collapsed').toBe(6);
+    expect(partials.filter((s) => s.length === 2).length, 'the 2-of-3 shapes are missing').toBe(3);
+    for (const present of partials) {
+      cleanup();
+      const payload = Object.fromEntries(present.map((k, i) => [k, i + 3]));
+      renderWith(overview({ keyRevocation: payload as never, features: FEATURES }));
+      expectPinnedCard(
+        expectedDashboardCardBlocks({ key: 'counters-partial' }),
+        `partial shape ${present.join('+')}`,
+      );
+      // …and the two fabricated zeros are not on the card in any form. Stated
+      // as a separate, positive assertion rather than left to the block pin,
+      // because the defect was a FIGURE appearing, not a sentence.
+      expect(
+        revocationCard().querySelectorAll('.kpi-card').length,
+        `${present.join('+')} rendered figure tiles from a partial payload`,
+      ).toBe(0);
+    }
+  });
+
   it('pins the reported arm’s ACCENTS, because colour carries meaning on this card', () => {
     // `lib/utils/revocation.ts` argues the point: pre-compromise is
     // "historically AUTHORIZED — the opposite of a violation", and this tile
@@ -1229,6 +1324,91 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     expect(accents).toEqual(DASHBOARD_REPORTED_TILES.map((t) => t.accent));
     // The complement, so "paint everything danger" cannot pass either.
     expect(new Set(accents).size, 'two tiles share an accent').toBe(accents.length);
+  });
+
+  /**
+   * Move the last word of one block into the start of the next, KEEPING the
+   * character sequence identical.
+   *
+   * This is the injection only the block half can see, and finding one is the
+   * whole difficulty of the wiring test below. Half two compares the card's
+   * whole squashed `textContent` against the blocks CONCATENATED, so it is
+   * blind to where a boundary falls; half three reads attributes; half four
+   * counts blocks. Moving a word across a boundary changes the block LIST and
+   * nothing else — so if the composite still passes, the block half is not
+   * being called.
+   *
+   * The sibling #84 branch measured why this matters: with a paragraph-SPLIT as
+   * the block half's injection, deleting `expectBlocksPinned` from the
+   * composite left 1122/1122 green, because the split also adds a block and
+   * half four's count pin caught it. An injection with two owners attributes
+   * nothing.
+   */
+  function moveWordAcrossBoundary(a: HTMLElement, b: HTMLElement): void {
+    const text = a.textContent ?? '';
+    const cut = text.lastIndexOf(' ');
+    expect(cut, 'the first block has no space to move a word across').toBeGreaterThan(0);
+    b.textContent = text.slice(cut) + (b.textContent ?? '');
+    a.textContent = text.slice(0, cut);
+  }
+
+  it('all four halves are WIRED IN to the composite, each by an injection only it sees', () => {
+    const expected = expectedDashboardCardBlocks({ key: 'flag-on-no-counters' });
+    const injections: Array<[label: string, inject: (card: HTMLElement) => void]> = [
+      [
+        'a block boundary moved',
+        (card) => {
+          // The SUBTITLE and the first body paragraph, not the `h2` and the
+          // subtitle. Measured: moving a word out of the `h2` also breaks
+          // `revocationCard()`, which finds the card BY that heading — so the
+          // injection threw with the block half deleted from the composite and
+          // attributed nothing. A second owner is a second owner even when it
+          // is a locator rather than an assertion.
+          const sub = card.querySelector<HTMLElement>('.card-header .card-sub')!;
+          const first = card.querySelector<HTMLElement>('.card-body p')!;
+          moveWordAcrossBoundary(sub, first);
+        },
+      ],
+      [
+        'a stray element in the body',
+        (card) => {
+          const span = document.createElement('span');
+          span.textContent = 'No key in this deployment has been revoked.';
+          card.querySelector('.card-body')!.append(span);
+        },
+      ],
+      [
+        'an announced attribute',
+        (card) => {
+          card
+            .querySelector('.card-body p')!
+            .setAttribute('title', 'Nothing in this deployment is revoked');
+        },
+      ],
+      [
+        'the pinned text SILENCED',
+        (card) => {
+          const p = card.querySelector<HTMLElement>('.card-body p')!;
+          const span = document.createElement('span');
+          span.setAttribute('aria-hidden', 'true');
+          span.textContent = p.textContent;
+          p.textContent = '';
+          p.append(span);
+        },
+      ],
+    ];
+    for (const [label, inject] of injections) {
+      cleanup();
+      renderWith(overview({ keyRevocation: null, features: FEATURES }));
+      // The composite passes on the untouched render, so a throw below is the
+      // injection and not the fixture.
+      expectPinnedCard(expected, `clean before ${label}`);
+      inject(revocationCard());
+      expect(() => expectPinnedCard(expected, label), `the composite ADMITS ${label}`).toThrow();
+    }
+    // Anti-vacuity: a loop over an emptied table asserts nothing, and there are
+    // four halves.
+    expect(injections).toHaveLength(4);
   });
 
   it('GUARDS THE GUARD: the announced half catches copy no textContent pin sees', () => {

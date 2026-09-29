@@ -1017,13 +1017,17 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
   });
 
   /**
-   * The pin, both halves, as ONE named assertion so it can be exercised
-   * against states that must fail.
+   * HALF ONE of four: the blocks are exactly these, in order — wording,
+   * structure, count.
    *
-   * 1. the blocks are exactly these, in order — wording, structure, count
-   * 2. the card contains NOTHING ELSE — which is the half that catches an
-   *    element added beside the empty state, and is how round 6's blocking
-   *    finding was reconstructed verbatim while every guard stayed green
+   * ROUND 10 CORRECTION. This docblock said "The pin, both halves" and then
+   * listed two, the second of which describes `expectNothingOutside` — a
+   * different function further down. A docblock that describes its neighbour's
+   * work as its own is how a deleted call site goes unnoticed: a reader
+   * checking that "the card contains nothing else" is covered finds the claim
+   * here, above a function that does not make it. The composite
+   * (`expectPinnedViolations`) is what calls all four, and the wiring test
+   * below is what says it still does.
    */
   function expectBlocksPinned(card: HTMLElement, expected: string[], label?: string) {
     expect(violationsBlocks(card), label).toEqual(expected);
@@ -1070,6 +1074,12 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
    * constant because `KpiCard` mirrors its `hint` into a `title`; the violations
    * card renders no hint, so every caller here passes `[]` and a LOST
    * announcement is a defect too.
+   *
+   * ROUND 11: there are FOUR halves now — the fourth is reachability, and it
+   * was missing from both revocation surfaces. Rather than write the number
+   * again in a third place, the wiring test below deletes each call from this
+   * function in turn and requires the suite to notice; a count in prose cannot
+   * do that, and three of them in this file had already drifted.
    */
   function expectPinnedViolations(
     card: HTMLElement,
@@ -1082,6 +1092,104 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     expectNothingAnnounced(card, allowed, label);
     expectNothingSilenced(card, violationsBlockElements(card), expected.length, label);
   }
+
+  /**
+   * Move the last word of one block into the start of the next, KEEPING the
+   * character sequence identical — the injection only the BLOCK half can see.
+   *
+   * Half two compares the card's whole squashed `textContent` against the
+   * blocks concatenated, so it is blind to where a boundary falls; half three
+   * reads attributes; half four counts blocks and looks for suppression. Moving
+   * a word across a boundary changes the block LIST and nothing else.
+   *
+   * NOT the `h2`, deliberately: `violationsCard()` finds the card BY its
+   * heading, so moving a word out of it throws from the LOCATOR. Measured on
+   * the sibling dashboard surface — the injection threw with the block half
+   * deleted from the composite, and attributed nothing.
+   */
+  function moveWordAcrossBoundary(a: HTMLElement, b: HTMLElement): void {
+    const text = a.textContent ?? '';
+    const cut = text.lastIndexOf(' ');
+    expect(cut, 'the donor block has no space to move a word across').toBeGreaterThan(0);
+    b.textContent = text.slice(cut) + (b.textContent ?? '');
+    a.textContent = text.slice(0, cut);
+  }
+
+  it('all four halves are WIRED IN to the violations composite, each by an injection only it sees', () => {
+    // ROUND 10's NB2. Each half has its own guard-the-guard above, which says
+    // the half WORKS. None of them says the composite CALLS it — and the
+    // sibling #84 branch measured exactly that gap: `expectBlocksPinned` could
+    // be deleted from its composite with 1122/1122 green, because the injection
+    // chosen for it was also caught by another half.
+    const emptyExpected = expectedTrustViolationsBlocks({
+      sub: trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: '0 revoked across 0 runs',
+        preCompromiseEvents: 0,
+      }),
+      empty: 'no-violations',
+      runs: 1,
+    });
+    const injections: Array<[label: string, inject: (card: HTMLElement) => void]> = [
+      [
+        'a block boundary moved',
+        (card) => {
+          const sub = card.querySelector<HTMLElement>('.card-header .card-sub')!;
+          const title = [...card.querySelectorAll<HTMLElement>('.empty-state > *')].filter(
+            (n) => n.tagName !== 'SVG',
+          )[0];
+          moveWordAcrossBoundary(sub, title);
+        },
+      ],
+      [
+        'a stray element in the body',
+        (card) => {
+          const span = document.createElement('span');
+          span.textContent = 'No key in this deployment has been revoked.';
+          card.querySelector('.card-body')!.append(span);
+        },
+      ],
+      [
+        'an announced attribute',
+        (card) => {
+          card
+            .querySelector('.empty-state')!
+            .setAttribute('aria-label', 'Nothing in this deployment is revoked');
+        },
+      ],
+      [
+        'the pinned text SILENCED',
+        (card) => {
+          const parts = [...card.querySelectorAll<HTMLElement>('.empty-state > *')].filter(
+            (n) => n.tagName !== 'SVG',
+          );
+          const target = parts[parts.length - 1];
+          const span = document.createElement('span');
+          span.setAttribute('aria-hidden', 'true');
+          span.textContent = target.textContent;
+          target.textContent = '';
+          target.append(span);
+        },
+      ],
+    ];
+    for (const [label, inject] of injections) {
+      cleanup();
+      const { container } = renderWith(
+        overview([{ runId: 'run-clean', trust: trust() }], { revocationReportedRuns: 1 }, FEATURES_ON),
+      );
+      const card = violationsCard(container);
+      // The composite passes on the untouched render, so a throw below is the
+      // injection and not the fixture.
+      expectPinnedViolations(card, emptyExpected, `clean before ${label}`);
+      inject(card);
+      expect(
+        () => expectPinnedViolations(violationsCard(container), emptyExpected, label),
+        `the composite ADMITS ${label}`,
+      ).toThrow();
+    }
+    expect(injections).toHaveLength(4);
+  });
 
   it('GUARDS THE GUARD: the violations pin REJECTS an appended clause and a stray element', () => {
     // Loosening either half is silent otherwise — measured: turning the block
