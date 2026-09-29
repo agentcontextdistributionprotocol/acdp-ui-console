@@ -18,6 +18,7 @@
 // The hook is mocked per `CLAUDE.md` so each state renders deterministically.
 // ══════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, within, waitFor, fireEvent } from '@testing-library/react';
@@ -56,6 +57,7 @@ import {
   squash,
   type AckFooterState,
 } from '@/test/support/witness-ack-prose';
+import * as PROSE from '@/test/support/witness-ack-prose';
 
 // The mock FORWARDS ITS ARGUMENTS. A zero-arg passthrough would make every
 // assertion about which listing the component asks for vacuous — the component
@@ -751,12 +753,19 @@ function dialogScanRoot(): HTMLElement {
   return dialog().closest<HTMLElement>('.modal-overlay') ?? dialog();
 }
 
-function openConfirm(authority = 'registry-c.playground.local') {
+function openConfirm(authority = 'registry-c.playground.local', reAcknowledge = false) {
   // `fireEvent`, matching every other component test in this suite —
   // `@testing-library/user-event` is not a dependency here.
+  //
+  // The control is named `Acknowledge <authority>` or `Re-acknowledge
+  // <authority>`, and round 6's B1 found that the second was never clicked by
+  // any test in this file. Anchored at the start so `Acknowledge` does not
+  // match `Re-acknowledge` — without the anchor the default argument would
+  // silently open a re-acknowledge dialog and the axis would test nothing.
+  const prefix = reAcknowledge ? 'Re-acknowledge' : 'Acknowledge';
   fireEvent.click(
     screen.getByRole('button', {
-      name: new RegExp(`acknowledge ${authority.replace(/\./g, '\\.')}`, 'i'),
+      name: new RegExp(`^${prefix} ${authority.replace(/\./g, '\\.')}$`, 'i'),
     }),
   );
 }
@@ -842,7 +851,7 @@ function expectNothingOutside(expected: string[], label?: string) {
  * name), and an enumeration of bad values is the open-set mistake this whole
  * file exists to stop making.
  */
-function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
+function expectNothingAnnounced(outcome: AckOutcome, label?: string, hasDiagnostic = true) {
   const found: string[] = [];
   const nonAnnouncing = new Set<string>(NON_ANNOUNCING_ATTRS);
   // ROUND 6's N6: THE SCAN STARTED ONE ELEMENT TOO LOW. It began at `dialog()`
@@ -888,7 +897,7 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
     }
   }
   expect(new Set(found), `${label ?? ''} — announced copy outside the pinned set`).toEqual(
-    new Set(expectedAnnounced(outcome)),
+    new Set(expectedAnnounced(outcome, hasDiagnostic)),
   );
   // The id-reference attributes carry no text of their own, but they can point
   // at an element OUTSIDE the dialog — whose text neither of the other halves
@@ -1042,7 +1051,10 @@ function expectPinnedDialog(opts: PinOpts) {
   const expected = expectedDialogBlocks(opts);
   expectBlocksPinned(expected, opts.label);
   expectNothingOutside(expected, opts.label);
-  expectNothingAnnounced(opts.outcome, opts.label);
+  // ROUND 6's N9: whether the disclosure control is expected is a function
+  // of whether there IS a diagnostic, not of the outcome alone — a non-
+  // `ApiError` failure has none, and `ErrorDetail` correctly renders nothing.
+  expectNothingAnnounced(opts.outcome, opts.label, opts.diagnostic !== undefined);
   expectNothingSilenced(expected, opts.label);
 }
 
@@ -1797,16 +1809,60 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
   // against it, and adding a state anywhere in those three functions changes
   // this set without anyone maintaining a list.
   //
-  // The inputs are the four values the dialog reads: whether the listing still
-  // holds the row, what upstream answered, which view the operator is in, and
-  // whether the write is still out.
+  // ── ROUND 6's B1: AN ENUMERATION OF FOUR IS NOT AN ENUMERATION ───────
+  //
+  // The docblock above said this "enumerates the dialog's INPUTS", and it
+  // enumerated four of them. The dialog reads more, and round 6 measured a
+  // fabricated, FALSE sentence into each missing axis, every one at 1122/1122
+  // green with typecheck and lint clean:
+  //
+  //   demoMode                    `{!demoMode && <p>The acknowledgement was
+  //                               recorded anyway and the alert is now
+  //                               cleared.</p>}`. The sharpest of the four,
+  //                               because the gate is INVERTED relative to the
+  //                               harness: `afterEach` forces demo mode on, so
+  //                               this renders in every REAL deployment — the
+  //                               only place the write actually reaches the
+  //                               control plane — and never where the tests
+  //                               look.
+  //   live.reason                 a sentence gated on `reason ===
+  //                               'log_id_changed'`. Every pinned arm used
+  //                               `root_mismatch`.
+  //   openedOn.acknowledgedAt     a sentence gated on a row that has been
+  //                               acknowledged before. The Re-acknowledge
+  //                               dialog was entirely unpinned: no test
+  //                               anywhere opened one.
+  //   the error's KIND            a sentence gated on `!(error instanceof
+  //                               ApiError)`. Reachable: `fetchJson` lets a
+  //                               `fetch()` TypeError propagate raw, so a
+  //                               browser going offline mid-write lands here.
+  //
+  // The recurring shape, again: an enumeration under a closed-set docblock.
+  // Three of the four are now AXES of this product, and `reason` is bounded
+  // structurally instead — see `the dialog may read NOTHING this enumeration
+  // does not model`, which parses the component and refuses a read of anything
+  // outside a pinned set. The two answer different halves: the product proves
+  // the copy is the same across the values of an input, and the structural
+  // bound proves there is no input the product has not heard of. Neither is
+  // sufficient, which is why round 6 found four holes behind a docblock that
+  // claimed the first one alone was enough.
 
-  /** What upstream answered. `none` is "nothing yet", not "success". */
+  /**
+   * What upstream answered. `none` is "nothing yet", not "success".
+   *
+   * `offline` is round 6's fourth axis: a raw `TypeError`, which is what
+   * `fetch()` throws when the network is gone and what `fetchJson` lets
+   * through untouched. It is NOT an `ApiError`, so `errorDiagnostic` returns
+   * `undefined` and the failed arm has nothing to disclose — a state the arm
+   * space could not previously reach and whose expected copy the announced
+   * table got wrong (N9).
+   */
   const ACK_ERRORS = {
     none: () => undefined,
     'resolved-404': ack404,
     'forbidden-403': ackForbidden,
     'other-503': ack503,
+    offline: () => new TypeError('Failed to fetch'),
   } as const;
   type ErrKind = keyof typeof ACK_ERRORS;
 
@@ -1815,6 +1871,10 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     error: ErrKind;
     pending: boolean;
     showAcknowledged: boolean;
+    /** Round 6's B1: the mode the write is issued in. */
+    demoMode: boolean;
+    /** Round 6's B1: whether the dialog was opened from a Re-acknowledge row. */
+    reAcknowledge: boolean;
   };
 
   type Arm = {
@@ -1856,8 +1916,19 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       for (const error of Object.keys(ACK_ERRORS) as ErrKind[]) {
         for (const pending of [false, true]) {
           for (const showAcknowledged of [true, false]) {
-            if (pending && error !== 'none') continue;
-            out.push({ live, error, pending, showAcknowledged });
+            for (const demoMode of [true, false]) {
+              for (const reAcknowledge of [false, true]) {
+                if (pending && error !== 'none') continue;
+                // A row that has never been acknowledged cannot be re-opened
+                // from a Re-acknowledge control, and a row that HAS been
+                // acknowledged is hidden from the filtered view — so it cannot
+                // be confirmed from there. This is a fact about the listing,
+                // not about the dialog, and stating it here is what keeps it
+                // from being spread through a hand-written table.
+                if (reAcknowledge && !showAcknowledged) continue;
+                out.push({ live, error, pending, showAcknowledged, demoMode, reAcknowledge });
+              }
+            }
           }
         }
       }
@@ -1868,18 +1939,108 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
   const armKey = (a: Arm) =>
     `${a.stage} / ${a.consequence ?? 'no bullets'} / ${a.outcome} / ${a.footer}`;
 
+  // ── THE OTHER HALF OF B1: WHAT THE DIALOG MAY READ ──────────────────
+  //
+  // The product above proves the copy is the same across the values of every
+  // input it MODELS. It says nothing about an input it has never heard of, and
+  // that is exactly how round 6 got four fabricated sentences onto this dialog
+  // — `demoMode`, `reason`, `acknowledgedAt` and the error's kind were all
+  // read by a mutation and by nothing that was looking.
+  //
+  // Adding three of them as axes fixes those three. It does not fix the NEXT
+  // one, and "add another axis" has now failed twice in this file's history
+  // (round 4 added two, round 5 replaced the table, round 6 found four more).
+  // So the supply is bounded instead: the dialog's rendered output may depend
+  // on nothing outside a pinned set, and that is read off the component's own
+  // source rather than remembered.
+  //
+  // The rule is per-IDENTIFIER, and the identifiers are the closed side. Every
+  // name the dialog's JSX evaluates must be licensed, and a licence says what
+  // the name may be used FOR, because "the dialog reads `reason`" and "the
+  // dialog BRANCHES on `reason`" are different claims and only the second is a
+  // defect. `reason` may be an argument to `reasonLabel` and nothing else;
+  // `demoMode` may not appear in the returned JSX at all.
+
+  /**
+   * Names the dialog's rendered output may depend on, and how.
+   *
+   * `interpolated` — the value reaches the screen through a pinned formatter
+   * and is a parameter of `expectedDialogBlocks`, so the product does not need
+   * an axis for it: every value produces the same sentence with a different
+   * word in it, and `reasonLabel`'s own six-way test covers the words.
+   *
+   * `modelled` — the value CHOOSES copy, and `DialogInput` carries an axis for
+   * it, so the product renders every one of its values.
+   */
+  const DIALOG_READS: Record<string, 'interpolated' | 'modelled'> = {
+    // Interpolated into the lead paragraph and the heading.
+    authority: 'interpolated',
+    reason: 'interpolated',
+    // Modelled by an axis of `DialogInput`.
+    live: 'modelled',
+    openedOn: 'modelled',
+    showAcknowledged: 'modelled',
+    stage: 'modelled',
+    consequence: 'modelled',
+    outcome: 'modelled',
+    mut: 'modelled',
+    error: 'modelled',
+  };
+
+  /** Identifiers that are structure, not data: components, helpers, hooks. */
+  const DIALOG_CALLS = [
+    'Modal',
+    'Button',
+    'ErrorPanel',
+    'ErrorDetail',
+    'reasonLabel',
+    'operatorErrorMessage',
+    'errorDiagnostic',
+    'onClose',
+    'ackStage',
+    'ackListingConsequence',
+    'ackOutcome',
+  ];
+
+  /**
+   * Copy constants the dialog renders, which must come from the prose module.
+   *
+   * The third licence class, and it exists because the first run of the
+   * structural guard found two names nobody had classified —
+   * `ACK_ALREADY_RESOLVED` and `ADMIN_ROUTE_FORBIDDEN` — which is the guard
+   * doing its job on the code as it stands rather than on a mutation.
+   *
+   * A copy constant is safe for a reason the other two classes do not have: it
+   * is a fixed string, so it cannot vary with an input, and it is compared
+   * character for character by `expectedDialogBlocks`. What makes the class
+   * closed rather than an allow-list is the assertion below — every member
+   * must be a string EXPORTED BY `witness-ack-prose.ts`, so a local constant
+   * spelled in the component (which is how unreviewed copy gets onto a screen)
+   * is refused whatever it is called.
+   */
+  const DIALOG_COPY = ['ACK_ALREADY_RESOLVED', 'ADMIN_ROUTE_FORBIDDEN'];
+
   /** Put the dialog into the state `i` describes. */
   async function enterDialog(i: DialogInput) {
     const error = ACK_ERRORS[i.error]();
     if (i.pending) acknowledgeLogWitnessAlert.mockImplementation(() => new Promise(() => {}));
     else if (error) acknowledgeLogWitnessAlert.mockRejectedValue(error);
     else acknowledgeLogWitnessAlert.mockResolvedValue({ authority: AUTH, alerted: true });
+    // ROUND 6's B1: the mode the write is issued in is an input the dialog
+    // reads, and the harness pinned it to `true` in `afterEach` — so a gate on
+    // `!demoMode` rendered only in real deployments and never here.
+    usePreferencesStore.setState({ demoMode: i.demoMode });
 
-    const { rerender } = renderWith({ data: rows([row()]) });
+    // …and whether this row has been acknowledged before, which decides the
+    // control the operator clicks and was never once set in this file.
+    const subject = i.reAcknowledge
+      ? row({ acknowledgedAt: '2026-09-27T09:00:00.000Z', acknowledgedBy: 'a1b2c3d4...' })
+      : row();
+    const { rerender } = renderWith({ data: rows([subject]) });
     // The toggle starts at "Acknowledged shown" — the unfiltered worklist — so
     // reaching `leaves-view` means switching AWAY from the default.
     if (!i.showAcknowledged) fireEvent.click(ackToggle());
-    openConfirm();
+    openConfirm(AUTH, i.reAcknowledge);
 
     // Only confirm when the input says something came back or is still out. On
     // `error: none, pending: false` the dialog is in its pre-confirm state, and
@@ -1907,6 +2068,187 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     if (i.live === 'gone') refetchTo([], rerender);
   }
 
+  it('the dialog may read NOTHING this enumeration does not model', () => {
+    // ROUND 6's B1, structurally. The product below renders every value of
+    // every input it MODELS; this refuses an input it does not. The two are
+    // different claims and round 6 measured the gap between them four times —
+    // `demoMode`, `reason`, `acknowledgedAt` and the error's kind were each
+    // read by a fabricated sentence with the whole suite green, because a
+    // product can only be wrong about the axes it has.
+    //
+    // Read off the component's own AST, not a list somebody maintains: the
+    // subject is `AcknowledgeDialog`'s RETURNED JSX, and every identifier
+    // evaluated inside it must be licensed by `DIALOG_READS` or by
+    // `DIALOG_CALLS`. An identifier nobody has classified is a failure naming
+    // it, which is the loud version of the four silent reads.
+    const src = readFileSync(
+      join(process.cwd(), 'components/registries/log-witness-alerts.tsx'),
+      'utf8',
+    );
+    const sf = ts.createSourceFile('x.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+    let dialogFn: ts.FunctionDeclaration | undefined;
+    const findFn = (node: ts.Node): void => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === 'AcknowledgeDialog') dialogFn = node;
+      ts.forEachChild(node, findFn);
+    };
+    findFn(sf);
+    expect(dialogFn, 'AcknowledgeDialog is no longer a function declaration — this guard lost its subject').toBeTruthy();
+
+    // The RETURN statement's expression is the rendered tree. Bounding the
+    // whole function body would refuse the mutation wiring, which legitimately
+    // reads `demoMode` — the defect is a read that reaches the SCREEN. The
+    // LAST top-level return is the JSX one; earlier ones are guards.
+    let returned: ts.Expression | undefined;
+    for (const stmt of dialogFn!.body!.statements) {
+      if (ts.isReturnStatement(stmt) && stmt.expression) returned = stmt.expression;
+    }
+    expect(returned, 'AcknowledgeDialog has no top-level return').toBeTruthy();
+
+    const licensed = new Set([...Object.keys(DIALOG_READS), ...DIALOG_CALLS, ...DIALOG_COPY]);
+    const seen = new Set<string>();
+    const unlicensed: string[] = [];
+    const visit = (node: ts.Node): void => {
+      // Only the ROOT of a property access: `mut.error` is a read of `mut`.
+      // A property NAME is not an identifier read — `openedOn.acknowledgedAt`
+      // must be caught, and it is, because `openedOn` is `modelled` and the
+      // rule for a modelled name is checked below.
+      if (ts.isPropertyAccessExpression(node)) {
+        visit(node.expression);
+        return;
+      }
+      if (ts.isJsxAttribute(node) && ts.isIdentifier(node.name)) {
+        // An attribute NAME is markup, not a read; its initializer is a read.
+        if (node.initializer) visit(node.initializer);
+        return;
+      }
+      if (ts.isIdentifier(node)) {
+        const name = node.text;
+        // JSX element names are handled by `DIALOG_CALLS`; lower-case ones are
+        // intrinsic HTML tags and are not reads at all.
+        if (/^[a-z]/.test(name) || licensed.has(name)) {
+          if (licensed.has(name)) seen.add(name);
+          if (!licensed.has(name) && !/^[a-z]/.test(name)) unlicensed.push(name);
+          return;
+        }
+        if (!licensed.has(name)) unlicensed.push(name);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(returned!);
+
+    expect(
+      [...new Set(unlicensed)].sort(),
+      'the dialog reads a name no licence in this file has classified',
+    ).toEqual([]);
+
+    // ANTI-VACUITY, and it is the half that matters: a walk that visited
+    // nothing licenses everything. The dialog demonstrably reads its stage, its
+    // consequence, its outcome and its mutation.
+    for (const required of ['stage', 'consequence', 'outcome', 'mut']) {
+      expect(seen, `the AST walk never reached \`${required}\``).toContain(required);
+    }
+
+    // Every copy constant the dialog renders must have a character-for-
+    // character HAND COPY in the prose module. That is what makes the third
+    // class closed rather than an allow-list: adding a name here licenses
+    // nothing unless somebody has also written the string down under `test/`,
+    // where it is reviewed as copy rather than as code.
+    //
+    // The two members are reached differently and both are checked the same
+    // way. `ADMIN_ROUTE_FORBIDDEN` is imported from `api-error-messages` and is
+    // shared with `/registries`; `ACK_ALREADY_RESOLVED` is declared locally in
+    // the component. A local declaration is not a defect — it is where a
+    // one-surface string belongs — but it IS the shape unreviewed copy takes,
+    // so its value is lifted out of the AST and required to match a hand copy
+    // exactly.
+    const proseStrings = new Set(
+      Object.values(PROSE as Record<string, unknown>).filter(
+        (v): v is string => typeof v === 'string',
+      ),
+    );
+    for (const record of Object.values(PROSE as Record<string, unknown>)) {
+      if (record && typeof record === 'object') {
+        for (const v of Object.values(record as Record<string, unknown>)) {
+          if (typeof v === 'string') proseStrings.add(v);
+        }
+      }
+    }
+    const constantValue = (name: string): string | undefined => {
+      if (name === 'ADMIN_ROUTE_FORBIDDEN') return ADMIN_ROUTE_FORBIDDEN;
+      let found: string | undefined;
+      const findConst = (node: ts.Node): void => {
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.name.text === name &&
+          node.initializer
+        ) {
+          // A concatenation of literals is how long copy is written here.
+          const parts: string[] = [];
+          const collect = (n: ts.Node): void => {
+            if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) parts.push(n.text);
+            else ts.forEachChild(n, collect);
+          };
+          collect(node.initializer);
+          found = parts.join('');
+        }
+        ts.forEachChild(node, findConst);
+      };
+      findConst(sf);
+      return found;
+    };
+    for (const name of DIALOG_COPY) {
+      const value = constantValue(name);
+      expect(value, `\`${name}\` is rendered by the dialog but its value could not be read`)
+        .toEqual(expect.any(String));
+      expect(
+        proseStrings,
+        `\`${name}\` is rendered by the dialog and no hand copy under test/ matches it`,
+      ).toContain(value);
+    }
+    // Anti-vacuity: an empty hand-copy set would licence every constant.
+    expect(proseStrings.size, 'the hand-copy set is empty').toBeGreaterThan(10);
+
+    // …and the rule that separates "reads `reason`" from "branches on
+    // `reason`". An interpolated value may only be an ARGUMENT — `reasonLabel(
+    // live.reason)` is fine, `live.reason === 'log_id_changed'` is the escape
+    // round 6 measured. Checked over the whole returned tree by looking at
+    // every comparison, because a comparison is the only way a value chooses
+    // copy without being a separate branch the product would model.
+    const comparisons: string[] = [];
+    const findComparisons = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.SyntaxKind.EqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsToken,
+        ].includes(node.operatorToken.kind)
+      ) {
+        comparisons.push(node.left.getText(sf).replace(/\s+/g, ''));
+      }
+      ts.forEachChild(node, findComparisons);
+    };
+    findComparisons(returned!);
+    const interpolatedOnly = Object.entries(DIALOG_READS)
+      .filter(([, how]) => how === 'interpolated')
+      .map(([name]) => name);
+    for (const compared of comparisons) {
+      for (const name of interpolatedOnly) {
+        expect(
+          compared.split(/[.?[]/),
+          `the dialog BRANCHES on \`${name}\` (\`${compared}\`), which the product models as ` +
+            'an interpolated value and therefore renders at exactly one value',
+        ).not.toContain(name);
+      }
+    }
+    // Anti-vacuity for that half too: the dialog demonstrably compares things.
+    expect(comparisons.length, 'the comparison walk found no comparisons').toBeGreaterThan(5);
+  });
+
   it('renders exactly the pinned copy, in every reachable arm', async () => {
     const inputs = reachableInputs();
     const armsWanted = new Set(inputs.map((i) => armKey(armOf(i))));
@@ -1916,7 +2258,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // what the three exported functions produce over the input space, and it is
     // pinned so that a change to the state machine which silently collapses two
     // arms into one shows up here rather than as a quietly smaller matrix.
-    expect(inputs.length, 'the input enumeration collapsed').toBe(20);
+    expect(inputs.length, 'the input enumeration collapsed').toBe(72);
     expect(armsWanted.size, 'the reachable arm space changed shape').toBe(13);
     // The marginals are still asserted, because a product can be the right SIZE
     // while missing a member of one axis — and each set is read off a `Record`

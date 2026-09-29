@@ -349,19 +349,38 @@ export const VALUELESS_ATTRS = [
 export const ACK_CLOSE_CONTROL = 'Close dialog';
 
 /**
- * A FUNCTION of the outcome, not a constant — which is the point.
+ * A FUNCTION of the outcome AND of whether there is a diagnostic to show.
  *
- * `Technical detail` is `ErrorDetail`'s `<pre>` name, and it exists only on the
- * two arms that pass `details`. Making that conditional pins both directions at
- * once: the 404 arm must NOT disclose (there is nothing diagnostic about an
- * alert that resolved on its own, and `ACK_RESOLVED_PANEL` promises no detail),
- * and the two error arms MUST — `ADMIN_ROUTE_FORBIDDEN` ends with "Read the
- * detail before changing any key", which is a dangling instruction if the
- * disclosure is absent. `admin-key-parity.test.tsx` requires the same pairing
- * of every surface that renders that string.
+ * `Technical detail` is `ErrorDetail`'s `<pre>` name, and it exists only where
+ * `details` is both passed and non-empty. Making that conditional pins both
+ * directions at once: the 404 arm must NOT disclose (there is nothing
+ * diagnostic about an alert that resolved on its own, and
+ * `ACK_RESOLVED_PANEL` promises no detail), and an error arm that HAS a
+ * diagnostic must — `ADMIN_ROUTE_FORBIDDEN` ends with "Read the detail before
+ * changing any key", which is a dangling instruction if the disclosure is
+ * absent. `admin-key-parity.test.tsx` requires the same pairing of every
+ * surface that renders that string.
+ *
+ * ── ROUND 6's N9: THE OUTCOME IS NOT ENOUGH TO DECIDE THIS ───────────
+ *
+ * This took the outcome alone and returned `[close, detail]` for every
+ * `failed`, i.e. it asserted "the failed arm ALWAYS discloses". The component
+ * does not guarantee that. `errorDiagnostic` returns `undefined` for anything
+ * that is not an `ApiError` (`api-error-messages.ts`), and `fetchJson` lets a
+ * `fetch()` `TypeError` propagate raw — so a browser that goes offline
+ * mid-acknowledgement reaches `failed` with nothing to disclose, `ErrorDetail`
+ * renders nothing, and this table demanded a control that is correctly absent.
+ *
+ * Round 6 could only call it unreachable because the input enumeration had no
+ * axis for the error's KIND, so no test produced the state. Round 7 added that
+ * axis, which turned N9 from an observation into a red test — which is the
+ * whole argument for enumerating inputs rather than outcomes.
+ *
+ * `hasDiagnostic` defaults to `true` so the two dozen call sites that pass an
+ * `ApiError` keep their meaning; the caller that knows otherwise says so.
  */
-export function expectedAnnounced(outcome: AckOutcome): string[] {
-  const discloses = outcome === 'forbidden' || outcome === 'failed';
+export function expectedAnnounced(outcome: AckOutcome, hasDiagnostic = true): string[] {
+  const discloses = (outcome === 'forbidden' || outcome === 'failed') && hasDiagnostic;
   return discloses ? [ACK_CLOSE_CONTROL, ACK_DETAIL_SUMMARY] : [ACK_CLOSE_CONTROL];
 }
 
