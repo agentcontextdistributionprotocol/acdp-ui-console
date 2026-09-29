@@ -386,10 +386,12 @@ describe('the dead tooltip copy is gone', () => {
     // at module scope — Vitest isolates module graphs per test file, so this
     // guard went on seeing a pristine seven while the app rendered the deleted
     // copy. Reading the object vouches for the object; the claim is about what
-    // the component renders copy for. So: parse the file, and collect the keys
-    // of EVERY copy table in it (a literal whose entries carry a `title`), not
-    // just the one constant's. A second lookup object is the realistic way this
-    // regresses, and it is the form `Object.keys` structurally cannot see.
+    // the component renders copy for. So: parse the file and read `PROFILE_INFO`'s
+    // keys off its own AST node, which `Object.keys` on an imported binding
+    // structurally cannot do (module-scope mutation is invisible to it). A
+    // SECOND lookup table elsewhere in the file — the realistic way this
+    // regresses — is a different claim, and it is `assertNoCopyOutsideTable`'s
+    // job, not this one's.
     //
     // `copyTableKeys` FAILS CLOSED — it throws on a spread, a computed key, an
     // accessor, a shorthand or a non-string key rather than skipping it. That
@@ -1597,6 +1599,22 @@ describe('the dead tooltip copy is gone', () => {
     expect(() => PCT.protocolEventNames('export type X = string;')).toThrow(/could not read/);
   });
 
+  it('the closure follows a RELATIVE import too, and refuses one that resolves to nothing', () => {
+    // The ship-gate review on #95: `importClosure` walked `@/` specifiers only.
+    // `components/registries/log-witness-card.tsx` is a real sibling of the
+    // card, reached the same way `components/ui/status-dot.tsx` would reach a
+    // sibling supplier — round 19's BL-8 escape, one hop further out than the
+    // round-19 fix reached, and it was 979/979 green.
+    const withRelativeImport = "import { LogWitnessCard } from './log-witness-card';";
+    expect(PCT.importClosure(withRelativeImport)).toContain('components/registries/log-witness-card.tsx');
+    // The other half: a specifier that resolves to nothing used to vanish
+    // silently, because the exact-membership `toEqual` two tests up is
+    // unchanged (not red) by a module that never joined it. It refuses now.
+    expect(() => PCT.importClosure("import { X } from './this-module-does-not-exist-anywhere';")).toThrow(
+      PCT.GUARD_FAILURE_PREFIX,
+    );
+  });
+
   it('contains NOTHING at module scope but its imports, the table and the component', () => {
     // The guard, inverted. Previous versions hunted for copy and each
     // missed a construct its author had not anticipated — a second
@@ -2033,7 +2051,7 @@ describe('every profile the demo advertises has copy for it', () => {
 // every registry in production, and jsdom's hostname is `localhost`, so every
 // render probe in this file — including the one that demands a gloss for all
 // seven advertisable ids — is satisfied. That direction is `assertGlossIsGated`
-// and `assertGlossExpressionIsExactly`'s subject, and only theirs.
+// and `assertGlossChokePoint`'s subject, and only theirs.
 //
 // And it bounds only what a FIXTURE can reach. Copy behind a condition no
 // fixture satisfies is invisible to it — which is why the source-level guards
@@ -3547,9 +3565,28 @@ describe('every source guard is exercised against a subject it must reject', () 
    * card with one thing wrong — which is exactly what `mutate` produces.
    */
   const READERS: Record<
-    'profileCopyTable' | 'advertisableIdsInComponent' | 'pathAttributes' | 'protocolEventNames',
+    | 'profileCopyTable'
+    | 'advertisableIdsInComponent'
+    | 'pathAttributes'
+    | 'protocolEventNames'
+    | 'importClosure',
     { run: (source?: string) => void; rejects: Case[] }
   > = {
+    // THE SHIP-GATE REVIEW ON #95. `importClosure` walked `@/` specifiers only;
+    // a relative one (`./sibling`) was silently `continue`d past like an npm
+    // package, which is exactly the shape of 14 real imports in this repo. A
+    // specifier that resolved to nothing was `continue`d past too, under a
+    // docblock claiming the closure's own membership pin would catch it — a
+    // MISSING module leaves an exact-equality pin unchanged, not red.
+    importClosure: {
+      run: (src) => void PCT.importClosure(src),
+      rejects: [
+        {
+          label: 'a first-party import with no compiled source file behind it',
+          source: "import { X } from './this-module-does-not-exist-anywhere';",
+        },
+      ],
+    },
     // ROUND 19's BL-2. The attribute surface of the card's render path is
     // enumerable only when there is ONE path, so this reader refuses a
     // component with a second dereference rather than reporting the first

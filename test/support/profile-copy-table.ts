@@ -112,11 +112,12 @@
 //      probes do cover for the ids and prop combinations they reach.
 // ══════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { PROFILE_GLOSS_TEXT, REGISTRY_ADVERTISABLE_PROFILES } from './advertisable-profiles';
 import { memberReads, unwrapExpression } from './ts-reads';
+import { compiledExtensions } from './stylesheet-text';
 
 // Anchored to THIS FILE, not to `process.cwd()`. The guard should not depend on
 // which directory the runner was invoked from. Not exported: nothing outside
@@ -437,38 +438,73 @@ export function componentSource(): string {
  * The instrument was right and its SCOPE was wrong. `assertNoForeignProfileId`
  * is run over this closure where it is used, so the supply's supply is bounded
  * by the same rule as the supply.
+ *
+ * ── THE SHIP-GATE REVIEW ON #95: THE CLOSURE DIDN'T CLOSE ────────────
+ *
+ * The claim above — "the supply's supply is bounded" — was false for a
+ * supplier reached by a RELATIVE specifier. Only `@/`-prefixed specifiers were
+ * walked; `./`/`../` were silently `continue`d past the same as an npm
+ * package, and this repository uses relative sibling imports in fourteen
+ * places (`components/layout/app-shell.tsx`'s `./sidebar`, for one). A new
+ * module wired in that way — `components/ui/status-dot.tsx` importing a
+ * relative sibling that names `acdp-consumer` in body text gated on
+ * `NEXT_PUBLIC_ACDP_UI_DEMO_MODE` — was measured 979/979 green: round 19's
+ * BL-8 again, one hop further out than the fix reached.
+ *
+ * Two smaller gaps rode along with it. The extension list was the literal
+ * `['.tsx', '.ts']`, hardcoded exactly where `test/support/stylesheet-text.ts`
+ * had already learned not to (that file's own docblock records round 19's
+ * NB-2 finding the same mistake); it is derived from `tsconfig.json` via
+ * `compiledExtensions()` now, shared with that module, so an `.mts` supplier
+ * is walked too. And a specifier that resolved to nothing was `continue`d
+ * past rather than refused — the docblock claimed this "is reported by the
+ * caller… via the closure's own membership pin", which is false: the pin is
+ * an exact-membership `toEqual`, and a MISSING module leaves it unchanged and
+ * green, not red. It is `fail()`, now, matching every other refusal in this
+ * module.
  */
-export function importClosure(): string[] {
+export function importClosure(entrySource?: string): string[] {
   const seen = new Set<string>();
   const order: string[] = [];
-  const visit = (rel: string): void => {
+  const exts = compiledExtensions();
+  const resolve = (fromRel: string, spec: string): string | null => {
+    let base: string;
+    if (spec.startsWith('@/')) {
+      base = spec.slice(2);
+    } else if (spec.startsWith('./') || spec.startsWith('../')) {
+      base = relative(REPO_ROOT, join(REPO_ROOT, dirname(fromRel), spec));
+    } else {
+      // A dependency, bounded by the lockfile and by `ALLOWED_IMPORTS`'
+      // specifier pin, not by reading its source.
+      return null;
+    }
+    for (const ext of exts) {
+      try {
+        readFileSync(join(REPO_ROOT, base + ext), 'utf8');
+        return base + ext;
+      } catch {
+        // Try the next compiled extension.
+      }
+    }
+    fail(
+      `the import '${spec}' from ${fromRel} resolves to no compiled source file under any of ` +
+        `${exts.join(', ')} — a first-party module this closure cannot see is a supplier this ` +
+        `rule cannot bound`,
+    );
+  };
+  const visit = (rel: string, content?: string): void => {
     if (seen.has(rel)) return;
     seen.add(rel);
     order.push(rel);
-    const src = readFileSync(join(REPO_ROOT, rel), 'utf8');
+    const src = content ?? readFileSync(join(REPO_ROOT, rel), 'utf8');
     const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     for (const stmt of sf.statements) {
       if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
-      const spec = stmt.moduleSpecifier.text;
-      // Only first-party modules. A dependency is bounded by the lockfile and
-      // by `ALLOWED_IMPORTS`' specifier pin, not by reading its source, and
-      // this component imports none in the render path today.
-      if (!spec.startsWith('@/')) continue;
-      const base = spec.slice(2);
-      for (const ext of ['.tsx', '.ts']) {
-        try {
-          readFileSync(join(REPO_ROOT, base + ext), 'utf8');
-          visit(base + ext);
-          break;
-        } catch {
-          // Try the next extension; a specifier that resolves to nothing is
-          // reported by the caller rather than swallowed, via the closure's
-          // own membership pin.
-        }
-      }
+      const resolved = resolve(rel, stmt.moduleSpecifier.text);
+      if (resolved) visit(resolved);
     }
   };
-  visit('components/registries/registry-card.tsx');
+  visit('components/registries/registry-card.tsx', entrySource);
   return order;
 }
 
