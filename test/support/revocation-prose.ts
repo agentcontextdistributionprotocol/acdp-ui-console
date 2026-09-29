@@ -68,8 +68,17 @@
 //    itself: a guard's docblock that claims a scope the guard does not have is
 //    the same defect as a page's copy claiming evidence it does not have.
 // 3. `reported` has no entry because it renders figures and no paragraph. A
-//    regression that made it render prose is caught by the test that demands a
-//    `.kpi-grid` there, not by this table.
+//    regression that made it render prose is caught by the assertion pair in
+//    `dashboard-revocation.test.tsx` that demands `querySelector('p')` be
+//    `null` AND `.kpi-value` be non-empty, not by this table.
+//
+//    ROUND 10's NB4: this used to say "the test that demands a `.kpi-grid`
+//    there", and no test demands a `.kpi-grid` anywhere. The element named was
+//    one level off from the element asserted. Harmless on its own, and worth
+//    correcting exactly because it is harmless: a scope sentence that names the
+//    wrong element is unfalsifiable by reading, so the next person to check it
+//    either greps for `.kpi-grid`, finds nothing, and assumes the pin is gone,
+//    or does not check at all.
 // ══════════════════════════════════════════════════════════════════════
 import type { DashboardRevocationState } from '@/lib/utils/revocation';
 
@@ -147,8 +156,10 @@ export const DASHBOARD_PROSE: Record<ProseKey, ProseEntry> = {
       'window. A longer window may also show figures.',
     licensedBy:
       'A `features.keyRevocationCheck === true` read as exactly true, and a complete counter ' +
-      'triple whose three members are all zero. Nothing about WHEN the check ran: the flag is ' +
-      'current config, the counters were persisted at audit time.',
+      'triple whose three members are each exactly zero — not merely "none of them positive", ' +
+      'which is what the routing tested until round 10’s NB5 and which admitted a negative ' +
+      'member to the one arm whose job is to say a number is zero. Nothing about WHEN the check ' +
+      'ran: the flag is current config, the counters were persisted at audit time.',
   },
   disabled: {
     headline: 'Revocation checking is switched off on this deployment.',
@@ -401,9 +412,24 @@ export const TRUST_EMPTY = {
 // it, and the review is the guarantee.
 //
 // And the scope is exactly these two cards plus the `/trust` KPI row. Other
-// surfaces on either page — the dashboard's other cards, `/trust`'s receipt
-// coverage and DID sections — are NOT pinned by anything here. That sentence
-// is the one bullet 2 got wrong; it is written narrowly on purpose.
+// surfaces on either page are NOT pinned by anything here. That sentence is the
+// one bullet 2 got wrong; it is written narrowly on purpose.
+//
+// ROUND 10's NB3 — THE EXAMPLES UNDERSTATED THE HOLE THE SENTENCE ADMITS. The
+// list used to read "the dashboard's other cards, `/trust`'s receipt coverage
+// and DID sections", which are all CARDS, and a reader takes from that that the
+// unpinned surface is other cards. It is not. Measured: `<p>Every receipt in
+// this deployment is clean.</p>` placed at page level, directly BETWEEN the
+// `.kpi-grid` and the violations card, left 1038/1038 green. Bare copy in the
+// gap between two pinned surfaces is the widest part of what this admits, and
+// it is also the most natural place for somebody to put a summary sentence.
+//
+// So the honest form of the scope is a POSITION, not a list of cards: every
+// pin here is rooted at a card element or at the KPI row, and the page's own
+// children — anything that is a sibling of those roots rather than a
+// descendant — are outside every one of them. Naming the three cards made the
+// sentence sound narrower than the code, which is the direction that gets a
+// gap accepted.
 // ══════════════════════════════════════════════════════════════════════
 
 /** Collapse whitespace runs to one space and trim. Re-wrapping JSX is not a copy change. */

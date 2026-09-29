@@ -365,6 +365,36 @@ describe('dashboardRevocationState', () => {
     expect(dashboardRevocationState(CLEAN, ALL_ON).kind).toBe('checked-clean');
   });
 
+  it('checked-clean means all three are ZERO, not "none of them positive"', () => {
+    // ROUND 10's NB5. The `reported` arm tested `> 0`, so the predicate the code
+    // actually applied to reach `checked-clean` was "no member is POSITIVE" —
+    // while `checked-clean`'s copy states "this window's counters are zero" and
+    // its `licensedBy` claimed "a complete counter triple whose three members
+    // are all zero". A negative member satisfied `hasCounters`, failed the
+    // `reported` arm, and landed on the one sentence in this module whose whole
+    // job is to say a number is zero. That is the module's headline defect —
+    // a figure asserted from something that is not that figure — reached by
+    // arithmetic rather than by a missing field.
+    //
+    // A negative count is unreachable from a correct control plane, which is
+    // precisely the argument that was made for `{}`, for `features: null` and
+    // for `features: []`; all three arrived off the network anyway.
+    for (const member of ['preCompromise', 'revokedAtOrAfter', 'revokedTimeUnverifiable'] as const) {
+      const negative = { ...CLEAN, [member]: -1 };
+      const state = dashboardRevocationState(negative, ALL_ON);
+      expect(state.kind, `a negative \`${member}\` was called clean`).toBe('reported');
+      // …and `reported` is the honest destination BECAUSE it makes no claim
+      // beyond "these are the counters that arrived": the value shows up as
+      // itself rather than being laundered into the word "clean". Routing it to
+      // `counters-partial` would print "some of the three came through and some
+      // did not", which is false of a complete triple.
+      expect(state.kind === 'reported' && state.counts).toEqual(negative);
+    }
+    // The boundary, both sides: exactly zero is still clean, and `-0` is zero.
+    expect(dashboardRevocationState(CLEAN, ALL_ON).kind).toBe('checked-clean');
+    expect(dashboardRevocationState({ ...CLEAN, preCompromise: -0 }, ALL_ON).kind).toBe('checked-clean');
+  });
+
   it('the check explicitly off is disabled, not clean', () => {
     expect(dashboardRevocationState(CLEAN, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
     // And `null` counters — what upstream actually sends when it is off.

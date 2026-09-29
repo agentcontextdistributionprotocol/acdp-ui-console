@@ -560,11 +560,33 @@ export function dashboardRevocationState(
   // to tell them apart. This module's docblock said in three places that a
   // partial triple "is not a payload this console can read"; this arm read one
   // anyway.
+  // `!== 0`, NOT `> 0`, and round 10's NB5 is why. `checked-clean`'s copy states
+  // "this window's counters are zero", and its `licensedBy` said it was
+  // licensed by "a complete counter triple whose three members are all zero".
+  // With `> 0` here, the predicate the code actually applied was "no member is
+  // POSITIVE" — so `{ preCompromise: -1, revokedAtOrAfter: 0,
+  // revokedTimeUnverifiable: 0 }` satisfied `hasCounters`, failed this arm, and
+  // rendered "this window's counters are zero" over a triple that is not all
+  // zero. That is the module's own headline defect — a figure asserted from
+  // something that is not that figure — in the one arm whose whole job is to
+  // say a number is zero.
+  //
+  // A negative count is unreachable from a correct control plane (the counters
+  // are `?? 0` over SQL `COUNT`s), which is exactly the argument that was made
+  // for `{}`, for `features: null` and for `features: []`, and all three
+  // arrived off the network anyway. The fix is not a fourth `because`: routing
+  // a nonsense member to `counters-partial` would print "some of the three
+  // counters came through and some did not", which is false of a complete
+  // triple, and inventing an arm for it would be copy nobody can read in the
+  // wild. `reported` is the honest destination, because `reported` makes no
+  // claim beyond "these are the counters that arrived" — so a `-1` shows up on
+  // screen as `-1`, visible and reportable, rather than being laundered into
+  // the word "clean".
   if (
     hasCounters(keyRevocation) &&
-    (keyRevocation.preCompromise > 0 ||
-      keyRevocation.revokedAtOrAfter > 0 ||
-      keyRevocation.revokedTimeUnverifiable > 0)
+    (keyRevocation.preCompromise !== 0 ||
+      keyRevocation.revokedAtOrAfter !== 0 ||
+      keyRevocation.revokedTimeUnverifiable !== 0)
   ) {
     return { kind: 'reported', counts: keyRevocation };
   }
