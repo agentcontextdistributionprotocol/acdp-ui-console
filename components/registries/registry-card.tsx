@@ -59,7 +59,18 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  * each over-claimed and the over-claim is how the next hole got missed:
  *
  *   - `tsc` bounds THE KEYS OF THIS OBJECT, via the type above. Exactly seven,
- *     exactly these. Nothing else is needed for that claim.
+ *     exactly these — an eighth key is an excess-property error and a missing
+ *     one a missing-property error.
+ *
+ *     "Nothing else is needed for that claim" is what this bullet used to say,
+ *     and round 13 was right to call it the fifth over-claim in a comment about
+ *     over-claiming. The type bounds the keys only for as long as the ANNOTATION
+ *     says `Record<AdvertisableProfileId, …>`; widening it to `Record<string, …>`
+ *     is a one-word edit that tsc is then perfectly happy with. What holds that
+ *     line is `assertEveryStringLiteralIsLicensed()` (a new key is a string
+ *     literal, and an unlicensed one is refused) plus the gloss-table equality
+ *     in `registry-card-profiles.test.tsx`, which compares this whole table
+ *     against a hand copy under `test/support/`.
  *   - `assertNoCopyOutsideTable()` bounds THE REST OF THIS FILE: it walks the
  *     whole file, not just module scope, and refuses any other object literal
  *     carrying a `title`. A second lookup table, a gloss built inside the
@@ -110,13 +121,35 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     render", which it does not: a string reaching the screen through an
  *     identifier or a function call is invisible to it, and round 9's gate got
  *     `acdp-log-witness` onto every card that way, twice.
+ *   - `assertEveryStringLiteralIsLicensed()` bounds THE SUPPLY. Every string
+ *     literal in this file must be one of: an allow-listed import specifier, one
+ *     of the seven ids, one of the seven glosses hand-copied under `test/`, or a
+ *     structural token (a class name, a CSS variable, a `Badge` variant). A
+ *     template literal with substitutions is refused outright. This is the bound
+ *     that does not care HOW a string reaches the screen — a sentence has to be
+ *     spelled somewhere, so an identifier, an attribute, a call and a gated
+ *     branch are all closed by the same check. It is also what makes the gloss
+ *     text itself bounded: every other guard licensed the gloss by reading it
+ *     off this card.
+ *   - `assertGlossChokePoint()`, `assertGlossIsGated()` and
+ *     `assertNoForeignProfileId()` bound, respectively, the ONE expression that
+ *     may reach a rendered `title`, both of `glossFor`'s statements, and any
+ *     profile-id-shaped string naming an id outside the seven (case-insensitively
+ *     matched, exactly compared).
  *   - the RENDERED closed world (`registry-card-profiles.test.tsx`) is what
- *     bounds the strings. Over a fixture matrix, every text node and every
- *     announced attribute must be derivable FROM THE FIXTURE — so it asks what
- *     is on the screen and never how it got there, and an identifier, a call,
- *     a second `.map` and an `alt` fail it identically.
+ *     bounds what is on the screen. Over a fixture matrix, every text node and
+ *     every announced attribute must be derivable FROM THE FIXTURE — so it asks
+ *     what is on the screen and never how it got there, and an identifier, a
+ *     call, a second `.map` and an `alt` fail it identically.
  *
- * Their honest residual, and it has two parts:
+ * THIS LIST IS PROSE AND PROSE DRIFTS. The authoritative list is
+ * `RUN_ON_READ` in `test/support/profile-copy-table.ts`, whose length is
+ * asserted, whose membership is asserted by name, and every one of whose refusal
+ * BRANCHES has a subject that reaches it — the count in that module's docblocks
+ * had drifted three ways by round 13, which is why no number is written in any
+ * of them any more, this one included.
+ *
+ * Their honest residual, and it has three parts:
  *
  *   - No test can quantify over every possible id string, so the probe universe
  *     is a sample (the seven, the three forbidden ones, shape variants, and the
@@ -125,9 +158,28 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *   - SUPPRESSION is not bounded by any render. Copy that stops appearing on a
  *     deployment the tests do not run on — `glossFor` returning `undefined`
  *     when `window.location.hostname` ends in `.prod`, say — is invisible to
- *     every probe here, because jsdom's hostname is `localhost`. That direction
- *     rests entirely on `assertGlossIsGated` pinning both of `glossFor`'s
- *     statements, which it did not do until round 10.
+ *     every probe here, because jsdom's hostname is `localhost`.
+ *
+ *     "That direction rests entirely on `assertGlossIsGated`" is what this said,
+ *     and round 11 falsified it: suppression has a SECOND home, the map
+ *     callback's return, and a `capabilities.limits.max_search_limit > 500` gate
+ *     dropped every tooltip on every affected registry with `glossFor`
+ *     untouched and 963 tests green. It now rests on that guard AND on
+ *     `assertGlossIsPureOfId()` pinning the callback to two statements whose
+ *     second returns one JSX element with a pinned attribute set.
+ *   - COMMENTS are exempt from the source walks — a guard that banned discussing
+ *     the problem would be uncomfortable enough to get deleted — and a string
+ *     can still be DERIVED at runtime from licensed parts (a `.slice`, a
+ *     `.toUpperCase`, a concatenation). That residual is much narrower than it
+ *     was, because every part has to be licensed and a template substitution is
+ *     refused, but it is not empty.
+ *
+ *     What is NOT true is the framing the previous version of this paragraph
+ *     used: that the source walks and the rendered world have "complementary
+ *     holes", as if what one missed the other caught. Round 13 got two
+ *     coordinate-gated escapes past both in the same round. They are two partial
+ *     bounds that overlap, not a cover, and each new round has closed a hole by
+ *     widening what a guard is ABOUT rather than by adding a case to it.
  */
 const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },

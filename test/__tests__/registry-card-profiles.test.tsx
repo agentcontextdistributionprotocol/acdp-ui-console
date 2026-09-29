@@ -25,6 +25,7 @@
 // at all is a separate question, and it is filed rather than settled here.
 // ══════════════════════════════════════════════════════════════════════
 import { describe, expect, it, afterEach } from 'vitest';
+import ts from 'typescript';
 import { render, cleanup, within } from '@testing-library/react';
 import { RegistryCard } from '@/components/registries/registry-card';
 import { formatNumber, timeAgo } from '@/lib/utils/format';
@@ -33,7 +34,9 @@ import type { KnownRegistry, RegistryCapabilities } from '@/lib/types';
 import {
   REGISTRY_ADVERTISABLE_PROFILES,
   NOT_ADVERTISABLE,
+  PROFILE_GLOSS_TEXT,
 } from '../support/advertisable-profiles';
+import { contentDeclarations, contentOccurrences } from '../support/stylesheet-text';
 import * as PCT from '../support/profile-copy-table';
 import {
   profileCopyTable,
@@ -431,6 +434,86 @@ describe('the dead tooltip copy is gone', () => {
     expect(NOT_ADVERTISABLE).toEqual(['acdp-consumer', 'acdp-federated', 'acdp-log-witness']);
   });
 
+  it('the gloss an operator reads is the gloss somebody WROTE DOWN', () => {
+    // ROUND 13's N1, and the third time this branch has found the same shape.
+    // Every check on this card's gloss CONTENT derived the permitted content
+    // from the card: `allowedAnnounced()` builds its licensed set by calling
+    // `profileCopyTable()`, which parses `registry-card.tsx`. A copy guard that
+    // shares a source with its subject cannot reject the subject. Measured:
+    // replacing `acdp-registry-core`'s title with "Consumer deployment profile —
+    // a registry is forbidden to advertise this; contact ops@example.test
+    // (RFC-ACDP-0001 §9.1)" left all 969 tests green.
+    //
+    // `PROFILE_GLOSS_TEXT` is a hand copy in a file the component does not
+    // import, so changing operator-facing copy is a two-file diff with a reason.
+    // It is compared with `toEqual` on the whole map rather than
+    // id-by-id-`toContain`, because a substring pin cannot bound what else a
+    // string says — an appended sentence walks straight through one.
+    const { entries } = profileCopyTable();
+    expect(Object.fromEntries(entries)).toEqual(PROFILE_GLOSS_TEXT);
+    // Anti-vacuity in both directions: two empty maps are also equal, and a
+    // gloss emptied to `''` on both sides would still match.
+    expect(Object.keys(PROFILE_GLOSS_TEXT)).toHaveLength(ADVERTISABLE.length);
+    for (const [id, gloss] of Object.entries(PROFILE_GLOSS_TEXT)) {
+      expect(gloss.length, `${id}'s gloss is too short to be a gloss`).toBeGreaterThan(20);
+    }
+  });
+
+  it('the label allow-list is a list of LABELS, not a place to put a sentence', () => {
+    // ROUND 13's N2. `CARD_LABELS` is what licenses every string this card may
+    // render in a child position, and nothing pinned it: adding one entry
+    // licenses one sentence, which is precisely round 9's escape ("Log witness
+    // cosignatures are recorded here."). Pinned exactly, so an addition is a
+    // visible diff…
+    expect([...CARD_LABELS]).toEqual([
+      '● healthy',
+      'Event count',
+      'Base URL',
+      '—',
+      'Last seen',
+      'ACDP version',
+      'Algorithms',
+      ',',
+      'Profiles',
+      'Max payload',
+      'KB',
+      'Anon reads',
+      'enabled',
+      'disabled',
+    ]);
+    // …and bounded in SHAPE, which is the half that survives someone editing
+    // the list above. A label is at most two words; prose is not. This is what
+    // makes the allow-list structurally unable to license a sentence, rather
+    // than merely currently not licensing one.
+    for (const label of CARD_LABELS) {
+      expect(label.trim().split(/\s+/).length, `\`${label}\` reads as prose, not a label`).toBeLessThan(3);
+    }
+  });
+
+  it('no stylesheet rule can put a character on this card', () => {
+    // The channel both closed worlds are blind to. `.chip::after { content:
+    // 'acdp-consumer'; }` is invisible to every source walk (it is not in the
+    // component) and to every DOM walk (`textContent` never includes generated
+    // content, and jsdom does not compute it at all) — so the rendered closed
+    // world and the source closed world can both be green while the card names
+    // an id no registry may advertise.
+    //
+    // Provenance of the bound is in `test/support/stylesheet-text.ts`. Here:
+    // every declaration is empty, and the scanner is neither over- nor
+    // under-matching.
+    const decls = contentDeclarations();
+    for (const value of decls) {
+      expect(value, `a CSS rule generates the text ${value}`).toMatch(/^(''|"")$/);
+    }
+    // Anti-vacuity, two ways. A scanner that matched nothing would pass the loop
+    // above; one that swallowed `justify-content` would find eight more.
+    expect(decls.length, 'the stylesheet scanner found no content declarations').toBeGreaterThan(1);
+    expect(decls.length, 'the scanner disagrees with an independent count').toBe(contentOccurrences());
+    // …and the trap itself, stated as a case rather than as a comment.
+    expect(contentDeclarations('.a { justify-content: center; }')).toEqual([]);
+    expect(contentDeclarations(".a::after { content: 'x'; }")).toEqual(["'x'"]);
+  });
+
   it('contains NOTHING at module scope but its imports, the table and the component', () => {
     // The guard, inverted. Previous versions hunted for copy and each
     // missed a construct its author had not anticipated — a second
@@ -667,7 +750,11 @@ describe('the dead tooltip copy is gone', () => {
     // `ADVERTISABLE ⊆ PROBES`. The one array the design notes call deliberately
     // adversarial could be silently reduced to the seven ids that pass easily.
     expect(PROBES).toEqual(expect.arrayContaining([...ADVERTISABLE, ...NOT_ADVERTISABLE]));
-    const adversarial = PROBES.filter((p) => !ADVERTISABLE.includes(p) && !NOT_ADVERTISABLE.includes(p));
+    const advertisable = ADVERTISABLE as readonly string[];
+    const notAdvertisable = NOT_ADVERTISABLE as readonly string[];
+    const adversarial = PROBES.filter(
+      (p) => !advertisable.includes(p) && !notAdvertisable.includes(p),
+    );
     expect(adversarial.length).toBeGreaterThanOrEqual(15);
     // The classes, named — a count alone is satisfied by fifteen copies of 'x'.
     expect(adversarial).toEqual(expect.arrayContaining(['toString', 'constructor', '__proto__']));
@@ -750,7 +837,7 @@ describe('the dead tooltip copy is gone', () => {
     // A registry may legitimately advertise all seven, so rendering all seven is
     // not a synthetic shape.
     const { container } = render(
-      <RegistryCard registry={REGISTRY_B} capabilities={{ ...MOCK_CAPABILITIES.b, profiles: ADVERTISABLE }} />,
+      <RegistryCard registry={REGISTRY_B} capabilities={{ ...MOCK_CAPABILITIES.b, profiles: [...ADVERTISABLE] }} />,
     );
     const rendered = [...container.querySelectorAll('.chip')];
     expect(rendered.map((c) => c.textContent)).toEqual(ADVERTISABLE);
@@ -774,7 +861,7 @@ describe('the dead tooltip copy is gone', () => {
     // right for one of three and wrong for two is the same defect as getting it
     // wrong for all three — and the set is asserted as a set for that reason.
     const { container } = render(
-      <RegistryCard registry={REGISTRY_B} capabilities={{ ...MOCK_CAPABILITIES.b, profiles: ADVERTISABLE }} />,
+      <RegistryCard registry={REGISTRY_B} capabilities={{ ...MOCK_CAPABILITIES.b, profiles: [...ADVERTISABLE] }} />,
     );
     const accented = [...container.querySelectorAll('.chip.ok')].map((c) => c.textContent);
     expect(accented).toEqual([
@@ -1622,8 +1709,12 @@ describe('the source guards are not vacuous', () => {
 
   it('the two guards profileCopyTable() does NOT run still run, here', () => {
     // `assertNoProseOutsideLabelTable` and `assertGlossIsPureOfId` are not
-    // invoked by `profileCopyTable()` — it calls six of the eight asserts — so
-    // `mock-data.test.ts`, which calls it twice, gets six of the eight bounds.
+    // invoked by `profileCopyTable()` — it runs `RUN_ON_READ`, which holds every
+    // guard but those two — so `mock-data.test.ts`, which calls it twice, gets
+    // those bounds and not these. The numbers that used to be written here and
+    // in two docblocks in the guard module had drifted to three different
+    // values by round 13; the set is named instead, and `RUN_ON_READ.length` is
+    // asserted once, above.
     //
     // Not a defect today: this file calls both directly, above and here. It is
     // written down and re-asserted because "the helper runs everything" is
@@ -1801,6 +1892,121 @@ describe('every source guard is exercised against a subject it must reject', () 
 
   const CLEAN_TSX = 'export function RegistryCard() { return <span>x</span>; }';
 
+  // ══════════════════════════════════════════════════════════════════
+  // ROUND 13's B4: SUBJECTS THAT REACH A GUARD'S *LATER* BRANCHES.
+  //
+  // Round 12 gave every exported guard a rejecting subject and called the
+  // coverage question closed. Round 13 measured that NINE load-bearing checks
+  // inside those guards still had none, and diagnosed why: every synthetic
+  // subject dies at the guard's FIRST branch, so each branch after it is still
+  // only ever run against source that satisfies it. An emptied later branch and
+  // a working one are indistinguishable — the same argument `sourceFile`'s
+  // docblock makes for the `source` seam existing at all, one level down.
+  //
+  // Writing a synthetic file that reaches a late branch means hand-writing a
+  // file that satisfies every earlier branch. For `assertGlossIsPureOfId`'s
+  // attribute checks that is most of the component; for `profileCopyTable`'s
+  // own refusals it is the whole component, because it runs all eight
+  // `RUN_ON_READ` guards first.
+  //
+  // So a late-branch subject is the REAL source with ONE textual edit. Every
+  // earlier branch is satisfied by construction, the edit is the only
+  // difference, and the failure names the branch. The anchor-uniqueness
+  // assertion is what keeps a subject from silently becoming a no-op when the
+  // component is reformatted: a mutation that matches nothing, or matches
+  // twice, fails here rather than quietly testing the unmutated file — which is
+  // how six sweep runs in this session applied no mutation at all and reported
+  // green.
+  // ══════════════════════════════════════════════════════════════════
+  function mutate(...edits: readonly (readonly [from: string, to: string])[]): string {
+    let src = PCT.componentSource();
+    for (const [from, to] of edits) {
+      const parts = src.split(from);
+      expect(
+        parts.length - 1,
+        `the mutation anchor ${JSON.stringify(from.slice(0, 60))} does not occur exactly once in ` +
+          'registry-card.tsx — this subject would otherwise test the UNMUTATED file',
+      ).toBe(1);
+      src = parts.join(to);
+    }
+    return src;
+  }
+
+  /** Anchors used by more than one subject, so a reformat moves one line. */
+  const CORE_ENTRY = "'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },";
+  const CHIP_TAG = "<span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>";
+  const GATE_LINE = 'if (!(ADVERTISABLE_PROFILE_IDS as readonly string[]).includes(p)) return undefined;';
+  const CHIP_CLOSE = '                    </span>\n                  );\n                })}';
+  const CHIP_CHILD = '                      {p}\n                    </span>';
+
+  /** A table with no component: `assertModuleShape`'s second anti-vacuity arm. */
+  const TABLE_ONLY = "const PROFILE_INFO = { 'acdp-registry-core': { title: 'x' } };";
+
+  /** Two `PROFILE_INFO` initializers — the shared table reader's shadowing arm. */
+  const TWO_TABLES =
+    "const PROFILE_INFO = { 'a': { title: 'x' } };\n" +
+    "function RegistryCard() { const PROFILE_INFO = { 'b': { title: 'y' } }; return <span>{PROFILE_INFO.b.title}</span>; }";
+
+  /** A spread outside the table: keys not knowable from this file. */
+  const SPREAD_OUTSIDE = `${TABLE_ONLY}\nconst extra = { ...(globalThis as Record<string, never>) };`;
+
+  /** A computed key outside the table whose expression is not a literal. */
+  const COMPUTED_KEY_OUTSIDE = `${TABLE_ONLY}\nconst extra = { [String(Math.random())]: 1 };`;
+
+  /** `glossFor` whose second statement is not a return. */
+  const NON_RETURN_GLOSS = `
+    function glossFor(p: string) {
+      ${GATE_LINE}
+      PROFILE_INFO[p as AdvertisableProfileId];
+    }
+  `;
+
+  /** The chip callback passed by reference: its parameters are unbounded. */
+  const CALLBACK_BY_REFERENCE = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map(renderChip)}</>;
+    }
+  `;
+
+  /** A concise-body callback: there are no statements to pin. */
+  const CONCISE_CALLBACK = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string) => (
+        <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={(() => { const info = glossFor(p); return info?.title; })()}>{p}</span>
+      ))}</>;
+    }
+  `;
+
+  /** Two statements, the second not a `return`. */
+  const NO_RETURN_CALLBACK = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string) => {
+        const info = glossFor(p);
+        void info;
+      })}</>;
+    }
+  `;
+
+  /** A conditional return: two elements, so neither is the pinned one. */
+  const CONDITIONAL_RETURN = `
+    function RegistryCard({ capabilities }: { capabilities: any }) {
+      return <>{capabilities.profiles.map((p: string) => {
+        const info = glossFor(p);
+        return info ? <span key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>{p}</span> : <span key={p} className="chip">{p}</span>;
+      })}</>;
+    }
+  `;
+
+  /** A spread on the chip: its props are unbounded. */
+  const SPREAD_CHIP = `
+    function RegistryCard({ capabilities, rest }: { capabilities: any; rest: object }) {
+      return <>{capabilities.profiles.map((p: string) => {
+        const info = glossFor(p);
+        return <span {...rest} key={p} className={info?.accent ? 'chip ok' : 'chip'} title={info?.title}>{p}</span>;
+      })}</>;
+    }
+  `;
+
   type Case = { label: string; source: string };
 
   /**
@@ -1835,11 +2041,66 @@ describe('every source guard is exercised against a subject it must reject', () 
         },
         { label: 'a namespace import', source: `import * as fmt from '@/lib/utils/format';\n${CLEAN_TSX}` },
         { label: 'no PROFILE_INFO at all', source: CLEAN_TSX },
+        { label: 'no RegistryCard at all', source: TABLE_ONLY },
+        {
+          label: 'a default import',
+          source: mutate([
+            "import { StatusDot } from '@/components/ui/status-dot';",
+            "import StatusDot from '@/components/ui/status-dot';",
+          ]),
+        },
+        {
+          // An allow-listed MODULE is not a bounded one: this is the binding
+          // allow-list's own branch, and nothing reached it before round 14.
+          label: 'an unlisted binding from an allow-listed module',
+          source: mutate([
+            "import { formatNumber, timeAgo } from '@/lib/utils/format';",
+            "import { formatNumber, timeAgo, PROFILE_GLOSS } from '@/lib/utils/format';",
+          ]),
+        },
+        {
+          label: 'an unlisted module-scope variable',
+          source: mutate([
+            'type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];',
+            "type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];\nconst FALLBACK_GLOSS = 'x';",
+          ]),
+        },
+        {
+          label: 'an exported PROFILE_INFO',
+          source: mutate([
+            'const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {',
+            'export const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {',
+          ]),
+        },
+        {
+          label: 'an unlisted module-scope function',
+          source: mutate([
+            'function glossFor(p: string): { title: string; accent?: boolean } | undefined {',
+            'function fallbackTitle(p: string) {\n  return p;\n}\n' +
+              'function glossFor(p: string): { title: string; accent?: boolean } | undefined {',
+          ]),
+        },
+        {
+          label: 'a module-scope class',
+          source: mutate([
+            'type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];',
+            'type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];\nclass Chip {}',
+          ]),
+        },
       ],
     },
     assertNoCopyOutsideTable: {
       run: (src) => PCT.assertNoCopyOutsideTable(src),
-      rejects: [{ label: 'a second copy table in the component', source: COPY_OUTSIDE_TABLE }],
+      rejects: [
+        { label: 'a second copy table in the component', source: COPY_OUTSIDE_TABLE },
+        // The shared table reader's two arms. Both are refusals of
+        // `copyTableNode`, which every other guard in the module depends on
+        // finding exactly one of.
+        { label: 'no PROFILE_INFO object literal at all', source: 'export const X = 1;' },
+        { label: 'two PROFILE_INFO initializers', source: TWO_TABLES },
+        { label: 'a spread into an object literal outside the table', source: SPREAD_OUTSIDE },
+        { label: 'a computed key outside the table', source: COMPUTED_KEY_OUTSIDE },
+      ],
     },
     assertNoRuntimeCopyForms: {
       run: (src) => PCT.assertNoRuntimeCopyForms(src),
@@ -1868,6 +2129,17 @@ describe('every source guard is exercised against a subject it must reject', () 
       rejects: [
         { label: 'two title attributes', source: TWO_TITLES },
         { label: 'a JSX spread', source: JSX_SPREAD },
+        {
+          // `GLOSS_EXPRESSION`'s docblock cites this exact mutation as the
+          // reason it is pinned to one spelling, and until round 14 the branch
+          // that enforces it had no subject: every other case died at the
+          // `title`-count check one line above.
+          label: 'a coordinate-gated gloss expression',
+          source: mutate([
+            'title={info?.title}',
+            "title={registry.authority === 'registry-a.playground.local' ? info?.title : undefined}",
+          ]),
+        },
       ],
     },
     assertGlossIsGated: {
@@ -1877,6 +2149,15 @@ describe('every source guard is exercised against a subject it must reject', () 
         { label: 'a host-conditional suppression in the return', source: SUPPRESSING_GLOSS },
         { label: 'a second PROFILE_INFO lookup site', source: SECOND_LOOKUP },
         { label: 'no glossFor at all', source: CLEAN_TSX },
+        {
+          // The gate's own docblock names `if (false && …)` as the mutation
+          // that defeated the substring version of this check. It kept the
+          // shape — two statements, first an `if` — so it reached the
+          // condition-text branch and nothing was there to exercise it.
+          label: 'a short-circuited gate that keeps the shape',
+          source: mutate([GATE_LINE, `if (false && ${GATE_LINE.slice('if ('.length)}`]),
+        },
+        { label: "glossFor's second statement is not a return", source: NON_RETURN_GLOSS },
       ],
     },
     assertGlossIsPureOfId: {
@@ -1887,6 +2168,44 @@ describe('every source guard is exercised against a subject it must reject', () 
         { label: 'an impure `info` initialiser', source: IMPURE_INFO },
         { label: 'a conditional return that drops the tooltip', source: CONDITIONAL_SUPPRESSION },
         { label: 'the gloss rendered as the chip child', source: GLOSS_AS_CHILD },
+        { label: 'the callback passed by reference', source: CALLBACK_BY_REFERENCE },
+        { label: 'a concise-body callback', source: CONCISE_CALLBACK },
+        { label: 'a callback whose second statement is not a return', source: NO_RETURN_CALLBACK },
+        { label: 'a conditional return of two chips', source: CONDITIONAL_RETURN },
+        { label: 'a spread on the chip', source: SPREAD_CHIP },
+        {
+          label: 'a second profiles map',
+          source: mutate([
+            CHIP_CLOSE,
+            `${CHIP_CLOSE}\n                {capabilities.profiles.map((q: string) => (\n` +
+              '                  <span key={q}>{q}</span>\n                ))}',
+          ]),
+        },
+        {
+          // A second `info`, bound inside the returned JSX, where the
+          // two-statement pin cannot see it.
+          label: 'a second `info` binding inside the chip',
+          source: mutate([
+            'title={info?.title}',
+            'title={(() => { const info = glossFor(p); return info?.title; })()}',
+          ]),
+        },
+        {
+          // The two attribute checks. A DROPPED `title` suppresses every gloss
+          // on the card and leaves the name set one short; a REWRITTEN
+          // `className` keeps the name set and changes what the chip is a
+          // function of. Neither had a subject: every earlier case died before
+          // the attribute comparison.
+          label: 'the chip with its title dropped',
+          source: mutate([CHIP_TAG, "<span key={p} className={info?.accent ? 'chip ok' : 'chip'}>"]),
+        },
+        {
+          label: 'the chip className made a function of the id',
+          source: mutate([
+            CHIP_TAG,
+            "<span key={p} className={p === 'acdp-registry-core' ? 'chip ok' : 'chip'} title={info?.title}>",
+          ]),
+        },
       ],
     },
     assertNoProseOutsideLabelTable: {
@@ -1897,6 +2216,33 @@ describe('every source guard is exercised against a subject it must reject', () 
           source: `export function R() { return <span>Log witness cosignatures are recorded here.</span>; }`,
         },
         { label: 'a file with no JSX at all (vacuity)', source: 'export const X = 1;' },
+        {
+          // A child the label list cannot bound, because what it renders is
+          // decided at runtime. Refused rather than skipped.
+          label: 'a template literal in a child position',
+          source: mutate([CHIP_CHILD, '                      {`${p} — see the profile notes`}\n                    </span>']),
+        },
+      ],
+    },
+    assertEveryStringLiteralIsLicensed: {
+      run: (src) => PCT.assertEveryStringLiteralIsLicensed(src),
+      rejects: [
+        {
+          // ROUND 13's N1 made concrete: the gloss the operator reads, rewritten
+          // to ratify the id #95 deleted. Round 13 measured this exact edit
+          // green across 969 tests, because the only thing bounding gloss
+          // CONTENT was a check that read the gloss off the card.
+          label: 'a rewritten gloss',
+          source: mutate([
+            CORE_ENTRY,
+            "'acdp-registry-core': { title: 'Consumer deployment profile — see acdp-consumer' },",
+          ]),
+        },
+        {
+          label: 'a template literal with substitutions',
+          source: mutate([CHIP_CHILD, '                      {`${p} — see the profile notes`}\n                    </span>']),
+        },
+        { label: 'a file with almost no literals (vacuity)', source: 'export const X = 1;' },
       ],
     },
     assertNoForeignProfileId: {
@@ -1915,6 +2261,78 @@ describe('every source guard is exercised against a subject it must reject', () 
     },
   };
 
+  /**
+   * The two READERS, which are not `assert*` and so are not in `GUARDS`.
+   *
+   * ROUND 14: both refuse rather than skip — a spread, a computed key, an
+   * accessor, a non-string key, a missing `title`, a duplicate id, a
+   * non-literal id list — and not one of those refusals had ever been run.
+   * They could not be: neither took a `source`, so both always read the real
+   * file, which satisfies all of them. Round 14 gave them the same self-test
+   * seam every guard already had, and `profileCopyTable` passes it THROUGH to
+   * the eight `RUN_ON_READ` guards, so a subject here has to be a whole valid
+   * card with one thing wrong — which is exactly what `mutate` produces.
+   */
+  const READERS: Record<'profileCopyTable' | 'advertisableIdsInComponent', { run: (source?: string) => void; rejects: Case[] }> = {
+    profileCopyTable: {
+      run: (src) => void PCT.profileCopyTable(src),
+      rejects: [
+        {
+          label: 'an accessor in the copy table',
+          source: mutate([
+            CORE_ENTRY,
+            "get 'acdp-registry-core'() { return { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' }; },",
+          ]),
+        },
+        {
+          label: 'a computed key in the copy table',
+          source: mutate([
+            CORE_ENTRY,
+            "['acdp-registry-core']: { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },",
+          ]),
+        },
+        {
+          label: 'an entry that is not an object literal',
+          source: mutate([CORE_ENTRY, "'acdp-registry-core': 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)',"]),
+        },
+        {
+          label: 'an entry with no string-literal title',
+          source: mutate([
+            CORE_ENTRY,
+            "'acdp-registry-core': { label: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },",
+          ]),
+        },
+        {
+          label: 'a duplicated id',
+          source: mutate([CORE_ENTRY, `${CORE_ENTRY}\n  ${CORE_ENTRY}`]),
+        },
+      ],
+    },
+    advertisableIdsInComponent: {
+      run: (src) => void PCT.advertisableIdsInComponent(src),
+      rejects: [
+        {
+          label: 'an id list that is not an array literal',
+          source: "const ADVERTISABLE_PROFILE_IDS = Object.freeze(['acdp-registry-core']);",
+        },
+        {
+          label: 'two id lists',
+          source:
+            "const ADVERTISABLE_PROFILE_IDS = ['acdp-registry-core'] as const;\n" +
+            "const ADVERTISABLE_PROFILE_IDS = ['acdp-registry-discovery'] as const;",
+        },
+        {
+          label: 'a non-literal element in the id list',
+          source: 'const ADVERTISABLE_PROFILE_IDS = [CORE_ID] as const;',
+        },
+        { label: 'no id list at all', source: 'export const X = 1;' },
+      ],
+    },
+  };
+
+  /** Every `{ run, rejects }` pair in this file, guards and readers alike. */
+  const SUBJECTS = [...Object.entries(GUARDS), ...Object.entries(READERS)] as const;
+
   it('the table covers EVERY exported guard, derived from the module', () => {
     // The anti-drift mechanism's second opinion. A new `assert*` export with no
     // rejecting subject fails at COMPILE time — `GUARDS` is a
@@ -1926,9 +2344,14 @@ describe('every source guard is exercised against a subject it must reject', () 
       .filter((k) => k.startsWith('assert'))
       .sort();
     expect(Object.keys(GUARDS).sort()).toEqual(exported);
-    // …and the list is not empty, which is how an `Object.keys` derivation
-    // goes vacuous.
-    expect(exported.length).toBeGreaterThan(7);
+    // …and the list is the length it is. ROUND 13's N6: `toBeGreaterThan(7)`
+    // was satisfied by deleting a guard, which is the direction that matters —
+    // the derivation cannot notice its own subject going missing. A hard number
+    // makes a deletion a two-file diff with a reason, and it is checked against
+    // `RUN_ON_READ` below rather than restated in prose, because five
+    // restatements of this count in this repo drifted to five different numbers.
+    expect(exported.length, 'a guard was added or removed').toBe(10);
+    expect(PCT.RUN_ON_READ.length, 'the read-time list was shortened').toBe(8);
   });
 
   it('every guard REJECTS each of its subjects, and ACCEPTS the real component', () => {
@@ -1941,7 +2364,7 @@ describe('every source guard is exercised against a subject it must reject', () 
     // incidental crash no longer counts as a refusal.
     const said = new RegExp(`^${PCT.GUARD_FAILURE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`);
     let cases = 0;
-    for (const [name, guard] of Object.entries(GUARDS)) {
+    for (const [name, guard] of SUBJECTS) {
       expect(guard.rejects.length, `${name} has no rejecting subject`).toBeGreaterThan(0);
       for (const c of guard.rejects) {
         expect(() => guard.run(c.source), `${name} ADMITS ${c.label}`).toThrow(said);
@@ -1954,7 +2377,13 @@ describe('every source guard is exercised against a subject it must reject', () 
     // Anti-vacuity on the loop itself: `Object.entries` of an emptied table
     // runs no assertion at all, and `PROHIBITED_RUNTIME_FORMS` feeds one of the
     // entries, so the count moves if that list is trimmed too.
-    expect(cases, 'the rejection table lost subjects').toBeGreaterThan(24);
+    //
+    // The floor is DERIVED rather than written down: there are at least as many
+    // subjects as there are refusal branches in the guard module, because the
+    // test below demands one per branch. A magic number here would have to be
+    // edited every time a guard grows a branch, which is how the counts in this
+    // file's docblocks came to disagree with each other three ways.
+    expect(cases, 'the rejection table lost subjects').toBeGreaterThanOrEqual(failSites().length);
   });
 
   it('the read-time guard list is not silently shortened', () => {
@@ -1965,6 +2394,7 @@ describe('every source guard is exercised against a subject it must reject', () 
     const names = PCT.RUN_ON_READ.map((g) => g.name).sort();
     expect(names).toEqual(
       [
+        'assertEveryStringLiteralIsLicensed',
         'assertGlossChokePoint',
         'assertGlossIsGated',
         'assertModuleShape',
@@ -1982,5 +2412,172 @@ describe('every source guard is exercised against a subject it must reject', () 
         `${g.name} runs on every read and has no rejecting subject`,
       ).toBe(true);
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // THE COVERAGE OBLIGATION, AT THE GRANULARITY OF THE REFUSAL.
+  //
+  // ROUND 13's B4 in one sentence: "round 12's fix was applied at GUARD
+  // granularity; its own diagnosis is at CHECK granularity." A hand-written
+  // list of nine missing subjects would have the same shape as the thing it is
+  // fixing — a closed list of the cases somebody thought of — and would go
+  // stale the first time a guard grew a tenth branch.
+  //
+  // So the obligation is DERIVED from the guard module: every `fail(...)` call
+  // site in `test/support/profile-copy-table.ts` must be reached by at least
+  // one subject in this file. A new refusal branch with no subject fails this
+  // test, naming the function and the message. That is the same move as
+  // `Record<GuardName, …>` one level down: the module's own source decides what
+  // coverage means, rather than an assertion that can be loosened.
+  //
+  // HOW A MESSAGE IS ATTRIBUTED TO A SITE. Each site's static text — the string
+  // literals and template quasis of its `fail(...)` argument — is extracted
+  // from the AST and matched IN ORDER against the observed message, anchored at
+  // the start when the message begins with a literal. Interpolations are the
+  // gaps between fragments. Two sites that differ only in their interpolations
+  // are still distinguished, because the ordered fragments differ: `declares \``
+  // and `declares function \`` are not substrings of one another at position 0.
+  // ══════════════════════════════════════════════════════════════════
+  type FailSite = {
+    fn: string;
+    /**
+     * The message's opening static text, when it has one. Matched with
+     * `startsWith`, and kept SEPARATE from the needles below even when it is
+     * short: the duplicate-id refusal opens with `` id ` `` — four characters,
+     * below the noise floor — and folding it into the needle list made the
+     * anchor the SECOND fragment, which reported a covered branch as uncovered.
+     */
+    head?: string;
+    /** The rest of the static text, in source order. */
+    needles: string[];
+  };
+
+  function failSites(): FailSite[] {
+    const text = PCT.guardModuleSource();
+    const sf = ts.createSourceFile('profile-copy-table.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const sites: FailSite[] = [];
+
+    const enclosing = (node: ts.Node): string => {
+      for (let n: ts.Node | undefined = node; n; n = n.parent) {
+        if (ts.isFunctionDeclaration(n) && n.name) return n.name.text;
+      }
+      return '<module scope>';
+    };
+
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'fail') {
+        const arg = node.arguments[0];
+        const raw: string[] = [];
+        const collect = (n: ts.Node): void => {
+          if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
+            raw.push(n.text);
+          } else if (ts.isTemplateExpression(n)) {
+            raw.push(n.head.text);
+            for (const span of n.templateSpans) raw.push(span.literal.text);
+          }
+          ts.forEachChild(n, collect);
+        };
+        if (arg) collect(arg);
+        sites.push({
+          fn: enclosing(node),
+          head: raw.length > 0 && raw[0] !== '' ? raw[0] : undefined,
+          // Short fragments (`, `, `` ` ``) are separators rather than identity.
+          needles: raw.slice(1).filter((f) => f.trim().length >= 6),
+        });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return sites;
+  }
+
+  function reaches(site: FailSite, message: string): boolean {
+    let at = 0;
+    if (site.head !== undefined) {
+      const opening = PCT.GUARD_FAILURE_PREFIX + site.head;
+      if (!message.startsWith(opening)) return false;
+      at = opening.length;
+    }
+    for (const fragment of site.needles) {
+      const found = message.indexOf(fragment, at);
+      if (found < 0) return false;
+      at = found + fragment.length;
+    }
+    return true;
+  }
+
+  /** Every refusal the tables above actually produce. */
+  function observedRefusals(): string[] {
+    const out: string[] = [];
+    for (const [name, guard] of SUBJECTS) {
+      for (const c of guard.rejects) {
+        try {
+          guard.run(c.source);
+          throw new Error(`${name} ADMITTED ${c.label}`);
+        } catch (e) {
+          const m = (e as Error).message;
+          // A subject that stopped being refused is the other test's business;
+          // here it must not silently become a message in the pool.
+          expect(m.startsWith(PCT.GUARD_FAILURE_PREFIX), `${name}/${c.label}: ${m.slice(0, 120)}`).toBe(true);
+          out.push(m);
+        }
+      }
+    }
+    return out;
+  }
+
+  it('every REFUSAL BRANCH in the guard module is reached by a subject', () => {
+    const sites = failSites();
+    // Anti-vacuity, three ways. The enumeration must find the sites; every site
+    // must have text to be identified by; and the pool must not be empty.
+    expect(sites.length, 'the fail-site enumeration collapsed').toBeGreaterThan(50);
+    expect(
+      sites.filter((s) => s.head === undefined && s.needles.length === 0).map((s) => s.fn),
+      'a fail() message has no static text, so it cannot be attributed to its site',
+    ).toEqual([]);
+    const messages = observedRefusals();
+    expect(messages.length, 'the subject tables produced no refusals').toBeGreaterThan(50);
+
+    const uncovered = sites
+      .filter((s) => !messages.some((m) => reaches(s, m)))
+      .map((s) => `${s.fn}: ${(s.head ?? s.needles[0]).slice(0, 60)}`);
+    // No exemption list. Every refusal in that module is reachable from a
+    // source string, and round 14 wrote a subject for each — the two readers
+    // gained a `source` parameter precisely so that stayed true.
+    expect(uncovered, 'these refusal branches have no subject that reaches them').toEqual([]);
+  });
+
+  it('GUARDS THE GUARD: the branch-coverage check is not satisfied by any message', () => {
+    // The base case of the regress, stated for this mechanism. `reaches` is a
+    // subsequence match, so the question is whether it can be satisfied by a
+    // message from a DIFFERENT site. Two probes: a sentence no guard prints,
+    // and the two `assertModuleShape` sites whose messages differ only at their
+    // heads (`declares \`x\`` vs `declares function \`x\``) — the pair that
+    // motivated ordered, anchored matching rather than a single longest needle.
+    const messages = observedRefusals();
+    const invented: FailSite = {
+      fn: 'nobody',
+      head: 'this sentence is not in any guard in this repository',
+      needles: [],
+    };
+    expect(messages.some((m) => reaches(invented, m))).toBe(false);
+
+    const variableSite: FailSite = {
+      fn: 'assertModuleShape',
+      head: 'declares `',
+      needles: ['` at module scope; only'],
+    };
+    const functionSite: FailSite = {
+      fn: 'assertModuleShape',
+      head: 'declares function `',
+      needles: ['` at module scope; only'],
+    };
+    const forVariable = messages.filter((m) => reaches(variableSite, m));
+    const forFunction = messages.filter((m) => reaches(functionSite, m));
+    // Each is reached, and by DISJOINT messages: if the matcher were loose the
+    // function message would satisfy the variable site as well.
+    expect(forVariable.length, 'the unlisted-variable branch is unreached').toBeGreaterThan(0);
+    expect(forFunction.length, 'the unlisted-function branch is unreached').toBeGreaterThan(0);
+    expect(forVariable.filter((m) => forFunction.includes(m))).toEqual([]);
   });
 });

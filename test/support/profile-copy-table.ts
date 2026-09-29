@@ -102,7 +102,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { REGISTRY_ADVERTISABLE_PROFILES } from './advertisable-profiles';
+import { PROFILE_GLOSS_TEXT, REGISTRY_ADVERTISABLE_PROFILES } from './advertisable-profiles';
 
 // Anchored to THIS FILE, not to `process.cwd()`. The guard should not depend on
 // which directory the runner was invoked from. Not exported: nothing outside
@@ -208,12 +208,43 @@ export function CHIP_ATTRIBUTES(param: string): Record<string, string> {
  *   <input readOnly value="acdp-log-witness: …" />        unconditional
  *
  * The deleted check enumerated two bad strings, which is why it was easy to
- * argue away. This one is CLOSED instead: a profile id is `acdp-` followed by
- * lowercase words, the advertisable set is exactly seven, and no other string
- * of that shape may appear in a string literal or a template literal anywhere
- * in the file. Nothing has to guess which id somebody will name next.
+ * argue away. This one is CLOSED instead: a profile id is `acdp` then a
+ * separator then word characters, the advertisable set is exactly seven, and no
+ * other string of that shape may appear in a string literal or a template
+ * literal anywhere in the file. Nothing has to guess which id somebody will
+ * name next.
+ *
+ * ROUND 13 CORRECTION — "CLOSED" WAS NOT TRUE OF A CASE-SENSITIVE PATTERN. It
+ * required `acdp-` in lower case followed by a lower-case class (no `i` flag),
+ * so `ACDP-consumer` and `acdp-Federated` both walked straight past it.
+ * Measured: putting
+ * `'Cross-registry federation; also advertised as acdp-Federated or
+ * ACDP-consumer (RFC-ACDP-0001 §9.1)'` in `acdp-registry-federated`'s own
+ * gloss left all 969 tests green, and every card advertising that profile then
+ * named two ids a real registry refuses to boot with — #95's stated harm
+ * ("ratified two invalid ids for whoever read it next") back through the very
+ * surface #95 is about, in the tooltip #95 rewrote.
+ *
+ * It is now case-INSENSITIVE, accepts `_` as the separator, and the match is
+ * lower-cased before comparison — so a spelling the allow-list does not hold
+ * EXACTLY is refused whatever case it arrives in. A profile id is
+ * case-sensitive upstream (`config.rs` compares raw `&str`), which is the
+ * argument FOR matching loosely and comparing strictly: `ACDP-consumer` is not
+ * a valid id at all, and a string that merely LOOKS like one is exactly what
+ * misleads a reader.
+ *
+ * THE SEGMENT AFTER THE SEPARATOR MUST START WITH A LETTER, and that is load
+ * bearing rather than tidy. Dropping case sensitivity made `RFC-ACDP-0001`
+ * match — the spec citation every gloss in the table ends with — so the first
+ * version of this widening refused the real component and took six tests down
+ * with it. Every spec id is `acdp-<word>`; every citation is `RFC-ACDP-<digits>`
+ * and every version marker is `acdp <semver>`. Requiring a letter separates
+ * them without a denylist, and a citation is not a thing anyone can mistake for
+ * an id anyway. `acdp_version` — a real property name on the capabilities
+ * payload — would match, which is another reason this walk reads only string
+ * LITERALS and never identifiers.
  */
-export const PROFILE_ID_SHAPE = /acdp-[a-z][a-z0-9-]*/g;
+export const PROFILE_ID_SHAPE = /acdp[-_][a-z][a-z0-9_-]*/gi;
 
 /**
  * The component's AST — or, when `text` is given, an arbitrary one.
@@ -242,6 +273,41 @@ function sourceFile(text?: string): ts.SourceFile {
     /* setParentNodes */ true,
     ts.ScriptKind.TSX,
   );
+}
+
+/**
+ * The component's own source text, for a self-test that needs to MUTATE it.
+ *
+ * ROUND 13's B4, and the reason it is here rather than in the test file: round
+ * 12 gave every exported guard a rejecting subject, and round 13 measured that
+ * nine load-bearing CHECKS inside those guards still had none — because every
+ * synthetic subject dies at the guard's FIRST branch, so the later branches were
+ * still only ever run against source that satisfies them. Writing a synthetic
+ * file that reaches a late branch means hand-writing a file that satisfies every
+ * earlier branch of every guard, which for the read-time readers means
+ * hand-writing the whole card.
+ *
+ * So the subjects for late branches are the REAL source with ONE textual
+ * mutation applied, which satisfies every earlier branch by construction. The
+ * path is not exported — a test has no business reading the component by path —
+ * but the text is.
+ */
+export function componentSource(): string {
+  return readFileSync(REGISTRY_CARD_PATH, 'utf8');
+}
+
+/**
+ * THIS MODULE's own source text, so a self-test can enumerate every `fail()`
+ * branch in it and demand a subject for each (round 13's B4).
+ *
+ * Read through this function rather than by path from the test file because
+ * `import.meta.url` is a file URL here and is NOT one in a test module under
+ * Vitest's transform — the test file's own attempt threw "The URL must be of
+ * scheme file". Nothing semantic is being borrowed: the caller parses the text
+ * with its own AST walk and decides for itself what a branch is.
+ */
+export function guardModuleSource(): string {
+  return readFileSync(fileURLToPath(import.meta.url), 'utf8');
 }
 
 /**
@@ -994,6 +1060,9 @@ export function assertNoForeignProfileId(source?: string): void {
   const check = (text: string, where: ts.Node): void => {
     scanned += 1;
     for (const m of text.matchAll(PROFILE_ID_SHAPE)) {
+      // Matched loosely, compared STRICTLY — see `PROFILE_ID_SHAPE`. An id that
+      // differs only in case is not a valid id and is refused, because a string
+      // that merely looks like one is what misleads the reader.
       if (!allowed.has(m[0])) {
         fail(
           `names the profile id \`${m[0]}\` in a string literal ` +
@@ -1024,6 +1093,159 @@ export function assertNoForeignProfileId(source?: string): void {
     fail(
       `found only ${scanned} string literals in the component — it has many more, so this walk ` +
         'is looking at the wrong nodes and is passing vacuously',
+    );
+  }
+}
+
+/**
+ * The strings the component may contain that are NOT copy: class names, style
+ * values, the JSX runtime directive, and the one join separator.
+ *
+ * Enumerated rather than shaped, because there are twelve of them and they do
+ * not change. A new class name is a one-line diff here and that is the correct
+ * cost: every other string in this file is either an import specifier, a
+ * profile id, a gloss, or a label, and each of those has its own pinned set.
+ */
+const STRUCTURAL_LITERALS = [
+  'use client',
+  // `className` values.
+  'card',
+  'card-header',
+  'card-body',
+  'metric-row',
+  'metric-name',
+  'metric-val',
+  'did',
+  'chip',
+  'chip ok',
+  // Inline-style values.
+  'flex',
+  'flex-end',
+  'center',
+  'column',
+  'wrap',
+  'var(--text)',
+  'var(--muted)',
+  // `StatusDot` / `Badge` props — a tone and a variant, not sentences.
+  'ok',
+  'neutral',
+  'complete',
+  'pub',
+  // The separator `Algorithms` joins its list with.
+  ', ',
+] as const;
+
+/**
+ * Small copy that is not a LABEL and so is not in `CARD_LABELS`: the em-dash
+ * fallback and the two words the anonymous-reads flag renders as.
+ */
+const INLINE_COPY_LITERALS = ['—', 'enabled', 'disabled'] as const;
+
+/**
+ * EVERY string literal in the file is in a pinned set.
+ *
+ * ── ROUND 13's B1 and B2, and why one guard closes both ──────────────
+ *
+ * Round 13's gate got unlicensed operator-facing prose onto the card twice,
+ * each time behind a COORDINATE GATE, each time with 969/969 green and
+ * typecheck clean:
+ *
+ *   const note = 'Consumer deployment profile (RFC-ACDP-0001 §9.1)';
+ *   {registry.eventCount === 999 && <span className="metric-val">{note}</span>}
+ *
+ *   {capabilities?.limits.max_search_limit === 250 && (
+ *     <input readOnly className="metric-val"
+ *            value="Consumer deployment profile, not a registry (RFC-ACDP-0001)" />)}
+ *
+ * The first reaches JSX through an IDENTIFIER, so `assertNoProseOutsideLabelTable`
+ * — which reads literals in child positions — never sees it. The second travels
+ * through an ATTRIBUTE, which that walk explicitly does not cover, and `value`
+ * is not on `assertNoAlternateDisclosureChannel`'s list. And BOTH are invisible
+ * to the rendered closed world, because no fixture has `eventCount === 999` or
+ * `max_search_limit === 250`.
+ *
+ * The docblocks claimed this was covered. `profile-copy-table.ts` said the
+ * source walk's hole and the render walk's hole "are complementary"; the
+ * component said an identifier, a call, a second `.map` and an `alt` "fail it
+ * identically"; `NON_TEXT_ATTRS` said a maintainer "must EITHER license its
+ * value from the fixture OR add its name here". All three were false, and there
+ * was a third option none of them admitted: put it behind a coordinate.
+ *
+ * ── The answer is not another walk. It is to bound the SUPPLY ────────
+ *
+ * Both escapes need a string literal somewhere in the file, and there is no
+ * expression, gate, attribute or indirection that gets around that — a
+ * sentence has to be spelled somewhere. So this stops asking WHERE a string is
+ * used and asks whether the string EXISTS. The file has 43 string literals and
+ * 10 pieces of JSX text; every one of them belongs to exactly one pinned set:
+ *
+ *   ALLOWED_IMPORTS keys       4   module specifiers
+ *   REGISTRY_ADVERTISABLE_PROFILES  7   the ids, from the shared mirror
+ *   PROFILE_GLOSS_TEXT values  7   the glosses, hand-pinned (round 13's N1)
+ *   STRUCTURAL_LITERALS       22   class names, style values, tones
+ *   INLINE_COPY_LITERALS       3   `—`, `enabled`, `disabled`
+ *
+ * A new sentence in this file is now a red test whatever it is attached to,
+ * whatever gates it, and whether or not any fixture reaches it. That is the
+ * property the two docblocks above were claiming and did not have.
+ *
+ * ── What it does NOT cover, stated so nobody over-reads it again ─────
+ *
+ * A string ASSEMBLED at runtime from licensed parts (`'acdp-' + 'consumer'`,
+ * `.replace()`, `String.fromCharCode`). `assertNoRuntimeCopyForms` bounds some
+ * of those forms and the rendered closed world catches any of them that a
+ * fixture reaches, but an assembled string behind an unvisited coordinate is
+ * genuinely out of reach of every layer here. It is also a great deal harder to
+ * write by accident than a literal, and it cannot be written at all without
+ * looking deliberate — which is the honest ceiling, not a closed world.
+ *
+ * Template literals with substitutions are refused outright rather than
+ * analysed: the component has none, and the analysis of what a substitution can
+ * yield is the runtime-assembly problem above.
+ */
+export function assertEveryStringLiteralIsLicensed(source?: string): void {
+  const sf = sourceFile(source);
+  const licensed = new Set<string>([
+    ...Object.keys(ALLOWED_IMPORTS),
+    ...REGISTRY_ADVERTISABLE_PROFILES,
+    ...Object.values(PROFILE_GLOSS_TEXT),
+    ...STRUCTURAL_LITERALS,
+    ...INLINE_COPY_LITERALS,
+  ]);
+  let scanned = 0;
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      scanned += 1;
+      if (!licensed.has(node.text)) {
+        fail(
+          `contains the unlicensed string ${JSON.stringify(node.text.slice(0, 80))}. Every string ` +
+            'literal in this file must be an allow-listed import specifier, one of the seven ' +
+            'advertisable profile ids, one of the seven pinned glosses, or a structural token — ' +
+            'because a sentence has to be spelled somewhere, and round 13 put operator-facing ' +
+            'prose on this card twice through an identifier and an `<input value>`, each behind a ' +
+            'coordinate no fixture visits, with every other guard green',
+        );
+      }
+    } else if (ts.isTemplateExpression(node)) {
+      fail(
+        `contains a template literal with substitutions (\`${node.getText(sf).slice(0, 60)}\`). ` +
+          'This component has none, and what a substitution can yield is exactly the ' +
+          'runtime-assembly problem no walk here can bound',
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+
+  // ANTI-VACUITY, and it has to be a real floor rather than `> 0`: the file has
+  // 43 string literals, four of them import specifiers that any version of this
+  // file would carry. A walk that found only those would pass on a file with
+  // every other string deleted.
+  if (scanned < 20) {
+    fail(
+      `found only ${scanned} string literals — this file has over forty, so this walk is looking ` +
+        'at the wrong nodes and is passing vacuously',
     );
   }
 }
@@ -1195,8 +1417,8 @@ export function assertNoProseOutsideLabelTable(allowed: readonly string[], sourc
  * the test tree), so there are genuinely two copies of the list; this is what
  * stops them drifting.
  */
-export function advertisableIdsInComponent(): string[] {
-  const sf = sourceFile();
+export function advertisableIdsInComponent(source?: string): string[] {
+  const sf = sourceFile(source);
   let ids: string[] | undefined;
   const visit = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && node.name.getText(sf) === 'ADVERTISABLE_PROFILE_IDS') {
@@ -1222,14 +1444,27 @@ export function advertisableIdsInComponent(): string[] {
 }
 
 /**
- * The profile-copy entries, as `id -> title`.
+ * The bounds `profileCopyTable()` runs before it will vouch for the table.
  *
- * Runs every structural bound first: the key set is `tsc`'s to enforce, but
- * treating this object as THE copy table is only safe once the other three have
- * refused every other place copy could live.
+ * ROUND 13 CORRECTION — THE COUNTS IN THESE DOCBLOCKS HAD DRIFTED, THREE WAYS.
+ * This one said "once the other THREE have refused"; the comment inside
+ * `profileCopyTable` said "SIX statements cannot"; and the test file said "six
+ * of the eight" — three different numbers for one set, none of them current.
+ * That is the same defect the header of this file was written to record ("five
+ * separate restatements had drifted to five different numbers"), one level up,
+ * in the file doing the recording. Round 14 then added a ninth guard and this
+ * correction's own replacement count went stale inside one commit, which is the
+ * argument for the rule below rather than for a more careful number.
  *
- * Fails closed: a spread, a computed key, an accessor, a shorthand, a
- * non-string key or a non-string `title` throws rather than being skipped.
+ * So no number is written here any more. `RUN_ON_READ.length` and
+ * `Object.keys(GUARDS).length` are what the tests assert against, and a reader
+ * who wants a count reads the array.
+ *
+ * `assertGlossIsPureOfId` and `assertNoProseOutsideLabelTable` are the two that
+ * are deliberately NOT here: the first is about the chip callback's shape and
+ * the second takes the label list as a parameter, so neither is a precondition
+ * for trusting the copy table's contents. Both are exercised by the test file's
+ * `GUARDS` table instead.
  */
 export const RUN_ON_READ = [
   assertModuleShape,
@@ -1239,16 +1474,28 @@ export const RUN_ON_READ = [
   assertGlossChokePoint,
   assertGlossIsGated,
   assertNoForeignProfileId,
+  assertEveryStringLiteralIsLicensed,
 ] as const;
 
-export function profileCopyTable(): { entries: Map<string, string>; tables: number } {
+/**
+ * The profile-copy entries, as `id -> title`.
+ *
+ * Fails closed: a spread, a computed key, an accessor, a shorthand, a
+ * non-string key or a non-string `title` throws rather than being skipped.
+ */
+export function profileCopyTable(source?: string): { entries: Map<string, string>; tables: number } {
   // Iterated rather than called one by one, and EXPORTED, because round 11
   // found that dropping two of these call sites was a silent, green edit —
   // `mock-data.test.ts` reads this table for the data half of #95 and would
   // quietly have lost those bounds. A list can be asserted non-empty and
-  // asserted to contain each guard; six statements cannot.
-  for (const guard of RUN_ON_READ) guard();
-  const sf = sourceFile();
+  // asserted to contain each guard; a run of bare statements cannot.
+  //
+  // `source` is the same self-test seam `sourceFile` documents, and it is passed
+  // THROUGH to the guards on purpose: a subject that reaches this reader's own
+  // refusals has to satisfy all eight of them first, which is what makes those
+  // refusals reachable at all (round 13's B4 — see `componentSource`).
+  for (const guard of RUN_ON_READ) guard(source);
+  const sf = sourceFile(source);
   const table = copyTableNode(sf);
   const entries = new Map<string, string>();
 

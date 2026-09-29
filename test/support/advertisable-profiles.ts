@@ -54,7 +54,7 @@ export const REGISTRY_ADVERTISABLE_PROFILES = [
   'acdp-registry-head-receipts',
   'acdp-registry-transparency-log',
   'acdp-registry-lifecycle',
-];
+] as const;
 
 /**
  * The ids a registry may NOT advertise, kept by name so both consumers can
@@ -84,4 +84,49 @@ export const REGISTRY_ADVERTISABLE_PROFILES = [
  *                      and not the one upstream calls most likely is guarding
  *                      the wrong set.
  */
-export const NOT_ADVERTISABLE = ['acdp-consumer', 'acdp-federated', 'acdp-log-witness'];
+export const NOT_ADVERTISABLE = ['acdp-consumer', 'acdp-federated', 'acdp-log-witness'] as const;
+
+/**
+ * The gloss an operator reads for each advertisable profile, CHARACTER FOR
+ * CHARACTER — a hand copy of `PROFILE_INFO`'s seven titles.
+ *
+ * ROUND 13's N1, and it is the tautology this branch has now found three times
+ * in three different files. `allowedAnnounced()` decided what the card may
+ * announce by READING the card — `profileCopyTable()` parses
+ * `registry-card.tsx` and hands back its titles — so the rendered closed world
+ * licensed the gloss from its own subject and could never reject gloss CONTENT.
+ * Measured: replacing `acdp-registry-core`'s title with "Consumer deployment
+ * profile — a registry is forbidden to advertise this; contact
+ * ops@example.test (RFC-ACDP-0001 §9.1)" left all 969 tests green. The only
+ * thing bounding these strings was `mock-data.test.ts`'s cross-check of two
+ * TOKENS out of each — the RFC number and the acdp version — and everything
+ * either side of those tokens was unbounded prose on the one surface #95 is
+ * about.
+ *
+ * The same shape, for the record, as #84's `ADMIN_ROUTE_FORBIDDEN` import (a
+ * substring pin cited as if it bounded the whole string) and #97's KPI hint
+ * table (restated as literals beside the table so the table was read by
+ * nothing). A copy guard that shares a source with its subject is not a guard.
+ *
+ * So the seven are written out here, in a file the component does not import,
+ * and `registry-card-profiles.test.tsx` asserts the parsed table equals this
+ * map. Changing operator-facing copy is then a two-file diff with a reason,
+ * which is the whole point.
+ *
+ * The RFC and version markers inside each string are cross-checked
+ * INDEPENDENTLY against `acdp-spec-pinned` by `mock-data.test.ts` — that check
+ * is not redundant with this one and neither subsumes the other: this pins the
+ * bytes, that pins the bytes against upstream reality.
+ */
+export const PROFILE_GLOSS_TEXT: Record<string, string> = {
+  'acdp-registry-core': 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)',
+  'acdp-registry-discovery': 'Search / discovery endpoints (RFC-ACDP-0001 §9.1)',
+  'acdp-registry-federated': 'Cross-registry federation (RFC-ACDP-0001 §9.1)',
+  'acdp-registry-receipts': 'Signed registry receipts at publish time (RFC-ACDP-0010, acdp 0.2.0)',
+  'acdp-registry-head-receipts':
+    'Lineage-head receipts: signed serve-time head attestations (RFC-ACDP-0011, acdp 0.3.0)',
+  'acdp-registry-transparency-log':
+    'Append-only transparency log with inclusion proofs (RFC-ACDP-0012, acdp 0.3.0)',
+  'acdp-registry-lifecycle':
+    'Signed lifecycle events: retraction / republication (RFC-ACDP-0013, acdp 0.3.0)',
+};
