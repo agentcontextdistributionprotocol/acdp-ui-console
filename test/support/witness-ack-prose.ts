@@ -308,6 +308,44 @@ export const NON_ANNOUNCING_ATTRS = [
 /** The id-reference attributes, which must resolve inside the dialog. */
 export const ID_REFERENCE_ATTRS = ['aria-labelledby', 'aria-describedby', 'aria-details'] as const;
 
+/**
+ * The attributes this dialog may carry with an EMPTY value.
+ *
+ * ROUND 6's B2, SECOND HALF. `expectNothingAnnounced` skipped every attribute
+ * whose value was blank, and that skip was written as an obvious convenience
+ * (`class=""` announces nothing) with no docblock and no list. It was a second
+ * licence sitting on top of `NON_ANNOUNCING_ATTRS`, and it was WIDER than that
+ * list: every boolean attribute in HTML passes for free when it is spelled
+ * without a value, which is how boolean attributes are normally spelled.
+ *
+ * `inert` is the one that matters. It removes its entire subtree from the
+ * accessibility tree AND from hit-testing, it is written `inert` with no value,
+ * and so the licence intended for `class=""` was licensing the attribute that
+ * silences the whole dialog. Round 6 measured `<ul inert>` on the three-facts
+ * list at 1122/1122 green.
+ *
+ * The skip is still right — an attribute present with no value carries no text
+ * — so it is kept and BOUNDED instead of removed. A valueless attribute must be
+ * one somebody has looked at and decided about, and the decision for each is
+ * recorded here. The two lists answer different questions and neither implies
+ * the other: this one is "does it carry text", `NON_ANNOUNCING_ATTRS` is "may
+ * it carry text", and a SUPPRESSOR belongs on neither — it is the fourth pin
+ * half's subject, which is why `inert` and `hidden` are absent from this list
+ * and asserted there.
+ */
+export const VALUELESS_ATTRS = [
+  // Structural, and empty only as a rendering accident.
+  'class',
+  'style',
+  'id',
+  // `<details>` open state and `<button disabled>`: React writes these bare.
+  'open',
+  'disabled',
+  // SVG presentation attributes that can be emitted empty.
+  'fill',
+  'stroke',
+] as const;
+
 export const ACK_CLOSE_CONTROL = 'Close dialog';
 
 /**

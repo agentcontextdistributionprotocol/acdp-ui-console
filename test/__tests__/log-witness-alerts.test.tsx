@@ -49,6 +49,7 @@ import {
   ALL_STAGES,
   ID_REFERENCE_ATTRS,
   NON_ANNOUNCING_ATTRS,
+  VALUELESS_ATTRS,
   expectedAnnounced,
   expectedDialogBlocks,
   normalize,
@@ -162,13 +163,34 @@ function ackToggle(): HTMLElement {
  * passed. The mutation died only incidentally, on an unrelated
  * `aria-label`-filtered count elsewhere in the file.
  *
- * An `aria-label` REPLACES the content as the accessible name (accname step 2B
+ * An `aria-label` REPLACES the content as the accessible name (accname step 2C
  * beats step 2F), so a control whose label and whose visible text disagree is
  * announced by the label — which is precisely the half an invariant about
- * announcement has to read. Deliberately not a full accname implementation:
- * this covers the two sources this repo's `Button` can produce.
+ * announcement has to read.
+ *
+ * ROUND 6's B4 added the step ABOVE that one. `aria-labelledby` (step 2B)
+ * beats `aria-label`, and it is the mechanism the dialog root actually uses:
+ * `Modal` names itself by pointing at its `<h2>`. Repointing that attribute at
+ * a `<p>Acknowledging clears this alert</p>` outside the dialog replaced the
+ * first string a screen reader speaks on open with unreviewed copy, and left
+ * 1122/1122 green — because nothing in this file read the dialog's name, and
+ * every block pin still found the real heading in the subtree. Reading
+ * `textContent` for a `labelledby` element rather than recursing is enough
+ * here and is the one simplification left: this covers the three sources this
+ * dialog can produce, not the whole accname algorithm.
  */
 function accessibleName(el: HTMLElement): string {
+  const ids = (el.getAttribute('aria-labelledby') ?? '').split(/\s+/).filter(Boolean);
+  if (ids.length > 0) {
+    const parts = ids.map((id) => {
+      const target = el.ownerDocument.getElementById(id);
+      return normalize(target?.textContent);
+    });
+    // An `aria-labelledby` that resolves to nothing is NOT a fallback to the
+    // content — the name is genuinely empty, and reporting it as the heading
+    // would hide exactly the defect this is here to catch.
+    return normalize(parts.join(' '));
+  }
   const label = el.getAttribute('aria-label');
   if (label !== null && label.trim() !== '') return normalize(label);
   return normalize(el.textContent);
@@ -709,6 +731,26 @@ function dialog(): HTMLElement {
   return screen.getByRole('dialog');
 }
 
+/**
+ * The OUTERMOST element the dialog puts on the page.
+ *
+ * ROUND 6's N6: every scan here started at `dialog()`, which is the `.modal`
+ * element. `Modal` wraps it in a `.modal-overlay` that covers the viewport, and
+ * that element has attributes of its own. `title="Confirming clears the alert
+ * and the retained head."` on it left 1122/1122 green — a tooltip over the
+ * whole backdrop of the page's only write control, on a surface whose own tests
+ * elsewhere refuse `title` outright.
+ *
+ * The fallback is not defensive tidiness: if `Modal` ever stops rendering an
+ * overlay, a scan rooted on a `closest()` that returned `null` would quietly
+ * become a scan of nothing. It returns the dialog instead, which is the same
+ * subject the round-5 scan had, so the worst case is the previous bound rather
+ * than no bound.
+ */
+function dialogScanRoot(): HTMLElement {
+  return dialog().closest<HTMLElement>('.modal-overlay') ?? dialog();
+}
+
 function openConfirm(authority = 'registry-c.playground.local') {
   // `fireEvent`, matching every other component test in this suite —
   // `@testing-library/user-event` is not a dependency here.
@@ -803,7 +845,20 @@ function expectNothingOutside(expected: string[], label?: string) {
 function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
   const found: string[] = [];
   const nonAnnouncing = new Set<string>(NON_ANNOUNCING_ATTRS);
-  for (const el of [dialog(), ...dialog().querySelectorAll<HTMLElement>('*')]) {
+  // ROUND 6's N6: THE SCAN STARTED ONE ELEMENT TOO LOW. It began at `dialog()`
+  // — the `.modal` element — and the `.modal-overlay` that wraps it is a real
+  // element with real attributes covering the whole viewport. Measured:
+  // `title="Confirming clears the alert and the retained head."` on
+  // `.modal-overlay` left 1122/1122 green, putting a tooltip over the entire
+  // backdrop of the page's only write control. The `[title]` guard elsewhere in
+  // this file renders no dialog, so nothing looked there.
+  //
+  // So the scan root is the OVERLAY, which is the outermost thing the dialog
+  // puts on the page. `dialogScanRoot()` is that element and falls back to the
+  // dialog itself, so a refactor that drops the overlay does not silently
+  // shrink this half's subject back to where it was.
+  const root = dialogScanRoot();
+  for (const el of [root, ...root.querySelectorAll<HTMLElement>('*')]) {
     for (const attr of el.attributes) {
       // ROUND 5: the scan used to walk a list of attributes that DO announce,
       // which is an OPEN set — `aria-keyshortcuts` and an `<input value>` both
@@ -811,7 +866,25 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
       // skips only the structural ones, so an attribute nobody thought of is a
       // red test rather than a silent channel.
       if (nonAnnouncing.has(attr.name.toLowerCase())) continue;
-      if (attr.value.trim()) found.push(normalize(attr.value));
+      // ROUND 6's B2, SECOND HALF: the empty-value skip was an UNDOCUMENTED
+      // SECOND LICENCE sitting on top of `NON_ANNOUNCING_ATTRS`. Every boolean
+      // attribute in the language passed for free, `inert` among them — and
+      // `inert` is a suppressor, so the licence that was meant to ignore
+      // `class=""` was also ignoring the attribute that silences the dialog.
+      //
+      // It is kept, because an attribute present with no value announces
+      // nothing, and it is now BOUNDED: a valueless attribute must be one this
+      // file has looked at. `VALUELESS_ATTRS` is the closed side, and
+      // `assertBooleanAttrsAreLicensed` below is what refuses a new one.
+      if (!attr.value.trim()) {
+        expect(
+          VALUELESS_ATTRS,
+          `${label ?? ''} — \`${attr.name}\` is present with no value and nothing here has ` +
+            'decided whether it announces or suppresses',
+        ).toContain(attr.name.toLowerCase());
+        continue;
+      }
+      found.push(normalize(attr.value));
     }
   }
   expect(new Set(found), `${label ?? ''} — announced copy outside the pinned set`).toEqual(
@@ -820,7 +893,18 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
   // The id-reference attributes carry no text of their own, but they can point
   // at an element OUTSIDE the dialog — whose text neither of the other halves
   // sees. So they are required to resolve inside it.
-  for (const el of dialog().querySelectorAll<HTMLElement>('*')) {
+  //
+  // ROUND 6's B4: THIS LOOP STARTED AT THE DESCENDANTS AND SKIPPED THE ROOT,
+  // while the attribute scan six lines above correctly started at `dialog()`.
+  // The dialog ROOT is where `aria-labelledby` and `aria-describedby` actually
+  // live, so the one element that carries them was the one element not checked.
+  // Measured, each alone at 1122/1122 green: `aria-describedby` on the root
+  // pointing at a `<p>` inside `.modal-overlay` but outside `.modal`; and
+  // `aria-labelledby` repointed at an outside `<p>Acknowledging clears this
+  // alert</p>`, which REPLACES the dialog's accessible name — the first thing
+  // announced on open — with unreviewed copy, while every block pin still read
+  // the real `<h2>`.
+  for (const el of [dialog(), ...dialog().querySelectorAll<HTMLElement>('*')]) {
     for (const attr of ID_REFERENCE_ATTRS) {
       for (const id of (el.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
         expect(
@@ -830,6 +914,16 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
       }
     }
   }
+  // …and resolving INSIDE the dialog is not the same as resolving to the right
+  // thing. The accessible name is the first string a screen reader speaks, it
+  // is assembled from `aria-labelledby` rather than from the subtree, and no
+  // pin in this file read it until round 6 asked. It must be the heading.
+  const heading = dialog().querySelector('h2');
+  expect(heading, 'the dialog has no heading to take its name from').toBeTruthy();
+  expect(
+    accessibleName(dialog()),
+    `${label ?? ''} — the dialog announces a name that is not its heading`,
+  ).toBe(normalize(heading!.textContent));
 }
 
 /**
@@ -847,36 +941,89 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
  * `aria-hidden` is on the non-announcing list because it announces nothing
  * ITSELF; what it hides is this half's problem. `role="presentation"` strips an
  * element's semantics rather than its text, so it is not the same defect and is
- * not checked here — but `hidden` is, because it removes the node from both
- * trees.
+ * not checked here.
  *
- * Not a styling check: jsdom applies no stylesheet, so `display: none` is
- * invisible from here. That gap is real and is named in the docblock of the
- * globals.css guard below, which covers the other direction (a stylesheet that
- * ADDS text).
+ * ── ROUND 6's B2: THE WALK ONLY WENT UP, AND IT DID NOT KNOW `inert` ──
+ *
+ * This half's headline is "everything written down is still REACHABLE", and it
+ * checked reachability by walking from each block up to `dialog()`. Two
+ * measured escapes, each alone at 1122/1122 green:
+ *
+ *   - `<span aria-hidden="true">` wrapping the CONTENTS of each fact `<li>`.
+ *     The block is the `<li>`, the suppressor is its child, `textContent` is
+ *     unchanged, and the walk never looked down. Round 5's finding verbatim,
+ *     one DOM level lower.
+ *   - `<ul inert>` on the three-facts list. `inert` removes its subtree from
+ *     the accessibility tree and from hit-testing, and this half had never
+ *     heard of it — the empty-value skip in the announced half licensed it at
+ *     the same time (see `VALUELESS_ATTRS`).
+ *
+ * So the walk goes BOTH WAYS and checks three attributes. Walking down needs
+ * one rule the upward walk does not: an `aria-hidden` descendant is only a
+ * defect if it silences TEXT. A decorative `<svg aria-hidden="true">` inside a
+ * block is correct authoring, and refusing it would make this half fire on the
+ * close icon. So a suppressed descendant is refused only when it carries
+ * non-empty text, which is exactly the thing this half claims is reachable.
+ *
+ * Not a styling check: jsdom applies no stylesheet, so `display: none` and
+ * `visibility: hidden` are invisible from here. Round 6's N8 found that gap
+ * asserted to be "named in the docblock of the globals.css guard below", and
+ * that guard's docblock never mentioned either. It is named HERE, which is the
+ * only place a reader of this half will look.
  */
+const SUPPRESSING_ATTRS = ['aria-hidden', 'hidden', 'inert'] as const;
+
+function suppressorOn(el: HTMLElement): string | null {
+  if (el.getAttribute('aria-hidden') === 'true') return 'aria-hidden="true"';
+  if (el.hasAttribute('hidden')) return '`hidden`';
+  if (el.hasAttribute('inert')) return '`inert`';
+  return null;
+}
+
 function expectNothingSilenced(expected: string[], label?: string) {
   const blocks = [...dialog().querySelectorAll<HTMLElement>(BLOCK_SELECTOR)];
   let checked = 0;
+  let descendantsSeen = 0;
   for (const block of blocks) {
+    const where = `"${normalize(block.textContent).slice(0, 40)}…"`;
+    // UP: any suppressor between the block and the dialog root hides the block
+    // whatever it contains.
     for (let el: HTMLElement | null = block; el !== null; el = el.parentElement) {
       expect(
-        el.getAttribute('aria-hidden'),
-        `${label ?? ''} — "${normalize(block.textContent).slice(0, 40)}…" is inside ` +
-          `aria-hidden="true" and is announced to nobody`,
-      ).not.toBe('true');
-      expect(
-        el.hasAttribute('hidden'),
-        `${label ?? ''} — "${normalize(block.textContent).slice(0, 40)}…" is inside a ` +
-          `\`hidden\` element and reaches nobody`,
-      ).toBe(false);
+        suppressorOn(el),
+        `${label ?? ''} — ${where} is inside an element carrying ${suppressorOn(el)} and is ` +
+          'announced to nobody',
+      ).toBeNull();
       if (el === dialog()) break;
+    }
+    // DOWN: a suppressor on a descendant hides only what that descendant
+    // holds, so it is a defect exactly when what it holds is text.
+    for (const el of block.querySelectorAll<HTMLElement>('*')) {
+      descendantsSeen += 1;
+      const how = suppressorOn(el);
+      if (how === null) continue;
+      expect(
+        normalize(el.textContent),
+        `${label ?? ''} — ${where} contains a <${el.tagName.toLowerCase()}> carrying ${how} ` +
+          'whose text is therefore announced to nobody',
+      ).toBe('');
     }
     checked += 1;
   }
-  // Anti-vacuity: a walk over no blocks asserts nothing, and the block list is
-  // exactly what the pin claims is on screen.
+  // Anti-vacuity, one pin per DIRECTION. The block count was the only floor
+  // here, and it is satisfied by an upward-only walk — so the downward walk
+  // could have been deleted the day it was written. The dialog's blocks
+  // demonstrably have element children (the `<ul>` holds three `<li>`s, each
+  // `<p>` may hold a `<strong>`), so a zero here means the descendant walk has
+  // stopped visiting them.
   expect(checked, `${label ?? ''} — the reachability walk visited no block`).toBe(expected.length);
+  expect(
+    descendantsSeen,
+    `${label ?? ''} — the descendant half of the reachability walk visited nothing`,
+  ).toBeGreaterThan(0);
+  // …and the attribute list is itself pinned, because "three attributes" is the
+  // kind of claim that goes stale by one the next time somebody adds a rule.
+  expect([...SUPPRESSING_ATTRS]).toEqual(['aria-hidden', 'hidden', 'inert']);
 }
 
 type PinOpts = {
