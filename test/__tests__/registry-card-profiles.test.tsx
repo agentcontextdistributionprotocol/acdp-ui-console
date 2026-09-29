@@ -2700,6 +2700,41 @@ describe('every source guard is exercised against a subject it must reject', () 
   //                `Record<GuardName, …>` obligation fails at compile time).
   //                All three are the same base case: an assertion cannot guard
   //                itself, and is a survivor once its guarantee lives elsewhere.
+  //
+  // MEASURED (round 16), 15 mutations, same protocol — applied alone from a
+  // clean tree, `tsc --noEmit` plus this file and `mock-data.test.ts`, reverted
+  // and `git status` verified clean between each. Every one of round 15's five
+  // blocking escapes, reproduced verbatim from its report, is now KILLED:
+  //
+  //   B1  a sentence appended to `STRUCTURAL_LITERALS` and rendered from the
+  //       card behind `authority.length > 40`               → 1 red (the shape rule)
+  //   B2  the whole Profiles row behind `authority.length < 40`  → 5 red
+  //   B3  a second per-profile surface via `.filter().map()`     → 5 red
+  //   B4  `acdp-consumer advertised` as JsxText, licensed by
+  //       a two-word `CARD_LABELS` entry                        → 13 red
+  //   B5  a second stylesheet, `.chip::after { content: ' (see
+  //       acdp-consumer)' }`, imported from `app/layout.tsx`     → 2 red
+  //
+  // …and both halves of N1's channel hold ALONE, which is the point of adding
+  // the second one: with the emptiness rule gutted to `typeof value === 'string'`
+  // B5 is still 2 red, and with the rule-set pin gutted B5 is still 2 red.
+  //
+  // The guards those fixes added are load-bearing, each measured by disabling
+  // it and re-running the escape it closes:
+  //
+  //   the JsxText arm of the supply guard      → 12 red (and a tsc error)
+  //   the JsxText arm of the foreign-id guard  → 3 red, tsc clean
+  //   the `.map` collector back to receiver-text matching  → 1 red
+  //   the condition-path bound above the map   → 3 red
+  //   the `STRUCTURAL_LITERALS` exact pin (with B1)  → 1 red, via the shape rule
+  //   `htmlInjectionSites` emptied, then a `<style>` in the card  → 16 red
+  //   the css-import pin (with B5)             → 2 red
+  //   this round's own floor raise, reverted to 5/5  → 3 red
+  //
+  // Three of those are killed ONLY by the derived branch-coverage mechanism
+  // above — a disabled branch loses its subject, and losing a subject is a
+  // failure here rather than a smaller test run. That is the mechanism paying
+  // for itself: it caught G2, G3, G4 and G8 without anybody writing a case.
   // ══════════════════════════════════════════════════════════════════
   type FailSite = {
     fn: string;
