@@ -1861,6 +1861,85 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     expect(shapes.length, 'the runs sweep lost its shapes').toBe(3);
   }, 120_000);
 
+  it('pins the violations card against the TOTALS fields it does not read', () => {
+    // ROUND 11's NB1, and the sibling of the `sources` case below. The
+    // violations card reads six members of `TrustTotals`; the other six —
+    // `audited`, `verified`, `verifiedHistorical`, `structural`, `noReceipt`,
+    // `errors` — arrive on every render and were ZERO in every fixture on this
+    // page, because `totalsFor` never populated them. A coordinate on one of
+    // them is therefore unreachable by the whole cross product above:
+    // `{t.verified > 0 && <p>No key in this deployment has been revoked.</p>}`
+    // inside the violations CardBody was 42 files / 1045 tests green, and it is
+    // non-zero on the default demo posture.
+    //
+    // The pin is the same shape as the `sources` one: this card must render the
+    // SAME thing whatever those six hold. That is a claim about the card's
+    // inputs rather than about the code that happens to ignore them, which is
+    // the version that survives the next edit.
+    const UNREAD = ['audited', 'verified', 'verifiedHistorical', 'structural', 'noReceipt', 'errors'] as const;
+    const base: ViolationsInput = {
+      runs: 2,
+      finding: 'revoked',
+      reported: true,
+      checkOff: false,
+      preCompromise: false,
+      countersZeroed: false,
+    };
+    const expected = expectedViolations(base);
+    // Zero, one, and a set of DISTINCT values — so a card that started reading
+    // one of the six is red whichever one it read.
+    const postures: Array<Record<string, number>> = [
+      {},
+      Object.fromEntries(UNREAD.map((k) => [k, 1])),
+      Object.fromEntries(UNREAD.map((k, n) => [k, (n + 1) * 7])),
+    ];
+    for (const extra of postures) {
+      cleanup();
+      const { container } = renderWith(
+        overview(
+          Array.from({ length: base.runs }, (_, n) => ({
+            runId: `run-${n}`,
+            trust: runTrustFor(base.finding, n),
+          })),
+          { ...totalsFor(base), ...extra },
+          FEATURES_ON,
+        ),
+      );
+      expectPinnedViolations(
+        violationsCard(container),
+        expected,
+        `unread totals = ${JSON.stringify(extra)}`,
+      );
+    }
+    // Anti-vacuity, both on the loop and on the list: an empty `UNREAD` would
+    // make every posture identical, and an empty `postures` asserts nothing.
+    expect(UNREAD).toHaveLength(6);
+    expect(postures).toHaveLength(3);
+    expect(new Set(Object.values(postures[2])).size, 'the distinct posture stopped distinguishing fields').toBe(6);
+    // …and these really are ALL the fields the card does not read. The two
+    // lists together must be the whole of `TrustTotals`, read out of
+    // `use-trust.ts` rather than retyped — otherwise a new member arrives in
+    // neither list, is varied by nothing, and is exactly the coordinate this
+    // test exists to make unavailable. A hand-written pair of lists cannot
+    // notice its own gap; the type can.
+    const READ = [
+      'flaggedEvents',
+      'flaggedRuns',
+      'revokedEvents',
+      'revokedRuns',
+      'revocationReportedRuns',
+      'preCompromiseEvents',
+    ] as const;
+    const src = readFileSync(join(process.cwd(), 'lib/hooks/use-trust.ts'), 'utf8');
+    const body = src.match(/export interface TrustTotals \{([\s\S]*?)\n\}/);
+    expect(body, 'use-trust.ts no longer declares TrustTotals — this classification lost its subject').toBeTruthy();
+    const members = [...body![1].matchAll(/^\s{2}(\w+)\s*:/gm)].map((m) => m[1]).sort();
+    expect(members.length, 'the TrustTotals reader found no members').toBeGreaterThan(6);
+    expect([...READ, ...UNREAD].sort(), 'TrustTotals gained a member nothing here classifies').toEqual(
+      members,
+    );
+  });
+
   it('pins the finding row against the revocation fields the page does NOT render', () => {
     // ROUND 11's NB2. `revocation()` sets `sources: []` in every fixture in
     // this file, so `sources` is a field the row RECEIVES and no test varies —
