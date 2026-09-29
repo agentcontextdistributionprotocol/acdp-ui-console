@@ -582,6 +582,27 @@ export function dashboardRevocationState(
   // claim beyond "these are the counters that arrived" — so a `-1` shows up on
   // screen as `-1`, visible and reportable, rather than being laundered into
   // the word "clean".
+  //
+  // ROUND 11's NB8, and the argument above is narrower than it was written.
+  // Measured: `formatNumber(-1) === '-1'`, so the sentence is true of the value
+  // it names. It is NOT true of every value `!== 0` admits —
+  // `formatNumber(NaN) === '0'`, because `NaN` passes `typeof === 'number'`,
+  // passes `!== 0`, lands here, and renders as a fabricated digit, which is a
+  // worse outcome than the word this arm exists to avoid. `NaN` is not
+  // JSON-reachable (a wire payload can carry `null`, a string or a number, and
+  // not a `NaN`), so what this falsifies is the ARGUMENT, not the code: the
+  // honest form is "a negative counter shows up as itself", not "anything that
+  // reaches `reported` shows up as itself". Two further limits, recorded rather
+  // than quietly relied on: no test in this repository renders a negative
+  // counter on the page, so the "shows up on screen" half is asserted at the
+  // formatter and not at the surface; and `hasSomeCounters` requires
+  // `typeof === 'number'`, so a triple whose three members arrive as strings
+  // routes to `flag-on-no-counters`, whose copy says "not even zeros" — false
+  // of that payload. Verified read-only against `acdp-control-plane`, which
+  // wraps each member in `Number(… ?? 0)` over `count(*) FILTER (…)::int`, so
+  // that route is unreachable upstream today. It is still a `because` whose
+  // fact does not hold on every route carrying it, which is this module's own
+  // stated invariant.
   if (
     hasCounters(keyRevocation) &&
     (keyRevocation.preCompromise !== 0 ||

@@ -366,6 +366,15 @@ export const TRUST_EMPTY = {
 // it. An appended clause changes a block. A new element adds one. A rewritten
 // caption changes one.
 //
+// "With nothing outside it" is a claim about the DOM these tests render, and
+// round 11 falsified it twice without adding a block: once through the
+// `next/link` mock, which discarded every prop and so hid an `aria-label` on
+// the violations table's run link (closed), and once through CSS generated
+// content, which no jsdom render can see (open, and recorded at
+// `NON_ANNOUNCING_ATTRS` below). Both are additions this enumeration cannot
+// see rather than additions it permits, which is the distinction the sentence
+// above does not make on its own.
+//
 // ROUND 9 CORRECTION, and it is the second time a bullet in this docblock has
 // claimed a closure the code did not have. It said "there is no channel left
 // that is near the pin but not in it". Three were:
@@ -391,6 +400,21 @@ export const TRUST_EMPTY = {
 // (`lib/utils/revocation.ts`: pre-compromise is "historically AUTHORIZED —
 // the opposite of a violation", and the tile says so in success green).
 // Painting the fail-closed tile green was green in the suite too.
+//
+// ROUND 11 CORRECTION. That argument was made for the dashboard tiles and then
+// NOT carried across: on `/trust`, the violations table's three chips were
+// pinned one out of three — the one whose class comes from
+// `revocationChipClass` — and the STYLESHEET that decides what `.chip.bad`
+// means was pinned nowhere at all. Measured, each alone, each 1045/1045 green:
+// the flagged row's literal `chip bad` swapped to `chip ok`; the counter-only
+// row's the same; the revoked detail cell's `color: C.danger` swapped to
+// `C.success`; and `.chip.bad` repainted to `var(--success)` in
+// `app/globals.css`, which is a green chip over a live `revoked_at_or_after`
+// verdict — issue #97's harm in one word. The last matters most because
+// CLAUDE.md sends every colour change to that file: "all colours come from CSS
+// variables; raw hex lives only in `app/globals.css`". All four are pinned in
+// `trust-page.test.tsx` now, the stylesheet with the same instrument
+// `health-labels.test.tsx` already uses.
 //
 // `TRUST_KPI_CARDS` declares an `accent` and a `hint` per card for the same
 // reason — and round 9 found that NOTHING READ EITHER. Repainting `/trust`'s
@@ -640,10 +664,35 @@ export function expectedTrustViolationsTableBlocks(opts: {
  * the same week, by two other gates — so this is a repo-wide shape, not a quirk
  * of these two cards.
  *
- * So the licence is the NON-announcing side, which really is closed: these
- * surfaces are `div`s, headings, paragraphs, tables and one `svg` per empty
- * state. An attribute that carries text must now either be licensed by value at
- * the call site or be added here, in a diff, with a reason.
+ * So the licence is the NON-announcing side, which is closed as a list of
+ * ATTRIBUTES: these surfaces are `div`s, headings, paragraphs, tables and one
+ * `svg` per empty state, and an attribute that carries text must either be
+ * licensed by value at the call site or be added here, in a diff, with a
+ * reason.
+ *
+ * ROUND 11 CORRECTION. The sentence used to end "which really is closed", full
+ * stop, and that is one word wider than the list is. Two channels get past it
+ * without adding an attribute this list does not hold:
+ *
+ *   - `class` is ON this list, correctly — it announces nothing itself — and a
+ *     class plus `.all-clear::after { content: ' No key in this deployment has
+ *     been revoked.'; }` in `app/globals.css` prints a sentence under the
+ *     pinned paragraph in every real browser at 1045/1045 green. jsdom loads no
+ *     stylesheet and `textContent` never includes generated content, so neither
+ *     half of every pin in this module can see it. The sibling #95 branch built
+ *     `test/support/stylesheet-text.ts` for exactly this channel, over the
+ *     union of the stylesheets the repository holds and the ones the app loads;
+ *     it lands before this branch does, and these two surfaces want the same
+ *     bound. Recorded here as a residual rather than as a closure, because the
+ *     previous version of this sentence is what would have stopped the next
+ *     reader looking.
+ *   - The `next/link` MOCK used to render a bare `<span>` carrying only its
+ *     children, so nothing hung on the violations table's one interactive
+ *     element reached any pin. That one is closed — `trust-page.test.tsx`
+ *     forwards props now, and has a case for `aria-label` and `title` on the
+ *     run link — and it is worth recording beside this list because the attack
+ *     did not need an attribute the list was missing. It needed a test double
+ *     that renders less than the component.
  *
  * `aria-hidden` is on this list because it announces nothing ITSELF. What it
  * SILENCES beneath it is a different defect — a suppression rather than an

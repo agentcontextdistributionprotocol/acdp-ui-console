@@ -1396,6 +1396,22 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
           p.append(span);
         },
       ],
+      [
+        // ROUND 11's B3. The injection above is a DESCENDANT suppression, so it
+        // attributes only half four's downward walk — and the upward walk,
+        // which is the branch this half's own docblock names as its reason for
+        // existing ("`aria-hidden="true"` on the card body deletes every pinned
+        // block from the accessibility tree"), had no injection at all.
+        // Measured: deleting the ancestor loop outright was 42 files / 1045
+        // tests green on BOTH surfaces, while the same loop intact catches
+        // `aria-hidden` on the violations table at 4 red. Load-bearing and
+        // unguarded is the worst combination in this file, because the next
+        // person to tidy it has nothing telling them not to.
+        'an ANCESTOR of the pinned blocks suppressed',
+        (card) => {
+          card.parentElement!.setAttribute('aria-hidden', 'true');
+        },
+      ],
     ];
     for (const [label, inject] of injections) {
       cleanup();
@@ -1406,9 +1422,11 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
       inject(revocationCard());
       expect(() => expectPinnedCard(expected, label), `the composite ADMITS ${label}`).toThrow();
     }
-    // Anti-vacuity: a loop over an emptied table asserts nothing, and there are
-    // four halves.
-    expect(injections).toHaveLength(4);
+    // Anti-vacuity: a loop over an emptied table asserts nothing. FIVE
+    // injections for four halves — the reachability half has two independent
+    // branches (up and down) and round 11's B3 is that one injection cannot
+    // attribute both.
+    expect(injections).toHaveLength(5);
   });
 
   it('GUARDS THE GUARD: the announced half catches copy no textContent pin sees', () => {

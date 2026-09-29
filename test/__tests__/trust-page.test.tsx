@@ -6,6 +6,8 @@
 // cleanly to its served context" empty state, because the violations filter
 // read `flagged.length` alone. The page asserted the opposite of its own data.
 // ══════════════════════════════════════════════════════════════════════
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { CpRun, RunTrustSummary } from '@/lib/types';
@@ -34,8 +36,38 @@ vi.mock('@/lib/hooks/use-trust', async (orig) => ({
   useTrust: () => useTrust(),
 }));
 
+/**
+ * `next/link`, mocked as the `<a>` it actually renders — props and all.
+ *
+ * ── ROUND 11's B2: THE MOCK WAS A HOLE IN THE PIN ────────────────────
+ *
+ * It used to be `({ children }) => <span>{children}</span>`, which keeps the
+ * text and DISCARDS every other prop. The violations table's only interactive
+ * element is this link, so anything hung on it was outside every pin on that
+ * card. Measured, on `app/trust/page.tsx`'s run cell:
+ *
+ *   <Link href={…} aria-label="No key in this deployment has been revoked."
+ *                  title="No key in this deployment has been revoked.">
+ *
+ * 42 files / 1045 tests green. In the app that renders an `<a>` carrying both
+ * attributes, so EVERY run row in the table announces a deployment-wide
+ * all-clear — to a screen reader and on hover — in the same paint as a listed
+ * `revoked_at_or_after` finding. That is round 9's escape mechanism, in the
+ * state round 9's blocking finding was about, reached through the one element
+ * of the pinned table the test replaced with something simpler.
+ *
+ * `expectNothingAnnounced` was live and correct the whole time — it kills an
+ * `<input readOnly value>` at 15 failures across both files. It simply never
+ * saw these attributes, because the mock had already thrown them away. A mock
+ * that renders LESS than the component is a pin that covers less than it says,
+ * and nothing in the file disclosed the difference.
+ *
+ * `href` and `style` are on `NON_ANNOUNCING_ATTRS`, so forwarding them changes
+ * no expectation; what changes is that an announcing attribute now arrives
+ * where the pin can see it.
+ */
 vi.mock('next/link', () => ({
-  default: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
+  default: ({ children, ...rest }: React.ComponentProps<'a'>) => <a {...rest}>{children}</a>,
 }));
 
 import { timeAgo } from '@/lib/utils/format';
@@ -791,6 +823,15 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
    * entire job is to report findings is the worst reading available. The
    * sibling #84 branch measured exactly that, green.
    *
+   * ROUND 11's B3: that sentence named the ancestor case as this half's reason
+   * for existing, and nothing exercised it. The wiring test's fourth injection
+   * wraps a block's CONTENTS in `<span aria-hidden="true">`, which is a
+   * descendant, so deleting the upward loop was 42 files / 1045 tests green on
+   * both surfaces while the identical defect it is meant to catch —
+   * `aria-hidden` on the violations table — is 4 red with it intact.
+   * Load-bearing and unguarded. There is a fifth injection now, an ancestor
+   * suppression, so each branch has an owner.
+   *
    * `expected.length` is the anti-vacuity: a walk over no blocks asserts
    * nothing, and the block list is what the pin claims is on screen.
    */
@@ -802,11 +843,29 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
 
   function expectNothingSilenced(el: HTMLElement, blocks: HTMLElement[], expectedCount: number, label?: string) {
     for (const block of blocks) {
+      // `el` is the surface this pin is ABOUT, and every block must be inside
+      // it — a block list assembled from somewhere else would make the walk
+      // below true of a subtree nobody is pinning. It is no longer where the
+      // walk STOPS; see below.
+      expect(el.contains(block), `${label ?? ''} — a pinned block is not inside the pinned surface`).toBe(
+        true,
+      );
       const said = normalize(block.textContent).slice(0, 40);
-      // UP: any suppressing ancestor takes the whole block with it.
+      // UP: any suppressing ancestor takes the whole block with it — to the
+      // DOCUMENT, not to the pinned surface.
+      //
+      // ROUND 11's B4. This carried `if (node === el) break;` and the dashboard's
+      // copy of the same walk did not, and that one line is the whole difference
+      // between the two surfaces. Measured: `<div className="page"
+      // aria-hidden="true">` on `app/trust/page.tsx` was 42 files / 1045 tests
+      // green, while the identical mutation on `app/dashboard/page.tsx` was 6
+      // red. Suppression is INHERITED — an ancestor above the card removes the
+      // card from the accessibility tree exactly as an ancestor inside it does —
+      // so stopping the walk at the pin's own scope reads as "this surface is
+      // reachable" while the page around it is not. A pin's scope bounds what it
+      // may ASSERT ABOUT, not how far a fact about it reaches.
       for (let node: HTMLElement | null = block; node !== null; node = node.parentElement) {
         expect(silences(node), `${label ?? ''} — "${said}…" is inside a suppressed element`).toBe(false);
-        if (node === el) break;
       }
       // DOWN, which the first version of this half did not do. The sibling #84
       // branch measured the ancestor-only walk: wrapping each fact's contents in
@@ -881,6 +940,40 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     ).toBe(squash(expected.join('')));
   }
 
+  /**
+   * Half FOUR of the KPI pin: the row is still REACHABLE.
+   *
+   * ── ROUND 11's B4: THE ROW HAD THREE HALVES, NOT FOUR ────────────────
+   *
+   * `43f24e4`'s message says "the reachability half … Both surfaces now walk
+   * descendants too", and `expectPinnedViolations`'s docblock says "there are
+   * FOUR halves now — the fourth is reachability, and it was missing from both
+   * revocation surfaces". Both sentences are about the violations card.
+   * `expectNothingSilenced` appeared at exactly two places in this file — its
+   * definition and its one call inside `expectPinnedViolations` — so the KPI
+   * row, which `revocation-prose.ts` names as one of the three pinned surfaces,
+   * had the three ADDING halves and no suppression half at all.
+   *
+   * Measured: `<div className="kpi-grid" aria-hidden="true">` on
+   * `app/trust/page.tsx` was 42 files / 1045 tests green. The Revoked-events
+   * tile's figure — the em-dash that says a count was never taken, and the
+   * number that says it was — leaves the accessibility tree with every text
+   * pin on this page unchanged.
+   *
+   * The blocks are the CARDS, which is the same granularity `kpiBlocks` pins,
+   * so the count assertion inside the walk is `TRUST_KPI_CARDS.length` and a
+   * row that lost a tile is red here as well as there.
+   */
+  function expectKpiRowReachable(container: HTMLElement, label?: string) {
+    const grid = kpiGrid(container);
+    expectNothingSilenced(
+      grid,
+      [...grid.querySelectorAll<HTMLElement>('.kpi-card')],
+      TRUST_KPI_CARDS.length,
+      `${label ?? ''} KPI row`,
+    );
+  }
+
   it('pins every KPI card: five labels, five figures, and captions only where there are captions', () => {
     // Three of the five carry NO caption, and that absence is pinned — a
     // caption appearing where there was none is how one of the seven escapes
@@ -889,6 +982,8 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     const { container } = renderWith(overview(RUN2, NONE2, FEATURES_ON));
     const expected = expectedKpiBlocks(['0', '0', '0', '—', '0'], TRUST_KPI_HINT['on-with-runs']);
     expectKpiBlocksPinned(container, expected);
+    // ROUND 11's B4: and still reachable, which no text pin can see.
+    expectKpiRowReachable(container);
     // The card labels and their order, stated against the shared table so the
     // literal list above cannot drift from it.
     expect(TRUST_KPI_CARDS.map((c) => c.label)).toEqual([
@@ -936,9 +1031,34 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // "the order and the count are part of the pin" means.
     const card = kpiGrid(container).querySelector('.kpi-card') as HTMLElement;
     const value = card.querySelector('.kpi-value') as HTMLElement;
+    const valueHome = value.nextSibling;
     card.after(value);
     expect(() => expectNothingOutsideKpiRow(container, expected)).not.toThrow();
     expect(() => expectKpiBlocksPinned(container, expected)).toThrow();
+    card.insertBefore(value, valueHome);
+    expectKpiBlocksPinned(container, expected);
+
+    // ROUND 11's B4, half four. A SUPPRESSION changes no text at all, so both
+    // halves above are blind to it by construction: `aria-hidden` on the row
+    // takes all five tiles out of the accessibility tree with every character
+    // still in `textContent`. Measured on the real page at 1045/1045 green.
+    const grid = kpiGrid(container);
+    expectKpiRowReachable(container, 'before injection');
+    grid.setAttribute('aria-hidden', 'true');
+    expect(() => expectNothingOutsideKpiRow(container, expected)).not.toThrow();
+    expect(() => expectKpiBlocksPinned(container, expected)).not.toThrow();
+    expect(() => expectKpiRowReachable(container, 'row suppressed')).toThrow();
+    grid.removeAttribute('aria-hidden');
+
+    // …and an ANCESTOR of the row, which is the arm that carried `break` until
+    // round 11 and is the reason the dashboard caught this mutation and this
+    // page did not. Suppression is inherited; the pin's scope is not a wall.
+    const page = container.querySelector<HTMLElement>('.page') ?? (container.firstElementChild as HTMLElement);
+    expect(page, 'the page wrapper is gone — this case tests nothing').toBeTruthy();
+    page.setAttribute('aria-hidden', 'true');
+    expect(() => expectKpiRowReachable(container, 'page suppressed')).toThrow();
+    page.removeAttribute('aria-hidden');
+    expectKpiRowReachable(container, 'restored');
   });
 
   it('pins each KPI tile’s ACCENT, including the fail-closed one', () => {
@@ -973,6 +1093,45 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       expectedKpiAnnounced(TRUST_KPI_HINT['on-with-runs']),
       'KPI row',
     );
+  });
+
+  it('pins the KPI row on a posture where EVERY figure is non-zero', () => {
+    // ROUND 11's NB1. Every KPI pin in this file expected `['0','0','0','—','0']`
+    // or `['0','0','0','1','0']`, because `totalsFor` never populates
+    // `verified`, `verifiedHistorical` or `noReceipt` — three of the five
+    // figures were held at zero by every fixture on the page. A coordinate on
+    // one of them is then unreachable: `hint={t.verified > 0 ? 'Every receipt
+    // in this deployment verified clean — no key has been revoked' : undefined}`
+    // on the Verified tile was 42 files / 1045 tests green, and it is an
+    // ANNOUNCED all-clear, since `KpiCard` mirrors every hint into a `title`.
+    //
+    // All five non-zero, and all five DISTINCT, so a row that stopped reading
+    // one of the five and printed a neighbour's figure is red here too.
+    const { container } = renderWith(
+      overview(
+        RUN2,
+        {
+          verified: 4,
+          verifiedHistorical: 2,
+          flaggedEvents: 7,
+          revokedEvents: 3,
+          revokedRuns: 1,
+          noReceipt: 5,
+          revocationReportedRuns: 1,
+        },
+        FEATURES_ON,
+      ),
+    );
+    const hint = trustRevokedHint(1, 1);
+    const expected = expectedKpiBlocks(['4', '2', '7', '3', '5'], hint);
+    expectKpiBlocksPinned(container, expected, 'non-zero row');
+    expectNothingOutsideKpiRow(container, expected, 'non-zero row');
+    expectNothingAnnounced(kpiGrid(container), expectedKpiAnnounced(hint), 'non-zero KPI row');
+    expectKpiRowReachable(container, 'non-zero row');
+    // Anti-vacuity on the fixture, not on the pin: five figures that were all
+    // the same number would satisfy every assertion above while proving that
+    // each tile reads its own field only by coincidence.
+    expect(new Set(['4', '2', '7', '3', '5']).size, 'the non-zero fixture stopped distinguishing tiles').toBe(5);
   });
 
   it('pins the Revoked-events card on its REPORTED arm, which no pin reached', () => {
@@ -1075,11 +1234,25 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
    * card renders no hint, so every caller here passes `[]` and a LOST
    * announcement is a defect too.
    *
-   * ROUND 11: there are FOUR halves now — the fourth is reachability, and it
+   * ROUND 10: there are FOUR halves now — the fourth is reachability, and it
    * was missing from both revocation surfaces. Rather than write the number
    * again in a third place, the wiring test below deletes each call from this
    * function in turn and requires the suite to notice; a count in prose cannot
    * do that, and three of them in this file had already drifted.
+   *
+   * ROUND 11 CORRECTION, twice, and both are the same shape as everything else
+   * in this file's history — a sentence with a wider scope than its code:
+   *
+   *   · "missing from both revocation SURFACES" was written about the two
+   *     CARDS. `/trust` has three pinned surfaces, not two, and the KPI row —
+   *     which `revocation-prose.ts` names as one of them — had the three adding
+   *     halves and no reachability half at all. `aria-hidden` on `.kpi-grid`
+   *     was 1045/1045 green. `expectKpiRowReachable` is that half.
+   *   · The fourth half has TWO branches, up and down, and only the downward
+   *     one had an injection — so deleting the ancestor walk outright was
+   *     1045/1045 green on both surfaces while it was the branch the half's own
+   *     docblock names as its reason for existing. There is a fifth injection
+   *     now, one per branch.
    */
   function expectPinnedViolations(
     card: HTMLElement,
@@ -1172,6 +1345,23 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
           target.append(span);
         },
       ],
+      [
+        // ROUND 11's B3, and on this surface also B4. The injection above is a
+        // DESCENDANT suppression, so it attributes only the downward walk; the
+        // upward one — the branch half four's docblock names as its whole
+        // reason for existing — had no injection, and deleting it was 42 files
+        // / 1045 tests green here and on the dashboard.
+        //
+        // This suppresses an ancestor ABOVE the pinned card, which is the arm
+        // that `if (node === el) break;` used to make unreachable on this page
+        // and not on the dashboard. `<div className="page" aria-hidden="true">`
+        // on the real component was 1045/1045 green here and 6 red there, off
+        // that one line.
+        'an ANCESTOR of the pinned card suppressed',
+        (card) => {
+          card.parentElement!.setAttribute('aria-hidden', 'true');
+        },
+      ],
     ];
     for (const [label, inject] of injections) {
       cleanup();
@@ -1188,7 +1378,10 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
         `the composite ADMITS ${label}`,
       ).toThrow();
     }
-    expect(injections).toHaveLength(4);
+    // FIVE injections for four halves: the reachability half has two
+    // independent branches (up and down) and round 11's B3 is that one
+    // injection cannot attribute both.
+    expect(injections).toHaveLength(5);
   });
 
   it('GUARDS THE GUARD: the violations pin REJECTS an appended clause and a stray element', () => {
@@ -1363,10 +1556,29 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
   // ids. Those are data the row renders verbatim, not arms of a decision — with
   // the one exception of the status, which selects a chip class, and that is
   // pinned separately below over every status the classifier knows.
+  //
+  // ROUND 11 CORRECTION: that list was itself incomplete, which is the same
+  // defect one level up — a declaration of what is held constant that holds
+  // more constant than it declares. Two more, now named and each given its own
+  // pin below:
+  //
+  //   · `revoked[].sources`, `[]` in every fixture in this file. A clause
+  //     gated on `r.sources.length > 0` in the detail cell was 1045/1045 green,
+  //     and `amendKeyRevocation` upstream really does write that field. Pinned
+  //     by "the finding row against the revocation fields the page does NOT
+  //     render", which varies it and requires the row not to change.
+  //   · `COUNTER_ONLY`, fixed at 2, which is the counter-only row's whole
+  //     figure and its singular/plural boundary. A run listed as a violation
+  //     that contributes ZERO rows — the case the page's own comment says it
+  //     prevents — is not reached by this cross product. Verified read-only
+  //     against `acdp-control-plane` that `summarizeByRun` derives the counters
+  //     and `revoked[]` from one row set, so it is a defensive path rather than
+  //     a live one; recorded here because "defensive" is a claim about upstream
+  //     and this file cannot check it.
   // ══════════════════════════════════════════════════════════════════
   type Finding = 'none' | 'flagged' | 'revoked' | 'counter' | 'both';
   type ViolationsInput = {
-    runs: 0 | 1 | 2;
+    runs: number;
     finding: Finding;
     reported: boolean;
     checkOff: boolean;
@@ -1467,9 +1679,34 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     return expectedTrustViolationsTableBlocks({ sub, rows });
   }
 
+  /**
+   * The `runs` values the enumeration below visits.
+   *
+   * ── ROUND 11's B1: THREE OF TWENTY-SIX ───────────────────────────────
+   *
+   * This axis was `[0, 1, 2]` under a test called "pins the violations card in
+   * EVERY reachable arm of its input space" — a name this branch has since
+   * narrowed to what it does — and `runs` is not a three-valued
+   * axis: `use-trust.ts` fetches `MAX_RUNS = 25`, and the DEFAULT demo posture
+   * carries a `trust` summary on seven of eight runs. So the state an operator
+   * sees on first load was outside the space this test claimed to have
+   * enumerated, and `{runs.length > 2 && <p>No key in this deployment has been
+   * revoked.</p>}` in the violations body was 42 files / 1045 tests green — a
+   * deployment-wide all-clear painted in the same card as a listed finding.
+   * That is round 10's B4 coordinate, reported and closed for the wrong
+   * quantity: the SPACE was derived, and the axis the finding named was given
+   * three of its values.
+   *
+   * `3` is added rather than swapped in, because `0`, `1` and `2` are all
+   * load-bearing — the no-runs empty state, the singular/plural boundary in the
+   * revocation clause, and the first plural. What actually closes the axis is
+   * the whole-axis sweep below; this list is the cross product's sample of it.
+   */
+  const VIOLATIONS_RUNS_AXIS = [0, 1, 2, 3] as const;
+
   function reachableViolationsInputs(): ViolationsInput[] {
     const out: ViolationsInput[] = [];
-    for (const runs of [0, 1, 2] as const) {
+    for (const runs of VIOLATIONS_RUNS_AXIS) {
       for (const finding of ['none', 'flagged', 'revoked', 'counter', 'both'] as const) {
         for (const reported of [false, true]) {
           for (const checkOff of [false, true]) {
@@ -1499,11 +1736,11 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     return out;
   }
 
-  it('pins the violations card in EVERY reachable arm of its input space', () => {
+  it('pins the violations card in every arm of its six-axis cross product', () => {
     const inputs = reachableViolationsInputs();
     // Anti-vacuity on the enumeration: a filter that swallowed the space would
     // make this loop assert nothing at all.
-    expect(inputs.length, 'the violations input enumeration collapsed').toBe(82);
+    expect(inputs.length, 'the violations input enumeration collapsed').toBe(122);
     const label = (i: ViolationsInput) =>
       `runs=${i.runs} finding=${i.finding} reported=${i.reported} checkOff=${i.checkOff} ` +
       `pre=${i.preCompromise} zeroed=${i.countersZeroed}`;
@@ -1528,10 +1765,11 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // ...and on the DERIVATION, which is the half a count alone does not give.
     // Two inputs producing an identical card means the card does not
     // distinguish two states -- the defect class this page is about -- so the
-    // collisions are characterised, not merely counted. Measured: 50 distinct
-    // cards over 82 inputs, and every one of the 32 collisions is the same
-    // pair.
-    expect(groups.size, 'the arms collapsed onto one another').toBe(50);
+    // collisions are characterised, not merely counted. Measured: 74 distinct
+    // cards over 122 inputs, and every one of the 48 collisions is the same
+    // pair. (Round 11 added `runs: 3` to the axis; the previous measurement was
+    // 50 over 82.)
+    expect(groups.size, 'the arms collapsed onto one another').toBe(74);
     for (const group of groups.values()) {
       if (group.length === 1) continue;
       // The ONLY axis whose two values may produce one card is `checkOff`, and
@@ -1551,6 +1789,134 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       });
     }
   }, 120_000);
+
+  /**
+   * The ceiling on `runs`, READ FROM the hook that imposes it.
+   *
+   * Not written down here. `MAX_RUNS` is a private const in
+   * `lib/hooks/use-trust.ts`, and a number copied into a test is a number that
+   * drifts — this file already carried `0 | 1 | 2` as an axis while the hook
+   * fetched twenty-five. Parsed instead, and a hook that stops declaring a
+   * ceiling is a red test rather than a silently unbounded sweep.
+   */
+  function maxAuditedRuns(): number {
+    const src = readFileSync(join(process.cwd(), 'lib/hooks/use-trust.ts'), 'utf8');
+    const m = src.match(/const\s+MAX_RUNS\s*=\s*(\d+)/);
+    expect(m, 'use-trust.ts no longer declares MAX_RUNS — this sweep has lost its ceiling').toBeTruthy();
+    const n = Number(m![1]);
+    expect(src, 'MAX_RUNS is declared but no longer bounds the fetch').toMatch(/limit:\s*MAX_RUNS/);
+    return n;
+  }
+
+  it('bounds the runs axis WHOLE, at every value the hook can deliver', () => {
+    // ── ROUND 11's B1, the half that closes the axis rather than sampling it ──
+    //
+    // The cross product above visits four `runs` values because visiting
+    // twenty-six of them across six other axes is 800 renders. This visits ALL
+    // of them, for three fixed shapes — which is the trade that makes the claim
+    // true: every coordinate gate on `runs.length` has a threshold, and a
+    // threshold anywhere in 0..MAX_RUNS is crossed here.
+    //
+    // Measured before this existed: `{runs.length > 2 && <p>No key in this
+    // deployment has been revoked.</p>}` in the violations body was 42 files /
+    // 1045 tests green, and the default demo posture renders it — seven of the
+    // eight mock runs carry a trust summary.
+    //
+    // The expectation is the SAME derivation the cross product uses, so this is
+    // not a second copy of the card's copy: what it adds is that the derivation
+    // predicts the card at every run count, and a card that says something the
+    // derivation does not predict is red whatever produced it.
+    const ceiling = maxAuditedRuns();
+    expect(ceiling, 'the hook no longer fetches more runs than the cross product samples').toBeGreaterThan(
+      VIOLATIONS_RUNS_AXIS[VIOLATIONS_RUNS_AXIS.length - 1],
+    );
+    const shapes: Array<Omit<ViolationsInput, 'runs'>> = [
+      { finding: 'none', reported: false, checkOff: false, preCompromise: false, countersZeroed: false },
+      { finding: 'both', reported: true, checkOff: false, preCompromise: true, countersZeroed: false },
+      { finding: 'counter', reported: true, checkOff: true, preCompromise: false, countersZeroed: false },
+    ];
+    let pinned = 0;
+    for (const shape of shapes) {
+      for (let runs = 1; runs <= ceiling; runs += 1) {
+        const i: ViolationsInput = { ...shape, runs };
+        cleanup();
+        const { container } = renderWith(
+          overview(
+            Array.from({ length: runs }, (_, n) => ({ runId: `run-${n}`, trust: runTrustFor(i.finding, n) })),
+            totalsFor(i),
+            i.checkOff ? { ...FEATURES_ON, keyRevocationCheck: false } : FEATURES_ON,
+          ),
+        );
+        expectPinnedViolations(
+          violationsCard(container),
+          expectedViolations(i),
+          `runs=${runs} finding=${i.finding}`,
+        );
+        pinned += 1;
+      }
+    }
+    // Anti-vacuity on the sweep itself: an empty `shapes`, or a loop that never
+    // enters, asserts nothing at all.
+    expect(pinned, 'the runs sweep rendered nothing').toBe(shapes.length * ceiling);
+    expect(shapes.length, 'the runs sweep lost its shapes').toBe(3);
+  }, 120_000);
+
+  it('pins the finding row against the revocation fields the page does NOT render', () => {
+    // ROUND 11's NB2. `revocation()` sets `sources: []` in every fixture in
+    // this file, so `sources` is a field the row RECEIVES and no test varies —
+    // and appending `{r.sources.length > 0 && ' · no other key in this
+    // deployment has been revoked'}` to the detail cell was 42 files / 1045
+    // tests green. Verified upstream that `amendKeyRevocation` writes
+    // `keyRevocationSources`, so the gate is reachable in production; it is
+    // simply outside this file's declared "WHAT IS HELD CONSTANT" list, which
+    // is the half of that list that was wrong.
+    //
+    // The pin is that the row is the SAME whatever `sources` holds. A field the
+    // page does not render must not become a field the page renders without a
+    // visible diff, and that is a stronger claim than "the current code ignores
+    // it" — it is the claim that survives the next edit.
+    const r = revocation('revoked_at_or_after');
+    const when = timeAgo('2026-09-25T00:01:00.000Z');
+    const expected = expectedTrustViolationsTableBlocks({
+      sub: trustViolationsSub({
+        flaggedEvents: 0,
+        flaggedRuns: 0,
+        revocationClause: '1 revoked across 1 run',
+        preCompromiseEvents: 0,
+      }),
+      rows: [
+        [
+          'run-src',
+          formatCtxId(r.ctxId as string),
+          r.status,
+          `key revoked · boundary ${new Date(r.boundary).toLocaleString()} · ${r.trustClass}`,
+          when,
+        ],
+      ],
+    });
+    type Source = NonNullable<Revoked[number]['sources']>[number];
+    const src = (ctxId: string, publisher: string): Source => ({ ctxId, publisher });
+    const SOURCES: Source[][] = [
+      [],
+      [src('acdp://registry-a.playground.local/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'did:key:zA')],
+      [src('one', 'did:key:z1'), src('two', 'did:key:z2'), src('three', 'did:key:z3')],
+    ];
+    for (const sources of SOURCES) {
+      cleanup();
+      const { container } = renderWith(
+        overview(
+          [{ runId: 'run-src', trust: trust({ revoked: [{ ...r, sources }] }) }],
+          { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+          FEATURES_ON,
+        ),
+      );
+      expectPinnedViolations(violationsCard(container), expected, `sources=${sources.length}`);
+    }
+    // Anti-vacuity: a loop over an emptied list asserts nothing, and the axis
+    // has to include both the empty and the non-empty side to be an axis.
+    expect(SOURCES).toHaveLength(3);
+    expect(SOURCES.filter((s) => s.length > 0), 'the non-empty side of the axis is gone').not.toHaveLength(0);
+  });
 
   it('pins the chip class of every revocation status the classifier knows', () => {
     // ROUND 10's B5. The finding cell's chip is read from
@@ -1593,6 +1959,125 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       expect(found, `no chip for ${status}`).toBeTruthy();
       expect(found!.getAttribute('class'), `${status} renders the wrong chip`).toBe(chip);
     }
+  });
+
+  it('pins the colour of EVERY finding on this table, and of the classes that carry it', () => {
+    // ── ROUND 11's B5 ────────────────────────────────────────────────
+    //
+    // Round 10's B5 was closed for ONE of the table's three chips — the one
+    // whose class comes from `revocationChipClass`. The other two are written
+    // as literals at the call site and were read by nothing, and neither was
+    // the stylesheet that decides what those class names MEAN. Measured, each
+    // alone, each 42 files / 1045 tests green:
+    //
+    //   flagged row `className="chip bad"` → `"chip ok"`     SURVIVED
+    //   counter-only row `className="chip bad"` → `"chip ok"` SURVIVED
+    //   revoked detail cell `color: C.danger` → `C.success`   SURVIVED
+    //   `.chip.bad` repainted to `var(--success)` in globals  SURVIVED
+    //
+    // The last one matters most, and not because it is the hardest: CLAUDE.md
+    // says "all colours come from CSS variables; raw hex lives only in
+    // `app/globals.css`", so editing that file is the NORMAL way colour changes
+    // in this repository. A green chip over a live `revoked_at_or_after`
+    // verdict is issue #97's harm stated in one word, and the page's own
+    // account of why colour is load-bearing here — pre-compromise is
+    // historically AUTHORIZED and is painted green for that reason — is what
+    // makes an inversion a lie rather than a style preference.
+    //
+    // Hand-written, not derived: reading `C.danger` to assert `C.danger` is the
+    // tautology this branch has now caught four times.
+    const DANGER = 'var(--danger)';
+    const cases: Array<
+      [label: string, run: { runId: string; trust: RunTrustSummary }, chip: string, detail: string]
+    > = [
+      [
+        'a flagged finding',
+        {
+          runId: 'run-flag',
+          trust: trust({
+            flagged: [
+              {
+                eventId: 'f',
+                ctxId: FLAGGED_CTX,
+                status: 'discrepancy',
+                discrepancies: ['content_hash_mismatch:x'],
+              },
+            ],
+          }),
+        },
+        'chip bad',
+        'content_hash_mismatch:x',
+      ],
+      [
+        'a counter-only run',
+        {
+          runId: 'run-count',
+          trust: trust({ revoked: [], keyRevocationRevokedAtOrAfter: 2 }),
+        },
+        'chip bad',
+        '2 fail-closed verdicts counted with no per-event detail',
+      ],
+      [
+        'a live revocation',
+        {
+          runId: 'run-rev',
+          trust: trust({ revoked: [revocation('revoked_at_or_after')] }),
+        },
+        'chip bad',
+        'key revoked',
+      ],
+    ];
+    for (const [label, run, chip, detailText] of cases) {
+      cleanup();
+      const { container } = renderWith(
+        overview([run], { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1, flaggedEvents: 1 }, FEATURES_ON),
+      );
+      const card = violationsCard(container);
+      const chips = [...card.querySelectorAll<HTMLElement>('tbody td span[class^="chip"]')];
+      expect(chips.length, `${label}: no chip rendered`).toBeGreaterThan(0);
+      for (const c of chips) {
+        expect(c.getAttribute('class'), `${label}: the chip changed class`).toBe(chip);
+      }
+      // …and the DETAIL cell beside it, which carries the same claim in an
+      // inline colour rather than a class.
+      const detail = [...card.querySelectorAll<HTMLElement>('tbody td span.did')].find((s) =>
+        normalize(s.textContent).startsWith(detailText.slice(0, 20)),
+      );
+      expect(detail, `${label}: no detail cell saying "${detailText.slice(0, 20)}"`).toBeTruthy();
+      expect(detail!.style.color, `${label}: the detail cell is no longer painted as a danger`).toBe(DANGER);
+    }
+
+    // ── The stylesheet, which is where the class names acquire meaning ──
+    //
+    // The render assertions above say the flagged row wears `.chip.bad`. They
+    // say nothing about what `.chip.bad` looks like, and the repository's own
+    // rules point every colour change at this file. `health-labels.test.tsx`
+    // reads `app/globals.css` for exactly this reason and says so; this is the
+    // same instrument on the surface #97 is about.
+    const css = readFileSync(join(process.cwd(), 'app/globals.css'), 'utf8');
+    const rule = (selector: string): string => {
+      const m = css.match(new RegExp(`\\${selector}\\s*\\{[^}]*\\}`));
+      expect(m, `${selector} has no rule in app/globals.css`).toBeTruthy();
+      return m![0];
+    };
+    const colourOf = (selector: string): string => {
+      const m = rule(selector).match(/(?:^|[;{])\s*color\s*:\s*([^;}]+)/);
+      expect(m, `${selector} sets no color`).toBeTruthy();
+      return m![1].trim();
+    };
+    expect(colourOf('.chip.bad'), 'a fail-closed finding is no longer painted as one').toBe('var(--danger)');
+    expect(colourOf('.chip.warn'), 'an unverifiable finding lost its warning colour').toBe('var(--warning)');
+    expect(colourOf('.chip.ok'), 'the authorized arm lost its success colour').toBe('var(--success)');
+    // …and the three are DISTINCT, which is the property an operator actually
+    // relies on: three rules all resolving to the same token would satisfy
+    // every line above while telling a fail-closed verdict from an authorized
+    // one not at all.
+    const tones = ['.chip.bad', '.chip.warn', '.chip.ok'].map(colourOf);
+    expect(new Set(tones).size, 'two chip states share a colour').toBe(3);
+    // GUARDS THE GUARD: the reader finds a real rule and a real colour, and
+    // fails loudly rather than vacuously when it does not.
+    expect(rule('.chip.bad')).toContain('background');
+    expect(() => colourOf('.chip.not-a-real-state')).toThrow();
   });
 
   it('GUARDS THE GUARD: the TABLE state rejects an all-clear beside the findings', () => {
@@ -1642,6 +2127,34 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     const cell = card.querySelectorAll('tbody td')[2] as HTMLElement;
     cell.textContent = 'clean';
     expect(() => expectBlocksPinned(card, expected)).toThrow();
+    cell.textContent = 'revoked_at_or_after';
+    expectPinnedViolations(card, expected, 'after restoring the cell');
+
+    // ROUND 11's B2, as a case rather than as a sentence about the mock. The
+    // run cell holds this table's ONE interactive element, and the previous
+    // mock rendered it as a bare `<span>` carrying only its children — so an
+    // `aria-label` on the link was outside every pin on this card, in the state
+    // a finding is listed. The mock forwards props now; this is what says so.
+    const link = card.querySelector('tbody a');
+    expect(link, 'the run cell no longer renders a link — this case tests nothing').toBeTruthy();
+    link!.setAttribute('aria-label', 'No key in this deployment has been revoked.');
+    expect(
+      () => expectPinnedViolations(card, expected, 'link aria-label'),
+      'the composite ADMITS an all-clear announced from the run link',
+    ).toThrow();
+    link!.removeAttribute('aria-label');
+    // …and `title`, the other half of the measured injection, which is both an
+    // announcement and a hover disclosure.
+    link!.setAttribute('title', 'No key in this deployment has been revoked.');
+    expect(
+      () => expectPinnedViolations(card, expected, 'link title'),
+      'the composite ADMITS an all-clear on the run link’s tooltip',
+    ).toThrow();
+    link!.removeAttribute('title');
+    // Direction two: the attributes the link legitimately carries are still
+    // licensed, so this is not simply refusing every link.
+    expectPinnedViolations(card, expected, 'link restored');
+    expect(link!.getAttribute('href'), 'the mock stopped forwarding href').toBe('/runs/run-live');
   });
 
   it('GUARDS THE GUARD: the table reader fails loudly when it loses its subject', () => {
