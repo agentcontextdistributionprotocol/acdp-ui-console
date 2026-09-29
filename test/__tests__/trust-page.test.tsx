@@ -1288,6 +1288,37 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     a.textContent = text.slice(0, cut);
   }
 
+  // ══════════════════════════════════════════════════════════════════
+  // MEASURED (round 12). Thirteen mutations, each applied ALONE from a clean
+  // tree under `tsc --noEmit` plus this file and `dashboard-revocation.test.tsx`,
+  // reverted and `git status` verified clean between each. Every one of round
+  // 11's five blocking findings, reproduced verbatim from its report, is now
+  // KILLED, and so are both non-blocking coordinates:
+  //
+  //   B1  `{runs.length > 2 && <p>No key…revoked.</p>}`        → 2 red
+  //   B1b the same gate at `> 20`, above the cross product      → 1 red
+  //       (the whole-axis sweep alone — which is what it is for)
+  //   B2  `aria-label` + `title` on the run `<Link>`            → 6 red
+  //   B3a the ancestor walk deleted (/trust)                    → 2 red
+  //   B3b the ancestor walk deleted (dashboard)                 → 1 red
+  //   B4a `aria-hidden` on the `/trust` page wrapper            → 13 red
+  //   B4b `aria-hidden` on `.kpi-grid`                          → 3 red
+  //   B5a `.chip.bad` repainted `var(--success)` in globals.css → 1 red
+  //   B5b flagged row `chip bad` → `chip ok`                    → 1 red
+  //   B5c counter-only row `chip bad` → `chip ok`               → 1 red
+  //   B5d revoked detail `C.danger` → `C.success`               → 1 red
+  //   NB1 `{t.verified > 0 && <p>No key…revoked.</p>}`          → 1 red
+  //   NB2 `{r.sources.length > 0 && ' · …'}` on the detail cell → 1 red
+  //
+  // Two of those are worth more than their counts. B3a and B3b each fail in
+  // exactly ONE test — the wiring test below — which is what "one owner per
+  // branch" means and is the property this file's fifth injection was added
+  // for. And NB1 was measured TWICE: pinning the KPI row on a non-zero posture
+  // did NOT kill it, because the injection is in the violations card and that
+  // card's own space still held `verified` at zero. What kills it is pinning
+  // the card against the totals it does not read. A finding closed on the
+  // surface that reports the symptom is not closed.
+  // ══════════════════════════════════════════════════════════════════
   it('all four halves are WIRED IN to the violations composite, each by an injection only it sees', () => {
     // ROUND 10's NB2. Each half has its own guard-the-guard above, which says
     // the half WORKS. None of them says the composite CALLS it — and the
