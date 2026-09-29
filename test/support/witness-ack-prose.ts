@@ -58,7 +58,6 @@ import type {
   AckListingConsequence,
   AckOutcome,
 } from '@/components/registries/log-witness-alerts';
-import { ADMIN_ROUTE_FORBIDDEN } from '@/lib/utils/api-error-messages';
 
 /**
  * Collapse every run of whitespace to one space and trim.
@@ -155,20 +154,40 @@ export const ACK_RESOLVED_PANEL =
 export const ACK_HEADING = (authority: string) => `Acknowledge ${authority}`;
 
 /**
- * The outcome panel's message, per arm — and two of the three are IMPORTED,
- * against this file's own rule. The exception is deliberate and bounded.
+ * The 403 panel's message — a HAND COPY of `ADMIN_ROUTE_FORBIDDEN`.
  *
- * The rule (see the top of this file) is that nothing here may be imported from
- * the SUBJECT, or the assertion becomes `x === x`. `ADMIN_ROUTE_FORBIDDEN` is
- * not the subject: it belongs to `lib/utils/api-error-messages.ts`, is shared
- * by three surfaces, and has its own dedicated pin in `admin-key-parity.test.tsx`
- * (`:214-219`) plus a parity test asserting every site that renders it also
- * renders the diagnostic disclosure. Hand-copying 500 characters of it here
- * would duplicate a string this PR does not own and drift from it silently.
+ * ROUND 5 CORRECTION. This used to import that constant, under a docblock
+ * arguing the import was a bounded exception to this file's no-importing rule
+ * because "it has its own dedicated pin in `admin-key-parity.test.tsx`
+ * (`:214-219`)". The line citation was exact and the conclusion was wrong: that
+ * pin is four `toContain` substring assertions plus one `not.toMatch`, and a
+ * substring pin cannot bound what ELSE the string says. This file's own opening
+ * paragraph names that failure mode — "a substring match cannot see a prefix" —
+ * and here it was a SUFFIX. Round 5's gate appended
+ * `' The acknowledgement was recorded anyway.'` to the constant in
+ * `lib/utils/api-error-messages.ts` and all 1115 tests stayed green, with the
+ * fabricated sentence rendering verbatim in this dialog's 403 panel and on the
+ * two other surfaces that share the constant.
  *
- * What the dialog decides — and therefore what IS pinned here — is WHICH
- * message appears in WHICH state, that it appears with the upstream bytes
- * disclosed beside it, and that nothing else appears with it.
+ * So it is written out. The rule has no exceptions after all: the 500
+ * characters are the cost of the bound, and `the 403 panel's copy is the copy
+ * someone wrote down` in the test file asserts the constant still equals this —
+ * which is the assertion the import made impossible.
+ *
+ * The nesting is flattened deliberately: upstream composes it from
+ * `CP_KEY_PREAMBLE` and `ADMIN_KEY_REQUIRED`, and a pin that reused those
+ * pieces would re-open exactly the hole this closes.
+ */
+export const ACK_FORBIDDEN_PANEL =
+  'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
+  'sends no code for any of them — so the reason it gave is in the detail below. The likeliest is ' +
+  'an under-scoped key: The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ' +
+  'ask whoever deployed this console to grant it admin scope. The others are about tenancy: a ' +
+  'request may not name the reserved tenant `default`, and under AUTH_REQUIRE_TENANT a key that is ' +
+  'not bound to a tenant is refused outright. Read the detail before changing any key.';
+
+/**
+ * The outcome panel's message, per arm.
  *
  * `failed` has no entry because its message is `operatorErrorMessage(error,
  * 'Could not record the acknowledgement')`, a function of the error code. The
@@ -176,7 +195,7 @@ export const ACK_HEADING = (authority: string) => `Acknowledge ${authority}`;
  */
 export const ACK_PANEL_MESSAGE: Record<'already-resolved' | 'forbidden', string> = {
   'already-resolved': ACK_RESOLVED_PANEL,
-  forbidden: ADMIN_ROUTE_FORBIDDEN,
+  forbidden: ACK_FORBIDDEN_PANEL,
 };
 
 /**
@@ -199,8 +218,8 @@ export function ackPanelBlock(message: string, diagnostic?: string): string {
 }
 
 /**
- * Every ATTRIBUTE the dialog is allowed to announce, and the reason this is a
- * separate closed set from the blocks.
+ * The attributes whose values are STRUCTURE — and therefore the only ones whose
+ * values the announced-copy scan may skip.
  *
  * `textContent` cannot see an attribute. Round 4's sweep put `title="…"` on the
  * body grid and `aria-label="…"` on the lead paragraph, and both survived a pin
@@ -213,30 +232,81 @@ export function ackPanelBlock(message: string, diagnostic?: string): string {
  * that WRITES, so an unreviewed sentence that only some operators can perceive
  * is worse here than anywhere else on the card.
  *
- * Two values, both chrome this dialog does not author:
+ * ROUND 5 CORRECTION — THE LIST WAS THE WRONG WAY ROUND. It used to enumerate
+ * the attributes that DO announce (`title`, `alt`, `placeholder`, `aria-label`,
+ * `aria-description`, `aria-roledescription`, `aria-valuetext`,
+ * `aria-placeholder`). That is an OPEN set, which is the exact mistake the top
+ * of this file argues against one level down: the set of English paraphrases
+ * cannot be completed, and neither can the set of attributes that reach an
+ * operator. The gate proved it twice on one branch:
  *
- *   - `Close dialog` — `Modal`'s own header control, whose icon is
- *     `aria-hidden`, so this label is its entire accessible name.
- *   - `Technical detail` — `ErrorDetail`'s `<pre>`, which needs a name because
- *     a `<pre>` maps to ARIA `generic` and a scroll container needs to be
- *     reachable; the same string is its `<summary>` text, so it IS in the
- *     blocks as well.
+ *   - `aria-keyshortcuts="Confirming clears the alert"` on the body grid —
+ *     announced, not on the list, 1115/1115 green.
+ *   - `<input type="button" disabled value="Confirming clears this alert and
+ *     the retained head." />` in the body grid — a VISIBLE labelled control
+ *     whose text is not in `textContent`, matches none of the block selectors,
+ *     and whose `value` was not on the list. It evaded all three halves on
+ *     every arm, not merely on the unpinned ones.
  *
- * `aria-hidden` is excluded because it announces nothing by definition, and the
- * id-reference attributes (`aria-labelledby` and friends) are checked
- * separately: they carry no text of their own, and what they point at is
- * already inside the dialog and therefore already pinned.
+ * `label`, `abbr`, `srcdoc`, `download` and `aria-errormessage` were the next
+ * five, and enumerating them would leave the sixth. The same escape beat the
+ * sibling registry-card guard on #95, found by a different gate one day apart —
+ * so it is a repo-wide shape, not a quirk of this dialog.
+ *
+ * So the licence is the NON-announcing side, which is closed and short: this
+ * dialog is a handful of `div`s, a `ul`, an `h2`, buttons, a `details` and one
+ * `svg` icon. An attribute that carries text must now either be licensed by
+ * value in the expected set (see `expectedAnnounced`) or be added here, in a
+ * diff, with a reason.
+ *
+ * `aria-hidden` is on this list because it announces nothing ITSELF — but that
+ * is only half the story, and the previous docblock stopped there, which was
+ * backwards as a guard rationale: `aria-hidden` announces nothing while
+ * SILENCING everything beneath it. Round 5 put `aria-hidden` on the
+ * three-facts `<ul>` and every sentence the dialog exists to state vanished
+ * from the accessibility tree with the text pin untouched and the suite green.
+ * That is a SUPPRESSION, not an addition, and no scan over attribute VALUES can
+ * catch it — it is caught by the fourth half of the pin instead
+ * (`expectNothingSilenced`), which requires every pinned block to be reachable.
  */
-export const ANNOUNCED_TEXT_ATTRS = [
-  'title',
-  'alt',
-  'placeholder',
-  'aria-label',
-  'aria-description',
-  'aria-roledescription',
-  'aria-valuetext',
-  'aria-placeholder',
+export const NON_ANNOUNCING_ATTRS = [
+  'class',
+  'style',
+  'id',
+  'role',
+  'tabindex',
+  'type',
+  'disabled',
+  'open',
+  // Announces nothing itself; what it hides is the fourth half's problem.
+  'aria-hidden',
+  'aria-modal',
+  // Id references carry no text of their own. That they must RESOLVE INSIDE the
+  // dialog is asserted separately — an id pointing out of it names text no
+  // other half can see.
+  'aria-labelledby',
+  'aria-describedby',
+  'aria-details',
+  // SVG: the `Modal` close icon.
+  'xmlns',
+  'width',
+  'height',
+  'viewbox',
+  'fill',
+  'stroke',
+  'stroke-width',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'd',
+  'points',
+  'x1',
+  'y1',
+  'x2',
+  'y2',
 ] as const;
+
+/** The id-reference attributes, which must resolve inside the dialog. */
+export const ID_REFERENCE_ATTRS = ['aria-labelledby', 'aria-describedby', 'aria-details'] as const;
 
 export const ACK_CLOSE_CONTROL = 'Close dialog';
 

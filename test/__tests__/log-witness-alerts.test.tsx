@@ -17,6 +17,8 @@
 //
 // The hook is mocked per `CLAUDE.md` so each state renders deterministically.
 // ══════════════════════════════════════════════════════════════════════
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, within, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -29,17 +31,24 @@ import type {
   AckOutcome,
 } from '@/components/registries/log-witness-alerts';
 import {
+  ackListingConsequence,
+  ackOutcome,
+  ackStage,
+} from '@/components/registries/log-witness-alerts';
+import {
   ADMIN_ROUTE_FORBIDDEN,
   errorDiagnostic,
   operatorErrorMessage,
 } from '@/lib/utils/api-error-messages';
 import {
+  ACK_FORBIDDEN_PANEL,
   ACK_LISTING,
   ALL_CONSEQUENCES,
   ALL_FOOTER_STATES,
   ALL_OUTCOMES,
   ALL_STAGES,
-  ANNOUNCED_TEXT_ATTRS,
+  ID_REFERENCE_ATTRS,
+  NON_ANNOUNCING_ATTRS,
   expectedAnnounced,
   expectedDialogBlocks,
   normalize,
@@ -140,6 +149,29 @@ function ackToggle(): HTMLElement {
   const toggles = screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-pressed'));
   expect(toggles, 'the card no longer renders exactly one toggle button').toHaveLength(1);
   return toggles[0];
+}
+
+/**
+ * What a screen reader will call this control — NOT its `textContent`.
+ *
+ * ROUND 5's NB3. The `aria-pressed` invariant read `textContent`, and `Button`
+ * spreads `...rest`, so adding
+ * `aria-label={showAcknowledged ? 'Hide acknowledged' : 'Show acknowledged'}`
+ * restored the exact defect that invariant exists to prevent — an accessible
+ * name of "Hide acknowledged" under `aria-pressed="true"` — and the test
+ * passed. The mutation died only incidentally, on an unrelated
+ * `aria-label`-filtered count elsewhere in the file.
+ *
+ * An `aria-label` REPLACES the content as the accessible name (accname step 2B
+ * beats step 2F), so a control whose label and whose visible text disagree is
+ * announced by the label — which is precisely the half an invariant about
+ * announcement has to read. Deliberately not a full accname implementation:
+ * this covers the two sources this repo's `Button` can produce.
+ */
+function accessibleName(el: HTMLElement): string {
+  const label = el.getAttribute('aria-label');
+  if (label !== null && label.trim() !== '') return normalize(label);
+  return normalize(el.textContent);
 }
 
 beforeEach(() => {
@@ -719,10 +751,12 @@ function modalBody(): HTMLElement {
  * icon under an `aria-label`), so it contributes nothing to `textContent` and
  * nothing to either half. Its label is asserted by `modal-focus.test.tsx`.
  */
+const BLOCK_SELECTOR = 'h2, p, li, .card, .modal-footer button';
+
 function dialogBlocks(): string[] {
-  return [
-    ...dialog().querySelectorAll<HTMLElement>('h2, p, li, .card, .modal-footer button'),
-  ].map((n) => normalize(n.textContent));
+  return [...dialog().querySelectorAll<HTMLElement>(BLOCK_SELECTOR)].map((n) =>
+    normalize(n.textContent),
+  );
 }
 
 /**
@@ -768,10 +802,16 @@ function expectNothingOutside(expected: string[], label?: string) {
  */
 function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
   const found: string[] = [];
-  for (const el of dialog().querySelectorAll<HTMLElement>('*')) {
-    for (const attr of ANNOUNCED_TEXT_ATTRS) {
-      const v = el.getAttribute(attr);
-      if (v !== null && v !== '') found.push(normalize(v));
+  const nonAnnouncing = new Set<string>(NON_ANNOUNCING_ATTRS);
+  for (const el of [dialog(), ...dialog().querySelectorAll<HTMLElement>('*')]) {
+    for (const attr of el.attributes) {
+      // ROUND 5: the scan used to walk a list of attributes that DO announce,
+      // which is an OPEN set — `aria-keyshortcuts` and an `<input value>` both
+      // walked past it with the suite green. It now walks EVERY attribute and
+      // skips only the structural ones, so an attribute nobody thought of is a
+      // red test rather than a silent channel.
+      if (nonAnnouncing.has(attr.name.toLowerCase())) continue;
+      if (attr.value.trim()) found.push(normalize(attr.value));
     }
   }
   expect(new Set(found), `${label ?? ''} — announced copy outside the pinned set`).toEqual(
@@ -781,7 +821,7 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
   // at an element OUTSIDE the dialog — whose text neither of the other halves
   // sees. So they are required to resolve inside it.
   for (const el of dialog().querySelectorAll<HTMLElement>('*')) {
-    for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-details']) {
+    for (const attr of ID_REFERENCE_ATTRS) {
       for (const id of (el.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
         expect(
           dialog().querySelector(`#${CSS.escape(id)}`),
@@ -790,6 +830,53 @@ function expectNothingAnnounced(outcome: AckOutcome, label?: string) {
       }
     }
   }
+}
+
+/**
+ * HALF FOUR: everything written down is still REACHABLE.
+ *
+ * The other three halves all bound what is ADDED. None of them can see a
+ * SUPPRESSION, and round 5's gate found the sharpest one available:
+ * `aria-hidden` on the three-facts `<ul>`. `textContent` is unchanged, no
+ * attribute value carries copy, nothing is outside the blocks — and every
+ * sentence the dialog exists to state is gone from the accessibility tree. A
+ * screen-reader operator is left with "Recording an acknowledgement for X,
+ * currently alerting: Y" and two buttons, which is precisely the reading of the
+ * word "acknowledge" this whole dialog was built to prevent. 1115/1115 green.
+ *
+ * `aria-hidden` is on the non-announcing list because it announces nothing
+ * ITSELF; what it hides is this half's problem. `role="presentation"` strips an
+ * element's semantics rather than its text, so it is not the same defect and is
+ * not checked here — but `hidden` is, because it removes the node from both
+ * trees.
+ *
+ * Not a styling check: jsdom applies no stylesheet, so `display: none` is
+ * invisible from here. That gap is real and is named in the docblock of the
+ * globals.css guard below, which covers the other direction (a stylesheet that
+ * ADDS text).
+ */
+function expectNothingSilenced(expected: string[], label?: string) {
+  const blocks = [...dialog().querySelectorAll<HTMLElement>(BLOCK_SELECTOR)];
+  let checked = 0;
+  for (const block of blocks) {
+    for (let el: HTMLElement | null = block; el !== null; el = el.parentElement) {
+      expect(
+        el.getAttribute('aria-hidden'),
+        `${label ?? ''} — "${normalize(block.textContent).slice(0, 40)}…" is inside ` +
+          `aria-hidden="true" and is announced to nobody`,
+      ).not.toBe('true');
+      expect(
+        el.hasAttribute('hidden'),
+        `${label ?? ''} — "${normalize(block.textContent).slice(0, 40)}…" is inside a ` +
+          `\`hidden\` element and reaches nobody`,
+      ).toBe(false);
+      if (el === dialog()) break;
+    }
+    checked += 1;
+  }
+  // Anti-vacuity: a walk over no blocks asserts nothing, and the block list is
+  // exactly what the pin claims is on screen.
+  expect(checked, `${label ?? ''} — the reachability walk visited no block`).toBe(expected.length);
 }
 
 type PinOpts = {
@@ -809,6 +896,7 @@ function expectPinnedDialog(opts: PinOpts) {
   expectBlocksPinned(expected, opts.label);
   expectNothingOutside(expected, opts.label);
   expectNothingAnnounced(opts.outcome, opts.label);
+  expectNothingSilenced(expected, opts.label);
 }
 
 const ack404 = () =>
@@ -1416,7 +1504,7 @@ describe('witness alert worklist — acknowledged rows stay reachable', () => {
     for (const expected of [true, false]) {
       const btn = ackToggle();
       expect(btn.getAttribute('aria-pressed')).toBe(String(expected));
-      const name = normalize(btn.textContent).toLowerCase();
+      const name = accessibleName(btn).toLowerCase();
       // The name names the STATE the control is in, and `aria-pressed` says
       // that state is on. Not "what clicking will do" — that is what inverts.
       expect(name, `aria-pressed=${expected} under the name "${name}"`).toBe(
@@ -1437,7 +1525,10 @@ describe('witness alert worklist — acknowledged rows stay reachable', () => {
     // SSE/Live off) or a static filter label; this one was the outlier.
     renderWith({ data: rows([row()]) });
     for (let i = 0; i < 2; i++) {
-      const name = normalize(ackToggle().textContent);
+      // The ACCESSIBLE name, for the reason in `accessibleName`'s docblock: an
+      // `aria-label` overriding the visible text is the cheapest way to restore
+      // this defect, and reading `textContent` cannot see it.
+      const name = accessibleName(ackToggle());
       expect(name, `"${name}" reads as an action`).not.toMatch(/^(show|hide|toggle|display)\b/i);
       fireEvent.click(ackToggle());
     }
@@ -1500,173 +1591,232 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
   /** No `errorCode`, so `operatorErrorMessage` falls through to its status arm. */
   const ack503 = () => new ApiError(503, 'upstream down', 'control-plane', '/x', true);
 
+  // ── The reachable arm space, DERIVED from the component's own functions ──
+  //
+  // ROUND 5's BF1, and it is round 4's finding one level up. Round 4 added the
+  // `AckOutcome` and `AckFooterState` axes to the anti-vacuity check, which then
+  // asserted each axis MARGINALLY:
+  //
+  //   every stage appears somewhere in the table
+  //   every consequence appears somewhere in the table
+  //   every outcome appears somewhere in the table
+  //   every footer state appears somewhere in the table
+  //
+  // Seven hand-written scenarios satisfy all four. The dialog's copy is a
+  // function of the PRODUCT, and the product has THIRTEEN reachable cells — so
+  // six of them were unpinned under a test titled "every reachable arm", and
+  // round 5's gate fabricated a sentence into every one of the six with all
+  // 1115 tests green. One of the six is `leaves-view × in-flight`: the state of
+  // every acknowledgement issued from the filtered view. Another is
+  // `left-listing × forbidden`: the control plane has refused the write AND the
+  // row has left the listing.
+  //
+  // Four marginals do not make a product, so the table is gone. What replaces
+  // it is an enumeration of the dialog's INPUTS, mapped through the component's
+  // own exported `ackStage` / `ackListingConsequence` / `ackOutcome` — so the
+  // reachable set is COMPUTED from the state machine rather than asserted
+  // against it, and adding a state anywhere in those three functions changes
+  // this set without anyone maintaining a list.
+  //
+  // The inputs are the four values the dialog reads: whether the listing still
+  // holds the row, what upstream answered, which view the operator is in, and
+  // whether the write is still out.
+
+  /** What upstream answered. `none` is "nothing yet", not "success". */
+  const ACK_ERRORS = {
+    none: () => undefined,
+    'resolved-404': ack404,
+    'forbidden-403': ackForbidden,
+    'other-503': ack503,
+  } as const;
+  type ErrKind = keyof typeof ACK_ERRORS;
+
+  type DialogInput = {
+    live: 'listed' | 'gone';
+    error: ErrKind;
+    pending: boolean;
+    showAcknowledged: boolean;
+  };
+
+  type Arm = {
+    stage: AckStage;
+    consequence: AckListingConsequence | null;
+    outcome: AckOutcome;
+    footer: AckFooterState;
+  };
+
+  function armOf(i: DialogInput): Arm {
+    const error = ACK_ERRORS[i.error]();
+    const stage = ackStage(i.live === 'listed' ? row() : null, error);
+    return {
+      stage,
+      consequence: ackListingConsequence(stage, i.showAcknowledged),
+      outcome: ackOutcome(stage, error),
+      // The footer is the one axis the component tests inline rather than
+      // through a named function, so this expression is a hand copy of
+      // `log-witness-alerts.tsx`'s footer conditions, and
+      // `witness-ack-prose.ts` says so at `AckFooterState`. It is the weakest
+      // link in the derivation and is named as such rather than left looking
+      // derived.
+      footer: stage === 'resolved' ? 'closed-out' : i.pending ? 'in-flight' : 'confirmable',
+    };
+  }
+
+  /**
+   * Every input tuple an operator can actually be in.
+   *
+   * The one exclusion is the only one there is: a mutation that has answered is
+   * not still pending, so `pending` and a non-`none` error cannot both hold.
+   * Demanding those tuples would make this test unsatisfiable rather than
+   * strict, and the exclusion is stated here — once, with its reason — instead
+   * of being spread through a hand-written table where it cannot be seen.
+   */
+  function reachableInputs(): DialogInput[] {
+    const out: DialogInput[] = [];
+    for (const live of ['listed', 'gone'] as const) {
+      for (const error of Object.keys(ACK_ERRORS) as ErrKind[]) {
+        for (const pending of [false, true]) {
+          for (const showAcknowledged of [true, false]) {
+            if (pending && error !== 'none') continue;
+            out.push({ live, error, pending, showAcknowledged });
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  const armKey = (a: Arm) =>
+    `${a.stage} / ${a.consequence ?? 'no bullets'} / ${a.outcome} / ${a.footer}`;
+
+  /** Put the dialog into the state `i` describes. */
+  async function enterDialog(i: DialogInput) {
+    const error = ACK_ERRORS[i.error]();
+    if (i.pending) acknowledgeLogWitnessAlert.mockImplementation(() => new Promise(() => {}));
+    else if (error) acknowledgeLogWitnessAlert.mockRejectedValue(error);
+    else acknowledgeLogWitnessAlert.mockResolvedValue({ authority: AUTH, alerted: true });
+
+    const { rerender } = renderWith({ data: rows([row()]) });
+    // The toggle starts at "Acknowledged shown" — the unfiltered worklist — so
+    // reaching `leaves-view` means switching AWAY from the default.
+    if (!i.showAcknowledged) fireEvent.click(ackToggle());
+    openConfirm();
+
+    // Only confirm when the input says something came back or is still out. On
+    // `error: none, pending: false` the dialog is in its pre-confirm state, and
+    // confirming there would SUCCEED and close it.
+    if (i.pending || error) {
+      confirmAck();
+      if (i.pending) {
+        await waitFor(() => expect(dialog().textContent).toMatch(/acknowledging/i));
+      } else if (i.error === 'resolved-404') {
+        await waitFor(() =>
+          expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i),
+        );
+      } else if (i.error === 'forbidden-403') {
+        await waitFor(() => expect(dialog().textContent).toContain(ADMIN_ROUTE_FORBIDDEN));
+      } else {
+        await waitFor(() =>
+          expect(dialog().textContent).toMatch(/could not record the acknowledgement/i),
+        );
+      }
+    }
+    // Last, so the error state above has already settled: the listing stops
+    // holding the row while the dialog stands. The parent keeps the snapshot it
+    // opened on, which is the round-3 fix that makes this state reachable at
+    // all.
+    if (i.live === 'gone') refetchTo([], rerender);
+  }
+
   it('renders exactly the pinned copy, in every reachable arm', async () => {
-    const scenarios: Array<{
-      stage: AckStage;
-      consequence: AckListingConsequence | null;
-      outcome: AckOutcome;
-      footer: AckFooterState;
-      reason: string;
-      diagnostic?: string;
-      failedMessage?: string;
-      setUp: () => Promise<void>;
-    }> = [
-      {
-        stage: 'alerting',
-        consequence: 'stays-listed',
-        outcome: 'none',
-        footer: 'confirmable',
-        reason: MISMATCH,
-        setUp: async () => {
-          renderWith({ data: rows([row()]) });
-          openConfirm();
-        },
-      },
-      {
-        stage: 'alerting',
-        consequence: 'leaves-view',
-        outcome: 'none',
-        footer: 'confirmable',
-        reason: MISMATCH,
-        setUp: async () => {
-          renderWith({ data: rows([row()]) });
-          fireEvent.click(screen.getByRole('button', { name: /acknowledged (shown|hidden)/i }));
-          openConfirm();
-        },
-      },
-      {
-        // No error at all — the listing simply stopped holding the row. This
-        // arm did not exist before round 3; the `stays-listed` sentence was
-        // rendering over it, asserting that a row the table no longer showed
-        // would stay put.
-        stage: 'left-listing',
-        consequence: 'already-gone',
-        outcome: 'none',
-        footer: 'confirmable',
-        reason: MISMATCH,
-        setUp: async () => {
-          const { rerender } = renderWith({ data: rows([row()]) });
-          openConfirm();
-          refetchTo([], rerender);
-        },
-      },
-      {
-        stage: 'resolved',
-        consequence: null,
-        outcome: 'already-resolved',
-        footer: 'closed-out',
-        reason: MISMATCH,
-        setUp: async () => {
-          acknowledgeLogWitnessAlert.mockRejectedValue(ack404());
-          renderWith({ data: rows([row()]) });
-          openConfirm();
-          confirmAck();
-          await waitFor(() =>
-            expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i),
-          );
-        },
-      },
-      {
-        // ROUND 4's GAP, arm one. Acknowledging is admin-gated upstream, so
-        // this is a designed failure path, not an exotic one — and it is the
-        // worst state to leave unpinned, because the control plane has just
-        // REFUSED the write. A fabricated `<p>` reading "The acknowledgement
-        // was recorded anyway and the alert is now cleared", rendered only
-        // here, passed `tsc`, `eslint` and all 1103 tests.
-        //
-        // The bullets are NOT withdrawn: confirming can still be retried with a
-        // better-scoped key, so every sentence about what confirming does is
-        // still a live claim. That is the difference from the 404 arm, and it
-        // is a composition fact the block list pins.
-        stage: 'alerting',
-        consequence: 'stays-listed',
-        outcome: 'forbidden',
-        footer: 'confirmable',
-        reason: MISMATCH,
-        diagnostic: errorDiagnostic(ackForbidden()),
-        setUp: async () => {
-          acknowledgeLogWitnessAlert.mockRejectedValue(ackForbidden());
-          renderWith({ data: rows([row()]) });
-          openConfirm();
-          confirmAck();
-          await waitFor(() => expect(dialog().textContent).toContain(ADMIN_ROUTE_FORBIDDEN));
-        },
-      },
-      {
-        // ROUND 4's GAP, arm two: anything that is neither a 404 nor an
-        // upstream 403.
-        stage: 'alerting',
-        consequence: 'stays-listed',
-        outcome: 'failed',
-        footer: 'confirmable',
-        reason: MISMATCH,
-        diagnostic: errorDiagnostic(ack503()),
-        failedMessage: operatorErrorMessage(ack503(), 'Could not record the acknowledgement'),
-        setUp: async () => {
-          acknowledgeLogWitnessAlert.mockRejectedValue(ack503());
-          renderWith({ data: rows([row()]) });
-          openConfirm();
-          confirmAck();
-          await waitFor(() =>
-            expect(dialog().textContent).toMatch(/could not record the acknowledgement/i),
-          );
-        },
-      },
-      {
-        // ROUND 4's GAP, arm three: the in-flight footer. The confirm button
-        // relabels while the write is out, and nothing pinned what the dialog
-        // says in that window — a fabricated sentence gated on `isPending`
-        // survived too.
-        stage: 'alerting',
-        consequence: 'stays-listed',
-        outcome: 'none',
-        footer: 'in-flight',
-        reason: MISMATCH,
-        setUp: async () => {
-          acknowledgeLogWitnessAlert.mockImplementation(() => new Promise(() => {}));
-          renderWith({ data: rows([row()]) });
-          openConfirm();
-          confirmAck();
-          await waitFor(() => expect(dialog().textContent).toMatch(/acknowledging/i));
-        },
-      },
-    ];
+    const inputs = reachableInputs();
+    const armsWanted = new Set(inputs.map((i) => armKey(armOf(i))));
 
-    // Anti-vacuity, asserted BEFORE the loop: a table that quietly lost an arm
-    // must fail as a coverage gap rather than pass with three scenarios. Every
-    // key set is read off a `Record` typed by one of the component's own
-    // unions — so this compares the copy table against the state machine, not
-    // against a second hand-written list that could drift with it.
-    //
-    // ROUND 4: `ALL_OUTCOMES` and `ALL_FOOTER_STATES` are new here, and their
-    // absence is exactly why this check could not see the gap it was written to
-    // prevent. It compared the table against the two LISTING axes while three
-    // reachable bodies differed on an axis it did not know existed. An
-    // exhaustiveness proof is only ever as wide as its axes.
-    expect(new Set(scenarios.map((s) => s.stage))).toEqual(new Set(ALL_STAGES));
-    expect(
-      new Set(scenarios.map((s) => s.consequence).filter((c) => c !== null)),
-    ).toEqual(new Set(ALL_CONSEQUENCES));
-    expect(new Set(scenarios.map((s) => s.outcome))).toEqual(new Set(ALL_OUTCOMES));
-    expect(new Set(scenarios.map((s) => s.footer))).toEqual(new Set(ALL_FOOTER_STATES));
+    // Anti-vacuity, asserted BEFORE the loop — and it is now about the PRODUCT,
+    // not about four marginals. Thirteen is not a number anyone chose: it is
+    // what the three exported functions produce over the input space, and it is
+    // pinned so that a change to the state machine which silently collapses two
+    // arms into one shows up here rather than as a quietly smaller matrix.
+    expect(inputs.length, 'the input enumeration collapsed').toBe(20);
+    expect(armsWanted.size, 'the reachable arm space changed shape').toBe(13);
+    // The marginals are still asserted, because a product can be the right SIZE
+    // while missing a member of one axis — and each set is read off a `Record`
+    // keyed by one of the component's own unions, so none of them can drift.
+    const arms = inputs.map(armOf);
+    expect(new Set(arms.map((a) => a.stage))).toEqual(new Set(ALL_STAGES));
+    expect(new Set(arms.map((a) => a.consequence).filter((c) => c !== null))).toEqual(
+      new Set(ALL_CONSEQUENCES),
+    );
+    expect(new Set(arms.map((a) => a.outcome))).toEqual(new Set(ALL_OUTCOMES));
+    expect(new Set(arms.map((a) => a.footer))).toEqual(new Set(ALL_FOOTER_STATES));
 
-    for (const s of scenarios) {
+    const armsSeen = new Set<string>();
+    for (const i of inputs) {
       cleanup();
       acknowledgeLogWitnessAlert.mockReset();
-      await s.setUp();
+      await enterDialog(i);
+      const arm = armOf(i);
+      const error = ACK_ERRORS[i.error]();
       expectPinnedDialog({
-        stage: s.stage,
-        consequence: s.consequence,
-        outcome: s.outcome,
-        footer: s.footer,
+        ...arm,
         authority: AUTH,
-        reason: s.reason,
-        diagnostic: s.diagnostic,
-        failedMessage: s.failedMessage,
-        label: `${s.stage} / ${s.consequence ?? 'no bullets'} / ${s.outcome} / ${s.footer}`,
+        reason: MISMATCH,
+        diagnostic: error ? errorDiagnostic(error) : undefined,
+        failedMessage:
+          arm.outcome === 'failed'
+            ? operatorErrorMessage(error, 'Could not record the acknowledgement')
+            : undefined,
+        label:
+          `${armKey(arm)}  [live=${i.live} err=${i.error} ` +
+          `pending=${i.pending} showAck=${i.showAcknowledged}]`,
       });
+      armsSeen.add(armKey(arm));
+    }
+    // Every reachable arm was RENDERED, not merely enumerated. Without this the
+    // loop could `continue` past one and the coverage claim would rest on the
+    // derivation alone.
+    expect([...armsSeen].sort(), 'an arm was enumerated but never rendered').toEqual(
+      [...armsWanted].sort(),
+    );
+  }, 120_000);
+
+  it('the 403 panel’s copy is the copy someone wrote down', () => {
+    // ROUND 5's BF3. `witness-ack-prose.ts` used to IMPORT
+    // `ADMIN_ROUTE_FORBIDDEN` and argue the import was safe because the
+    // constant "has its own dedicated pin in `admin-key-parity.test.tsx`
+    // (`:214-219`)". That pin is four `toContain`s and one `not.toMatch`; a
+    // substring pin cannot bound what else the string says. Appending
+    // ' The acknowledgement was recorded anyway.' to the constant left all 1115
+    // tests green with the fabricated sentence in this dialog's 403 panel.
+    //
+    // The hand copy is the bound, and this is where the two are held together.
+    // Whole-string equality: a word added, removed or reworded anywhere in 500
+    // characters fails here.
+    expect(ADMIN_ROUTE_FORBIDDEN).toBe(ACK_FORBIDDEN_PANEL);
+  });
+
+  it('no stylesheet rule can put text in the dialog', () => {
+    // ROUND 5's NB6. jsdom applies no stylesheets, so a
+    // `.modal-body ul::after { content: "…" }` rule reaches every operator and
+    // no assertion in this repo — measured green with the rule in place. The
+    // rendered-text pin cannot see it by construction, so the bound has to be
+    // on the stylesheet.
+    //
+    // Every `content:` declaration in `app/globals.css` must be empty. Both of
+    // the two that exist are (`content: ''` on decorative pseudo-elements), and
+    // a decorative pseudo-element does not need text. If one ever legitimately
+    // does, this fails and the copy gets written down somewhere a test can read
+    // it.
+    const css = readFileSync(join(process.cwd(), 'app/globals.css'), 'utf8');
+    const decls = [...css.matchAll(/(^|[;{\s])content\s*:\s*([^;}]*)/g)].map((m) => m[2].trim());
+    // Anti-vacuity: the scan must FIND the declarations, or an empty list
+    // passes the loop below and the guard means nothing.
+    expect(decls.length, 'the content: scan found no declarations at all').toBeGreaterThan(1);
+    for (const value of decls) {
+      expect(value, `a stylesheet rule renders text: content: ${value}`).toMatch(/^(''|"")$/);
     }
   });
+
 
   // ── The pin's own guard ───────────────────────────────────────────────
   //
@@ -1806,6 +1956,169 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     expect(() => expectNothingOutside(expected)).not.toThrow();
   });
 
+  it('the block pin catches a DUPLICATED block and a REORDERED one', () => {
+    // ROUND 5's NB1. Both of these loosenings were measured green:
+    //
+    //   `toEqual(expected)` -> `toEqual(expect.arrayContaining(expected))`
+    //   `toEqual(expected)` -> a `new Set(...)` comparison
+    //
+    // The split-paragraph injection above cannot catch either, because it
+    // REMOVES the original block: a loosened equality still throws, the
+    // guard-the-guard still passes, and the loosening ships. So the half needs
+    // the two injections that a superset check and an order-blind check
+    // respectively admit.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    expectBlocksPinned(expected);
+
+    // A DUPLICATE: every expected block is still present, so a containment
+    // check passes. Exact equality does not — the list is one element longer.
+    const facts = modalBody().querySelectorAll('li');
+    const clone = facts[0].cloneNode(true) as HTMLElement;
+    facts[0].after(clone);
+    expect(() => expectBlocksPinned(expected), 'a duplicated block is admitted').toThrow();
+    clone.remove();
+    expectBlocksPinned(expected);
+
+    // A REORDER: the same multiset of blocks in a different order. A `Set`
+    // comparison passes; a list comparison does not. The sentences are ordered
+    // for a reason — "it records which key" before "it does not clear the
+    // alert" before what the operator will see next — and the docblock claims
+    // the order is pinned.
+    const [first, second] = [...modalBody().querySelectorAll('li')];
+    second.after(first);
+    expect(() => expectBlocksPinned(expected), 'a reordered block list is admitted').toThrow();
+    // BE EXACT ABOUT WHAT THIS TEST IS FOR, because the first draft of this
+    // comment claimed the nothing-outside half was blind to both and that is
+    // FALSE — measured. It compares the whole concatenation, so it sees a
+    // duplicate (more text) and a reorder (the same text in a different order)
+    // just as readily.
+    //
+    // Which makes these two injections a test of this half's STRENGTH, not of
+    // its being WIRED IN. The wiring is what the split-paragraph injection
+    // above establishes, because that one really is invisible to the other
+    // halves. Both jobs are needed and they are not the same job; conflating
+    // them is how the loosened equality stayed invisible for a round.
+    expect(() => expectNothingOutside(expected), 'nothing-outside sees a reorder too').toThrow();
+  });
+
+  it('the announced pin catches an attribute nobody thought of, and a visible <input value>', () => {
+    // ROUND 5's BF2, the two additions. The scan used to walk a list of
+    // attributes that DO announce; both of these walked past it with the whole
+    // suite green.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    expectNothingAnnounced('none');
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+
+    // An ARIA attribute that was not on the old list. There is no list of these
+    // that can be completed, which is why the licence is now the other way
+    // round.
+    modalBody().setAttribute('aria-keyshortcuts', 'Confirming clears the alert');
+    expect(() => expectNothingAnnounced('none'), 'aria-keyshortcuts is admitted').toThrow();
+    modalBody().removeAttribute('aria-keyshortcuts');
+    expectNothingAnnounced('none');
+
+    // A form control whose VALUE is its visible text. It is not a text node, it
+    // matches none of the block selectors, and `value` was not on the old list
+    // — so it evaded all three halves on every arm, not merely the unpinned
+    // ones. The same escape beat the sibling registry-card guard on #95, found
+    // by a different gate one day apart.
+    const input = document.createElement('input');
+    input.type = 'button';
+    input.disabled = true;
+    input.setAttribute('value', 'Confirming clears this alert and the retained head.');
+    modalBody().appendChild(input);
+    expect(() => expectNothingAnnounced('none'), 'an <input value> is admitted').toThrow();
+    // …and the two text halves really are blind to it, which is the point.
+    expect(() => expectBlocksPinned(expected)).not.toThrow();
+    expect(() => expectNothingOutside(expected)).not.toThrow();
+  });
+
+  it('the reachability pin catches copy that is SILENCED rather than added', () => {
+    // ROUND 5's BF2, the sharpest arm: `aria-hidden` on the three-facts `<ul>`.
+    // Nothing is added, no attribute value carries copy, `textContent` is
+    // unchanged — and every sentence this dialog exists to state is gone from
+    // the accessibility tree. The three other halves all bound what is ADDED,
+    // so all three stayed green.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    const expected = expectedDialogBlocks({
+      stage: 'alerting',
+      consequence: 'stays-listed',
+      outcome: 'none',
+      footer: 'confirmable',
+      authority: AUTH,
+      reason: MISMATCH,
+    });
+    expectNothingSilenced(expected);
+
+    const facts = modalBody().querySelector('ul') as HTMLElement;
+    facts.setAttribute('aria-hidden', 'true');
+    expect(() => expectNothingSilenced(expected), 'a silenced <ul> is admitted').toThrow();
+    // …and the other three halves are blind to it, which is why there is a
+    // fourth.
+    expect(() => expectBlocksPinned(expected)).not.toThrow();
+    expect(() => expectNothingOutside(expected)).not.toThrow();
+    expect(() => expectNothingAnnounced('none')).not.toThrow();
+    facts.removeAttribute('aria-hidden');
+
+    // The lead paragraph too, so the half is not accidentally about the `<ul>`.
+    const lead = modalBody().querySelector('p') as HTMLElement;
+    lead.setAttribute('aria-hidden', 'true');
+    expect(() => expectNothingSilenced(expected), 'a silenced lead is admitted').toThrow();
+    lead.removeAttribute('aria-hidden');
+
+    // `hidden` removes the node from both trees — the same defect, a different
+    // spelling.
+    facts.setAttribute('hidden', '');
+    expect(() => expectNothingSilenced(expected), 'a `hidden` <ul> is admitted').toThrow();
+  });
+
+  it('the announced pin catches an id reference that points OUT of the dialog', () => {
+    // ROUND 5's NB2: deleting the id-reference loop from
+    // `expectNothingAnnounced` was silent, because nothing exercised it. A
+    // component mutation that pointed `aria-describedby` outside the dialog WAS
+    // caught — so the loop works and only its vacuity pin was missing.
+    //
+    // An id reference carries no text of its own, which is why it is licensed
+    // as non-announcing; what it points AT is text, and if that lives outside
+    // the dialog no half can see it.
+    renderWith({ data: rows([row()]) });
+    openConfirm();
+    expectNothingAnnounced('none');
+
+    const outside = document.createElement('p');
+    outside.id = 'ack-aside';
+    outside.textContent = 'The acknowledgement has been recorded and the alert is cleared.';
+    document.body.appendChild(outside);
+    modalBody().querySelector('p')!.setAttribute('aria-describedby', 'ack-aside');
+    expect(
+      () => expectNothingAnnounced('none'),
+      'an aria-describedby pointing out of the dialog is admitted',
+    ).toThrow();
+    // …and it passes again once the target is INSIDE, so the check is about
+    // where the id resolves and not about the attribute existing.
+    outside.remove();
+    modalBody().appendChild(outside);
+    expectNothingAnnounced('none');
+  });
+
   it('the announced pin catches a LOST announcement, not only an added one', () => {
     // Set equality in both directions. The close control's icon is
     // `aria-hidden`, so its `aria-label` is its entire accessible name —
@@ -1818,7 +2131,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     expect(() => expectNothingAnnounced('none')).toThrow();
   });
 
-  it('all three halves are WIRED IN, not merely present', () => {
+  it('all four halves are WIRED IN, not merely present', () => {
     // The per-half tests above prove each half catches its own injection. They
     // say nothing about whether `expectPinnedDialog` still CALLS all three — a
     // deleted call site leaves every one of them green.
@@ -1852,7 +2165,16 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       ['a title attribute', () => {
         modalBody().setAttribute('title', 'Confirming clears the alert.');
       }],
+      // reachability half — a SUPPRESSION, which is the one thing none of the
+      // other three can see, and therefore the only injection that can tell
+      // whether this call site is still there.
+      ['a silenced fact list', () => {
+        (modalBody().querySelector('ul') as HTMLElement).setAttribute('aria-hidden', 'true');
+      }],
     ];
+    // Anti-vacuity: one injection per half, and a `for` over a shortened table
+    // asserts nothing about the halves it dropped.
+    expect(injections).toHaveLength(4);
 
     for (const [what, inject] of injections) {
       cleanup();
