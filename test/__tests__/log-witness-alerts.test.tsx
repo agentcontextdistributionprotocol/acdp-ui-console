@@ -1499,21 +1499,53 @@ describe('witness alert worklist — acknowledged rows stay reachable', () => {
   // So the assertion below is stated as the invariant, over both states, rather
   // than as two literals that can be updated to match whatever ships.
   // ══════════════════════════════════════════════════════════════════════
+  /**
+   * The invariant, as a NAMED function so it can be exercised against a control
+   * that violates it — see the guard-the-guard below.
+   */
+  function expectToggleNameAgrees(expected: boolean) {
+    const btn = ackToggle();
+    expect(btn.getAttribute('aria-pressed')).toBe(String(expected));
+    const name = accessibleName(btn).toLowerCase();
+    // The name names the STATE the control is in, and `aria-pressed` says that
+    // state is on. Not "what clicking will do" — that is what inverts.
+    expect(name, `aria-pressed=${expected} under the name "${name}"`).toBe(
+      expected ? 'acknowledged shown' : 'acknowledged hidden',
+    );
+  }
+
+  it('GUARDS THE GUARD: the name check reads the ANNOUNCED name, not the text', () => {
+    // ROUND 6. `accessibleName` was added to close round 5's NB3, and then
+    // replacing it with `normalize(el.textContent)` was measured GREEN — the
+    // fix had no subject, which is the same vacuity this branch keeps finding
+    // one layer down. An `aria-label` is the cheapest way to restore the
+    // defect (it reaches the control through `Button`'s `...rest` spread), so
+    // an `aria-label` is what has to be injected.
+    renderWith({ data: rows([row()]) });
+    const btn = ackToggle();
+    expect(accessibleName(btn)).toBe('Acknowledged shown');
+    expectToggleNameAgrees(true);
+
+    // The exact contradiction round 5 reported: announced as an ACTION, under
+    // `aria-pressed="true"`, which says the action is already on.
+    btn.setAttribute('aria-label', 'Hide acknowledged');
+    expect(accessibleName(btn), 'the aria-label does not win').toBe('Hide acknowledged');
+    expect(
+      () => expectToggleNameAgrees(true),
+      'an aria-label contradicting aria-pressed is admitted',
+    ).toThrow();
+    // …and `textContent` is untouched, which is why reading it cannot see this.
+    expect(normalize(btn.textContent)).toBe('Acknowledged shown');
+  });
+
   it('its NAME and its aria-pressed state agree, in both states', () => {
     renderWith({ data: rows([row()]) });
     for (const expected of [true, false]) {
-      const btn = ackToggle();
-      expect(btn.getAttribute('aria-pressed')).toBe(String(expected));
-      const name = accessibleName(btn).toLowerCase();
-      // The name names the STATE the control is in, and `aria-pressed` says
-      // that state is on. Not "what clicking will do" — that is what inverts.
-      expect(name, `aria-pressed=${expected} under the name "${name}"`).toBe(
-        expected ? 'acknowledged shown' : 'acknowledged hidden',
-      );
+      expectToggleNameAgrees(expected);
       // And the listing really is in that state, so the name is not just
       // internally consistent — it is true.
       expect(lastIncludeAcknowledged()).toBe(expected);
-      fireEvent.click(btn);
+      fireEvent.click(ackToggle());
     }
   });
 
