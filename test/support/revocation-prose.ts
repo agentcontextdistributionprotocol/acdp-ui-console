@@ -80,6 +80,7 @@
 //    either greps for `.kpi-grid`, finds nothing, and assumes the pin is gone,
 //    or does not check at all.
 // ══════════════════════════════════════════════════════════════════════
+import ts from 'typescript';
 import type { DashboardRevocationState } from '@/lib/utils/revocation';
 
 /**
@@ -762,19 +763,54 @@ export const ID_REFERENCE_ATTRS = ['aria-labelledby', 'aria-describedby', 'aria-
  * The attributes that remove a subtree from a reader without removing it from
  * the DOM.
  *
- * Genuinely closed, and worth saying why rather than asserting it: HTML gives
- * `hidden` and `inert`, ARIA gives `aria-hidden`, and there is no fourth. Every
- * OTHER way to make text unreadable is a styling question, which is bounded
- * below by a completely different mechanism because a denylist of styling
- * properties is not a closed set and this branch has been beaten by open sets
- * in four consecutive rounds.
+ * ── ROUND 14's B9: THERE WAS A FOURTH ────────────────────────────────
+ *
+ * This list shipped under the sentence "Genuinely closed, and worth saying why
+ * rather than asserting it: HTML gives `hidden` and `inert`, ARIA gives
+ * `aria-hidden`, and there is no fourth. Every OTHER way to make text
+ * unreadable is a styling question." Measured:
+ *
+ *   <details>
+ *     <summary />
+ *     <RevocationBody state={dashboardRevocationState(...)} />
+ *   </details>
+ *
+ * 42 files / 1057 tests green. The whole Key Revocation body collapses behind a
+ * closed disclosure — on the `disabled` arm that hides "Revocation checking is
+ * switched off on this deployment", on the `reported` arm a live "Revoked
+ * at/after boundary 2". `textContent` is unchanged, no attribute on this list
+ * is present, and no inline style is added, so all four halves passed.
+ * Compounding it, `open` sat on `NON_ANNOUNCING_ATTRS` — the list that admits
+ * the escape and the list that claimed closure were the same file.
+ *
+ * `<details>` is not a styling question: the hiding is UA behaviour attached to
+ * the ELEMENT, so it belongs to this mechanism and not to the inline-style one.
+ * The honest statement now is narrower: this is the set of SUPPRESSING
+ * CONSTRUCTS this codebase's markup can reach today, attributes and elements
+ * together, and it is a list that has been wrong once.
  */
 export const SUPPRESSING_ATTRS = ['aria-hidden', 'hidden', 'inert'] as const;
 
-export function suppressorOn(node: Element): string | null {
+/**
+ * What suppresses `node`, if anything.
+ *
+ * `from` is the child the walk arrived from, and it matters for exactly one
+ * construct: a closed `<details>` hides everything EXCEPT its `<summary>`, so a
+ * block reached through the summary is not suppressed and a block reached
+ * through anything else is. An upward walk that does not track where it came
+ * from cannot tell those apart.
+ */
+export function suppressorOn(node: Element, from?: Element | null): string | null {
   if (node.getAttribute('aria-hidden') === 'true') return 'aria-hidden="true"';
   if (node.hasAttribute('hidden')) return 'hidden';
   if (node.hasAttribute('inert')) return 'inert';
+  if (
+    node.tagName === 'DETAILS' &&
+    !node.hasAttribute('open') &&
+    (from == null || from.tagName !== 'SUMMARY')
+  ) {
+    return 'details (closed)';
+  }
   return null;
 }
 
@@ -868,11 +904,129 @@ export function inlineStyleDeclarations(root: HTMLElement, blocks: readonly HTML
  * handed" a property of the code rather than a sentence in a commit message.
  */
 export function interfaceMembers(source: string, name: string): string[] {
-  const body = source.match(new RegExp(`(?:export )?interface ${name} \\{([\\s\\S]*?)\\n\\}`));
-  if (!body) throw new Error(`no \`interface ${name}\` in the given source — this classification lost its subject`);
-  const members = [...body[1].matchAll(/^\s{2}(\w+)\??\s*:/gm)].map((m) => m[1]).sort();
-  if (members.length === 0) throw new Error(`\`interface ${name}\` parsed to no members — the reader is vacuous`);
-  return members;
+  return declaredMembers(source, name)
+    .map((m) => m.name)
+    .sort();
+}
+
+/** One member of an interface, as TypeScript sees it. */
+export type DeclaredMember = { name: string; optional: boolean; type: string };
+
+/**
+ * Every member `interface <name>` declares, from TypeScript's own parse.
+ *
+ * ── ROUND 14's B8: A REGEX DECIDED WHAT AN INTERFACE DECLARES ────────
+ *
+ * This was `/^\s{2}(\w+)\??\s*:/gm` over a body cut out with
+ * `interface X \{([\s\S]*?)\n\}`. Measured, with a paired control:
+ *
+ *   interface CpDashboardFeatures { …; readonly estateClean?: boolean; }
+ *   {features?.estateClean === true && <p>No key … has been revoked.</p>}
+ *
+ * 42 files / 1057 tests green. The IDENTICAL change with the word `readonly`
+ * removed is 2 red. One modifier was the entire difference between caught and
+ * silent, because the member never entered the list at all — so it landed in
+ * neither list and the partition guard had nothing to report, which is the
+ * exact opposite of what the commit claimed ("a new member lands in neither
+ * list and throws").
+ *
+ * Probed, the regex was also blind to four-space and tab indentation, quoted
+ * keys, method shorthand and index signatures; and the body cut truncated at
+ * the first column-0 `}`, silently dropping every member declared after a
+ * nested object literal — a PARTIAL parse that reads as a complete one, which
+ * the "reader is vacuous" check (zero members) cannot see either.
+ *
+ * The property that has to hold is "this guard's notion of the members an
+ * interface declares equals TypeScript's". A scan of the file's FORMATTING
+ * cannot deliver that at any level of cleverness, so the compiler answers
+ * instead. An index signature throws rather than being dropped: a member set
+ * that is not enumerable is exactly the case where silence would be
+ * indistinguishable from a clean parse.
+ */
+export function declaredMembers(source: string, name: string): DeclaredMember[] {
+  const sf = ts.createSourceFile('members.ts', source, ts.ScriptTarget.Latest, true);
+  const found: ts.InterfaceDeclaration[] = [];
+  const find = (node: ts.Node): void => {
+    if (ts.isInterfaceDeclaration(node) && node.name.text === name) found.push(node);
+    ts.forEachChild(node, find);
+  };
+  find(sf);
+  if (found.length === 0) {
+    throw new Error(
+      `no \`interface ${name}\` in the given source — this classification lost its subject`,
+    );
+  }
+  const iface = found[0];
+  if (iface.heritageClauses && iface.heritageClauses.length > 0) {
+    throw new Error(
+      `\`interface ${name}\` extends another type — its inherited members are not visible here`,
+    );
+  }
+  const out: DeclaredMember[] = [];
+  for (const member of iface.members) {
+    if (ts.isIndexSignatureDeclaration(member)) {
+      throw new Error(
+        `\`interface ${name}\` has an index signature — its member set is not enumerable, so no ` +
+          'partition over it can be complete',
+      );
+    }
+    if (!ts.isPropertySignature(member) && !ts.isMethodSignature(member)) {
+      throw new Error(
+        `\`interface ${name}\` has a member this parse does not model: ${member.getText(sf)}`,
+      );
+    }
+    const key = member.name;
+    const memberName =
+      ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)
+        ? key.text
+        : key.getText(sf);
+    out.push({
+      name: memberName,
+      optional: member.questionToken !== undefined,
+      type: ts.isPropertySignature(member) && member.type ? member.type.getText(sf) : 'unknown',
+    });
+  }
+  if (out.length === 0) {
+    throw new Error(`\`interface ${name}\` parsed to no members — the reader is vacuous`);
+  }
+  return out;
+}
+
+/**
+ * The arms of a member whose declared type is a finite union of literals, or
+ * `null` when it is not one.
+ *
+ * ROUND 14's B7. `lean`/`rich` is a TWO-POINT sweep, under the sentence "`lean`
+ * is the emptiest posture the input admits and `rich` the most eventful one, so
+ * a gate reading the member in EITHER direction is caught". True for booleans
+ * and for emptiness; false for any union of arity > 2. Measured:
+ *
+ *   RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+ *   {runs.some((r) => r.run.status === 'failed') && <p>No key … revoked.</p>}
+ *
+ * 42 files / 1057 tests green: `lean.status` is `'running'` and `rich.status`
+ * is `'completed'`, so two of the four arms were visited by nothing. The same
+ * hole sat on `CpDashboardOverview.window` (five arms, swept at two).
+ *
+ * The declared domain is knowable from the same parse that gives the member
+ * list, so it is swept instead of sampled. `null` means "not a finite union" —
+ * those stay at two points, and `sampledMembers` names them so that is a
+ * reviewable fact rather than a silence.
+ */
+export function unionArms(typeText: string): string[] | null {
+  const parts = typeText
+    .split('|')
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
+  if (parts.length < 2) return null;
+  const arms: string[] = [];
+  for (const part of parts) {
+    if (/^'[^']*'$/.test(part) || /^"[^"]*"$/.test(part)) arms.push(part.slice(1, -1));
+    else if (part === 'null' || part === 'undefined' || part === 'true' || part === 'false') {
+      arms.push(part);
+    } else return null;
+  }
+  return arms;
 }
 
 /**
@@ -939,7 +1093,12 @@ export function unreadMemberPostures<T extends object>(opts: {
   rich: Record<string, unknown>;
 }): { label: string; input: T }[] {
   const { source, interfaceName, read, unread, lean, rich } = opts;
-  const gaps = classificationGaps(interfaceMembers(source, interfaceName), read, unread);
+  const declared = declaredMembers(source, interfaceName);
+  const gaps = classificationGaps(
+    declared.map((m) => m.name).sort(),
+    read,
+    unread,
+  );
   if (gaps.unclassified.length > 0) {
     throw new Error(
       `${interfaceName} has member(s) nothing here classifies: ${gaps.unclassified.join(', ')} — ` +
@@ -975,12 +1134,70 @@ export function unreadMemberPostures<T extends object>(opts: {
       label: `${interfaceName}.${member} = ${show(rich[member])}`,
       input: { ...lean, [member]: rich[member] } as T,
     });
+    // ── ROUND 14's B7: TWO POINTS ARE NOT A DOMAIN ────────────────────
+    //
+    // `lean`/`rich` was described as covering "EITHER direction", which is
+    // true of a boolean and of emptiness and false of any union of arity > 2.
+    // Measured: `RunStatus = 'running' | 'completed' | 'failed' | 'cancelled'`
+    // was swept at `'running'`/`'completed'`, so
+    // `runs.some((r) => r.run.status === 'failed')` rendered a deployment-wide
+    // all-clear at 42 files / 1057 tests green.
+    //
+    // The declared domain comes from the same parse that gives the member
+    // list, so it is SWEPT rather than sampled. A member whose type is not a
+    // finite union stays at two points and is named by `sampledMembers`, so
+    // "we could only sample this one" is a fact the caller pins rather than a
+    // silence.
+    const decl = declared.find((d) => d.name === member);
+    const arms = decl ? unionArms(decl.optional ? `${decl.type} | undefined` : decl.type) : null;
+    for (const arm of arms ?? []) {
+      const value =
+        arm === 'null'
+          ? null
+          : arm === 'undefined'
+            ? undefined
+            : arm === 'true'
+              ? true
+              : arm === 'false'
+                ? false
+                : arm;
+      if (show(value) === show((lean as Record<string, unknown>)[member])) continue;
+      if (show(value) === show(rich[member])) continue;
+      postures.push({
+        label: `${interfaceName}.${member} = ${show(value)} (declared arm)`,
+        input: { ...lean, [member]: value } as T,
+      });
+    }
   }
   postures.push({
     label: `${interfaceName}: all ${unread.length} unread members at once`,
     input: { ...lean, ...together } as T,
   });
   return postures;
+}
+
+/**
+ * The unread members of `interfaceName` whose declared type is NOT a finite
+ * union, and which `unreadMemberPostures` could therefore only SAMPLE at the
+ * two points the caller supplied.
+ *
+ * Exported so the caller can pin the list. Round 14's B7 was a two-point sweep
+ * described as covering a domain; the answer is to sweep the domain where it is
+ * enumerable and to make "this one is only sampled" a reviewable diff where it
+ * is not.
+ */
+export function sampledMembers(
+  source: string,
+  interfaceName: string,
+  unread: readonly string[],
+): string[] {
+  const declared = declaredMembers(source, interfaceName);
+  return unread
+    .filter((name) => {
+      const d = declared.find((x) => x.name === name);
+      return d ? unionArms(d.optional ? `${d.type} | undefined` : d.type) === null : true;
+    })
+    .sort();
 }
 
 /**
@@ -1019,28 +1236,176 @@ export function cssCustomProperties(css: string): Record<string, string> {
 }
 
 /**
- * The LAST rule whose selector ends with the given one — the cascade's answer,
- * not the first match's.
+ * Every rule in `css` whose selector list contains a selector ending, at a
+ * token boundary, with the given one.
+ */
+export function rulesFor(
+  css: string,
+  selector: string,
+): { selector: string; block: string; order: number }[] {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const out: { selector: string; block: string; order: number }[] = [];
+  let order = 0;
+  for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    order += 1;
+    for (const one of m[1].split(',')) {
+      const sel = one.trim();
+      if (sel === '') continue;
+      if (!new RegExp(`(^|[\\s>+~])${esc}$`).test(sel)) continue;
+      out.push({ selector: sel, block: m[2], order });
+      break;
+    }
+  }
+  return out;
+}
+
+/**
+ * The LAST rule whose selector ends with the given one, by SOURCE ORDER.
  *
- * The selector is matched at a token boundary, so `.data-table .chip.bad` is
- * found as a rule for `.chip.bad` and `.chip.badge` is not.
+ * Kept for the one question source order really does answer — "is this
+ * variable consumed by this selector at all" — and deliberately NOT used to
+ * decide what an element computes to. See `cascadeWinner`.
  */
 export function lastRuleFor(css: string, selector: string): string | null {
-  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const rules = [...css.matchAll(new RegExp(`([^{}]*${esc})\\s*\\{([^}]*)\\}`, 'g'))].filter(
-    (m) => !/[A-Za-z0-9_-]/.test(css.slice(m.index + m[1].length, m.index + m[1].length + 1)),
-  );
-  return rules.length === 0 ? null : rules[rules.length - 1][2];
+  const rules = rulesFor(css, selector);
+  return rules.length === 0 ? null : rules[rules.length - 1].block;
+}
+
+/**
+ * CSS specificity of a compound selector, as the usual (id, class, type)
+ * triple flattened into one comparable number.
+ */
+export function specificity(selector: string): number {
+  const ids = (selector.match(/#[\w-]+/g) ?? []).length;
+  const classes =
+    (selector.match(/\.[\w-]+/g) ?? []).length +
+    (selector.match(/\[[^\]]*\]/g) ?? []).length +
+    (selector.match(/(?<!:):[\w-]+(?:\([^)]*\))?/g) ?? []).length;
+  const types =
+    (selector.match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length +
+    (selector.match(/::[\w-]+/g) ?? []).length;
+  return ids * 10000 + classes * 100 + types;
+}
+
+/**
+ * The value the CASCADE gives `prop` for an element matched by `selector`, or
+ * `null` when no rule sets it.
+ *
+ * ── ROUND 14's B2 AND B3: SOURCE ORDER IS NOT THE CASCADE ────────────
+ *
+ * `lastRuleFor` shipped under the sentence "the LAST rule whose selector ends
+ * with the given one — the cascade's answer, not the first match's", and both
+ * colour pins resolved through it. It is the last-in-FILE answer, which
+ * coincides with the cascade only when specificity is equal and no
+ * `!important` is present. Two measurements, each 42 files / 1057 tests green,
+ * tsc and lint clean:
+ *
+ *   B2  `.data-table .chip.bad { color: var(--success) }` placed BEFORE
+ *       `.chip.bad` — specificity (0,3,0) beats (0,2,0), so every browser
+ *       paints the violations table's fail-closed chip success-green while the
+ *       reader answers with the later, weaker rule. The guard-the-guard tested
+ *       only the APPENDED direction.
+ *
+ *   B3  `.chip.bad { color: var(--success) !important }` placed anywhere —
+ *       `!important` beats a later normal declaration regardless of order.
+ *
+ * So the three things that decide a winner are modelled: `!important` first,
+ * then specificity, then source order. What is NOT modelled is refused rather
+ * than guessed — a selector carrying `:not()`, `:is()`, `:where()` or `:has()`
+ * throws, because those take their argument's specificity and a silently wrong
+ * number here is the defect this function exists to stop.
+ */
+export function cascadeWinner(css: string, selector: string, prop: string): string | null {
+  const candidates = rulesFor(css, selector);
+  let best: { important: number; spec: number; order: number; value: string } | null = null;
+  for (const rule of candidates) {
+    if (/:(not|is|where|has)\(/.test(rule.selector)) {
+      throw new Error(
+        `\`${rule.selector}\` uses a functional pseudo-class whose specificity this reader does ` +
+          'not model — it would answer with a number it cannot justify',
+      );
+    }
+    const m = rule.block.match(new RegExp(`(?:^|[;{])\\s*${prop}\\s*:\\s*([^;}]+)`, 'i'));
+    if (!m) continue;
+    const raw = m[1].trim();
+    const important = /!\s*important$/i.test(raw) ? 1 : 0;
+    const value = raw.replace(/!\s*important$/i, '').trim();
+    const spec = specificity(rule.selector);
+    const wins =
+      best === null ||
+      important > best.important ||
+      (important === best.important &&
+        (spec > best.spec || (spec === best.spec && rule.order >= best.order)));
+    if (wins) best = { important, spec, order: rule.order, value };
+  }
+  return best === null ? null : best.value;
 }
 
 /** The colour a selector RESOLVES to, through the `:root` table. */
 export function resolvedColour(css: string, selector: string): string | null {
-  const block = lastRuleFor(css, selector);
-  if (block === null) return null;
-  const m = block.match(/(?:^|[;{])\s*color\s*:\s*([^;}]+)/);
-  if (!m) return null;
-  const value = m[1].trim();
+  const value = cascadeWinner(css, selector, 'color');
+  if (value === null) return null;
   const vars = cssCustomProperties(css);
   const ref = value.match(/^var\((--[\w-]+)\)$/);
   return ref ? (vars[ref[1]] ?? null) : value;
+}
+
+/** The r/g/b channels of a `#rgb`, `#rrggbb` or `rgb()/rgba()` colour. */
+export function channels(colour: string): { r: number; g: number; b: number } {
+  const hex = colour.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    const h = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join('') : hex[1];
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+    };
+  }
+  const fn = colour.trim().match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i);
+  if (fn) return { r: Number(fn[1]), g: Number(fn[2]), b: Number(fn[3]) };
+  throw new Error(`\`${colour}\` is not a colour this reader can take channels from`);
+}
+
+/**
+ * What an operator READS a colour as.
+ *
+ * ── ROUND 14's B1: A DISTINCTNESS PIN AGREES WITH ANY GREEN ──────────
+ *
+ * Round 13's fix resolved the token to its value and pinned
+ * `tone('.chip.bad') === vars['--danger']`. Both sides resolve through the
+ * same `:root` table, so that equality is a tautology for ANY value of
+ * `--danger`; the only real content left was `new Set(tones).size === 3`.
+ * Round 13's own exhibit used `#22d48f`, byte-identical to `--success`, which
+ * is the one green that trips distinctness. Measured:
+ *
+ *   :root { --danger: #f05d7a; }  ->  :root { --danger: #1fbf85; }
+ *
+ * 42 files / 1057 tests green. `#1fbf85` is a green, and it repaints every
+ * danger surface in the console — the fail-closed `.chip.bad` over a live
+ * `revoked_at_or_after` row, the revoked detail cell, `/trust`'s "Revoked
+ * events" KPI accent, the dashboard's "Revoked at/after boundary" tile and the
+ * `ShieldAlert` icon — in green, from one line in the file `CLAUDE.md` names as
+ * the only home for colour.
+ *
+ * Distinctness was never the property. The property is that a fail-closed
+ * verdict is painted in a colour an operator reads as an ALARM and a
+ * historically-authorized one in a colour read as SAFE, so that is what is
+ * classified — from the channels, independently of what any token is called or
+ * currently holds. A palette change that keeps the reading is free; one that
+ * inverts it is a diff.
+ */
+export function readsAs(colour: string): 'alarm' | 'caution' | 'safe' | 'neutral' {
+  const { r, g, b } = channels(colour);
+  // GREEN dominant reads as safe.
+  if (g > r + 24 && g > b + 24) return 'safe';
+  // RED dominant splits two ways, and the split is the green channel: an amber
+  // (`#f5a623` — r 245, g 166, b 35) carries a lot of green over almost no
+  // blue, while a danger pink (`#f05d7a` — r 240, g 93, b 122) does not. That
+  // is what makes one read as "look at this" and the other as "this is wrong".
+  if (r > g + 24 && r > b + 24) return g > b + 60 ? 'caution' : 'alarm';
+  // Anything else — a grey, a blue, a pure yellow with r === g — is neutral.
+  // The classifier is deliberately narrow: an arm that stops being classifiable
+  // is a red test, which is the right answer for "this is no longer a colour an
+  // operator reads as anything in particular".
+  return 'neutral';
 }

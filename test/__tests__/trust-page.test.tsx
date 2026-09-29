@@ -18,6 +18,8 @@ import {
   NON_ANNOUNCING_ATTRS,
   SUPPRESSING_ATTRS,
   cssCustomProperties,
+  readsAs,
+  specificity,
   inlineStyleDeclarations,
   lastRuleFor,
   resolvedColour,
@@ -847,7 +849,8 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
   // the dashboard had its own. One definition now, in the prose module, for
   // the reason round 11's B4 gave: the two surfaces differing by one line is a
   // property of having two copies, not of either copy being wrong.
-  const silences = (node: Element): boolean => suppressorOn(node) !== null;
+  const silences = (node: Element, from?: Element | null): boolean =>
+    suppressorOn(node, from) !== null;
 
   function expectNothingSilenced(el: HTMLElement, blocks: HTMLElement[], expectedCount: number, label?: string) {
     for (const block of blocks) {
@@ -872,8 +875,19 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       // so stopping the walk at the pin's own scope reads as "this surface is
       // reachable" while the page around it is not. A pin's scope bounds what it
       // may ASSERT ABOUT, not how far a fact about it reaches.
-      for (let node: HTMLElement | null = block; node !== null; node = node.parentElement) {
-        expect(silences(node), `${label ?? ''} — "${said}…" is inside a suppressed element`).toBe(false);
+      // ROUND 14's B9: `from` is the child the walk arrived from. A closed
+      // `<details>` hides everything except its `<summary>`, so the walk has to
+      // know which way it came in; an upward walk that does not track that
+      // cannot tell a hidden block from a visible summary.
+      for (
+        let node: HTMLElement | null = block, from: HTMLElement | null = null;
+        node !== null;
+        from = node, node = node.parentElement
+      ) {
+        expect(
+          silences(node, from),
+          `${label ?? ''} — "${said}…" is inside a suppressed element`,
+        ).toBe(false);
       }
       // DOWN, which the first version of this half did not do. The sibling #84
       // branch measured the ancestor-only walk: wrapping each fact's contents in
@@ -2433,6 +2447,33 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // removes semantics, not the subtree, so the text is still announced.
     el.setAttribute('role', 'presentation');
     expect(suppressorOn(el)).toBeNull();
+    el.removeAttribute('role');
+
+    // ── ROUND 14's B9: THE FOURTH ────────────────────────────────────
+    //
+    // `<details><summary /><RevocationBody …/></details>` around the Key
+    // Revocation body was 42 files / 1057 tests green: the whole body collapses
+    // behind a closed disclosure, `textContent` is unchanged, no attribute on
+    // the list is present and no inline style is added. `open` was on
+    // `NON_ANNOUNCING_ATTRS` at the same time — the list that admitted the
+    // escape and the list that claimed closure were the same file.
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    const hidden = document.createElement('p');
+    details.append(summary, hidden);
+    expect(suppressorOn(details, hidden), 'a closed <details> is not read as suppression').toBe(
+      'details (closed)',
+    );
+    // …and its SUMMARY is not suppressed, which is the whole reason the walk
+    // has to know which child it came from.
+    expect(suppressorOn(details, summary), 'a closed <details> silences its own summary').toBeNull();
+    details.setAttribute('open', '');
+    expect(suppressorOn(details, hidden), 'an OPEN <details> is read as suppression').toBeNull();
+    // An upward walk with no `from` takes the conservative answer: a closed
+    // disclosure suppresses, because that is true of everything but the
+    // summary and the other way round is the silent one.
+    details.removeAttribute('open');
+    expect(suppressorOn(details)).toBe('details (closed)');
   });
 
   it('pins the finding row against the revocation fields the page does NOT render', () => {
@@ -2660,26 +2701,75 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       expect(c, `${selector} resolves to no colour in app/globals.css`).toBeTruthy();
       return c!;
     };
-    expect(tone('.chip.bad'), 'a fail-closed finding is no longer painted as one').toBe(vars['--danger']);
-    expect(tone('.chip.warn'), 'an unverifiable finding lost its warning colour').toBe(vars['--warning']);
-    expect(tone('.chip.ok'), 'the authorized arm lost its success colour').toBe(vars['--success']);
-    // …and the three are distinct AS COLOURS. This is the assertion the token
-    // names were standing in for.
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 14's B1: WHAT IS PINNED IS HOW THE COLOUR READS
+    //
+    // This said `tone('.chip.bad') === vars['--danger']`. Both sides resolve
+    // through the same `:root` table, so it is a tautology for any value of
+    // `--danger`; the only real content was that the three are distinct.
+    // Measured: `--danger: #f05d7a` -> `#1fbf85` — a green, one line in the
+    // file `CLAUDE.md` names as the only home for colour — left 42 files /
+    // 1057 tests green, repainting every danger surface in the console. Round
+    // 13's own exhibit used `#22d48f`, byte-identical to `--success`, which is
+    // the ONE green that trips distinctness.
+    //
+    // So the three arms are classified by how an operator READS them, from the
+    // channels, independently of what any token is called or currently holds.
+    // Distinctness stays as a second, weaker statement.
+    // ══════════════════════════════════════════════════════════════════
+    expect(readsAs(tone('.chip.bad')), 'a fail-closed finding is not painted as an alarm').toBe(
+      'alarm',
+    );
+    expect(readsAs(tone('.chip.warn')), 'an unverifiable finding is not painted as a caution').toBe(
+      'caution',
+    );
+    expect(readsAs(tone('.chip.ok')), 'the authorized arm is not painted as safe').toBe('safe');
     const tones = ['.chip.bad', '.chip.warn', '.chip.ok'].map(tone);
     expect(new Set(tones).size, 'two chip states resolve to the same colour').toBe(3);
     expect(tones.every((t) => /^#|^rgb/.test(t)), 'a tone did not resolve past its token').toBe(true);
-    // GUARDS THE GUARD, four ways — one per channel the round-13 gate walked
+    // GUARDS THE GUARD. One per channel the round-13 and round-14 gates walked
     // through, plus the vacuity direction.
     expect(resolvedColour(css, '.chip.not-a-real-state'), 'the reader invents a rule').toBeNull();
+    // (1) round 13's exhibit: a :root repaint to the SUCCESS colour.
     const repainted = css.replace(/(--danger:\s*)#[0-9a-f]{6}/i, `$1${vars['--success']}`);
     expect(
       resolvedColour(repainted, '.chip.bad'),
       'a :root repaint is invisible to the resolved-colour pin',
     ).toBe(vars['--success']);
+    // (2) round 14's B1: a repaint to a green that is NOT --success, which
+    //     every distinctness pin admits.
+    const otherGreen = css.replace(/(--danger:\s*)#[0-9a-f]{6}/i, '$1#1fbf85');
+    expect(
+      readsAs(resolvedColour(otherGreen, '.chip.bad')!),
+      'a danger token repainted to a green that is not --success still reads as an alarm',
+    ).toBe('safe');
+    // (3) round 14's B2: a MORE SPECIFIC rule placed BEFORE the plain one. The
+    //     round-13 guard tested only the appended direction, and the cascade
+    //     does not care which way round they are written.
+    expect(
+      resolvedColour(
+        css.replace('.chip.bad {', '.data-table .chip.bad { color: var(--success); }\n.chip.bad {'),
+        '.chip.bad',
+      ),
+      'an EARLIER, more specific rule is invisible — the reader is modelling source order only',
+    ).toBe(vars['--success']);
     expect(
       resolvedColour(css + '\n.data-table .chip.bad { color: var(--success); }', '.chip.bad'),
-      'a later, more specific rule is invisible — the reader is still taking the first match',
+      'a later, more specific rule is invisible',
     ).toBe(vars['--success']);
+    // (4) round 14's B3: `!important`, which beats a later normal declaration
+    //     wherever it is written.
+    expect(
+      resolvedColour('.chip.bad { color: var(--success) !important; }\n' + css, '.chip.bad'),
+      'an !important declaration is invisible — the reader is taking the last normal one',
+    ).toBe(vars['--success']);
+    // …and the specificity model is refused rather than guessed where it would
+    // be wrong.
+    expect(() =>
+      resolvedColour(css + '\n.card:not(.x) .chip.bad { color: red; }', '.chip.bad'),
+    ).toThrow(/functional pseudo-class/);
+    expect(specificity('.data-table .chip.bad')).toBeGreaterThan(specificity('.chip.bad'));
+    expect(specificity('#x .chip')).toBeGreaterThan(specificity('.a.b.c.d'));
     expect(lastRuleFor(css, '.chip.bad')).toContain('background');
     expect(lastRuleFor(css, '.chip.nope')).toBeNull();
 

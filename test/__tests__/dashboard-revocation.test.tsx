@@ -24,6 +24,7 @@ import {
   ID_REFERENCE_ATTRS,
   NON_ANNOUNCING_ATTRS,
   cssCustomProperties,
+  readsAs,
   inlineStyleDeclarations,
   lastRuleFor,
   suppressorOn,
@@ -1153,12 +1154,21 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     // `trust-page.test.tsx` — round 11's B4 was these two copies differing by
     // one line, and "fix both copies" is a promise about future edits where
     // one copy is a property of the code.
-    const silences = (node: Element) => suppressorOn(node) !== null;
+    const silences = (node: Element, from?: Element | null) => suppressorOn(node, from) !== null;
     let checked = 0;
     for (const block of blocks) {
       // UP: a suppressing ancestor takes the whole block with it.
-      for (let node: HTMLElement | null = block; node !== null; node = node.parentElement) {
-        expect(silences(node), `${label ?? ''} — a pinned block is inside a suppressed element`).toBe(false);
+      // ROUND 14's B9: `from` is the child the walk arrived from — a closed
+      // `<details>` hides everything except its `<summary>`.
+      for (
+        let node: HTMLElement | null = block, from: HTMLElement | null = null;
+        node !== null;
+        from = node, node = node.parentElement
+      ) {
+        expect(
+          silences(node, from),
+          `${label ?? ''} — a pinned block is inside a suppressed element`,
+        ).toBe(false);
       }
       // DOWN: the sibling #84 branch measured the ancestor-only version of this
       // walk and got 1122/1122 green with each fact's contents wrapped in
@@ -1569,11 +1579,16 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     expect(tones.every((t) => /^#|^rgb/.test(t)), 'a tile accent did not resolve past its token').toBe(
       true,
     );
-    // …and the fail-closed tile is the DANGER colour, not merely a different
-    // one from its neighbours — three distinct colours can be three greens.
-    expect(tones[1], 'the fail-closed tile is no longer painted as one').toBe(vars['--danger']);
-    expect(tones[0], 'the authorized tile lost its success colour').toBe(vars['--success']);
-    expect(tones[2], 'the unverifiable tile lost its warning colour').toBe(vars['--warning']);
+    // …and each tile is painted the way an operator READS it. ROUND 14's B1:
+    // this said `tones[1] === vars['--danger']`, which is a tautology for any
+    // value of `--danger` because both sides resolve through the same `:root`
+    // table. `--danger: #1fbf85` — a green that is not `--success`, so
+    // distinctness still holds — left 42 files / 1057 tests green and repainted
+    // every danger surface in the console. What is pinned now is the reading,
+    // from the channels: see `readsAs` in the prose module.
+    expect(readsAs(tones[1]), 'the fail-closed tile is not painted as an alarm').toBe('alarm');
+    expect(readsAs(tones[0]), 'the authorized tile is not painted as safe').toBe('safe');
+    expect(readsAs(tones[2]), 'the unverifiable tile is not painted as a caution').toBe('caution');
     // An accent nothing paints with is a variable, not a colour: the rule that
     // CONSUMES `--kpi-accent` has to exist and has to read it.
     expect(
@@ -1591,6 +1606,20 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
       'a :root repaint is invisible to the resolved-colour pin',
     ).toBeLessThan(accents.length);
     expect(lastRuleFor(css, '.kpi-card-no-such-class'), 'the rule reader invents a rule').toBeNull();
+    // ROUND 14's B1, the half distinctness cannot see: a green that is not
+    // `--success` passes every pin this test carried before.
+    expect(
+      readsAs(
+        cssCustomProperties(css.replace(/(--danger:\s*)#[0-9a-f]{6}/i, '$1#1fbf85'))['--danger'],
+      ),
+      'a danger token repainted to a green still reads as an alarm',
+    ).toBe('safe');
+    // …and the classifier is not answering `alarm` to everything.
+    expect(readsAs('#22d48f')).toBe('safe');
+    expect(readsAs('#f5a623')).toBe('caution');
+    expect(readsAs('#f05d7a')).toBe('alarm');
+    expect(readsAs('rgb(120, 120, 122)')).toBe('neutral');
+    expect(() => readsAs('var(--danger)')).toThrow(/not a colour/);
   });
 
   /**
@@ -1679,6 +1708,44 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
           card.parentElement!.setAttribute('aria-hidden', 'true');
         },
       ],
+      [
+        // ── ROUND 14's B10 ───────────────────────────────────────────
+        //
+        // The inline-style branch of half four had NO owner on this surface.
+        // Measured, in two steps: deleting the allow-list loop from this file's
+        // `expectNothingSilenced` was 42 files / 1057 tests green, and with it
+        // deleted round 13's own exhibit (`<div style={{ display: 'none' }}>`
+        // around `RevocationBody`) was green again. The identical deletion in
+        // `trust-page.test.tsx` is 1 red — because THAT file's wiring test
+        // carries two inline-style injections and this one carried five, all
+        // attribute-based. The dashboard's branch was protected only
+        // transitively, by the other file happening to call the same helper.
+        //
+        // Round 11's B3 named exactly this — "a branch with no injection is a
+        // branch that can be deleted silently" — and this commit's predecessor
+        // quoted it while leaving the dashboard half unowned.
+        'the pinned blocks hidden by an INLINE STYLE',
+        (card) => {
+          card.querySelector<HTMLElement>('.card-body')!.style.display = 'none';
+        },
+      ],
+      [
+        'an ANCESTOR of the pinned blocks hidden by an inline style',
+        (card) => {
+          card.parentElement!.style.visibility = 'hidden';
+        },
+      ],
+      [
+        // ROUND 14's B9: the fourth suppressing construct, on this surface.
+        'the pinned blocks behind a closed <details>',
+        (card) => {
+          const body = card.querySelector<HTMLElement>('.card-body')!;
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          body.parentElement!.insertBefore(details, body);
+          details.append(summary, body);
+        },
+      ],
     ];
     for (const [label, inject] of injections) {
       cleanup();
@@ -1689,11 +1756,12 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
       inject(revocationCard());
       expect(() => expectPinnedCard(expected, label), `the composite ADMITS ${label}`).toThrow();
     }
-    // Anti-vacuity: a loop over an emptied table asserts nothing. FIVE
-    // injections for four halves — the reachability half has two independent
-    // branches (up and down) and round 11's B3 is that one injection cannot
-    // attribute both.
-    expect(injections).toHaveLength(5);
+    // Anti-vacuity: a loop over an emptied table asserts nothing. EIGHT
+    // injections for four halves — the reachability half has FIVE independent
+    // branches (attribute up, attribute down, inline style on the surface,
+    // inline style above it, and the closed disclosure), and round 11's B3 is
+    // that one injection cannot attribute more than one of them.
+    expect(injections).toHaveLength(8);
   });
 
   it('GUARDS THE GUARD: the announced half catches copy no textContent pin sees', () => {
