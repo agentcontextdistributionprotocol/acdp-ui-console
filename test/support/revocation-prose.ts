@@ -590,7 +590,8 @@ export function expectedTrustViolationsTableBlocks(opts: {
 }
 
 /**
- * Every attribute either surface is allowed to ANNOUNCE, as a set.
+ * The attributes whose values are STRUCTURE — the only ones the announced-copy
+ * scan may skip.
  *
  * `textContent` cannot see an attribute, and round 9 got an all-clear onto the
  * pinned dashboard card through a text-free `<div title="…" aria-label="…" />`
@@ -599,18 +600,75 @@ export function expectedTrustViolationsTableBlocks(opts: {
  * tooltip, not for leaving the channel unpinned, since `aria-label` on the same
  * node reaches a screen reader.
  *
- * `aria-hidden` is excluded: it announces nothing by definition. The
- * id-reference attributes carry no text of their own and are checked
- * separately — what they point at has to be inside the pinned surface, or its
- * text is announced from outside everything these lists cover.
+ * ROUND 10 CORRECTION — THE LIST WAS THE WRONG WAY ROUND. It enumerated the
+ * attributes that DO announce (`title`, `alt`, `placeholder`, `aria-label`,
+ * `aria-description`, `aria-roledescription`, `aria-valuetext`,
+ * `aria-placeholder`), which is an OPEN set. Round 10's gate put
+ * `<input readOnly value="No key in this deployment has been revoked." />`
+ * UNCONDITIONALLY into the violations card body and into the dashboard's Key
+ * Revocation card body, and both were green at 1038/1038: `value` renders as
+ * visible text, contributes nothing to `textContent`, and was not on the list.
+ * `srcdoc`, `download`, `label`, `abbr`, `aria-keyshortcuts` and
+ * `aria-errormessage` are the same shape, and enumerating them leaves the next
+ * one. The sibling #84 and #95 branches were beaten by the identical escape in
+ * the same week, by two other gates — so this is a repo-wide shape, not a quirk
+ * of these two cards.
+ *
+ * So the licence is the NON-announcing side, which really is closed: these
+ * surfaces are `div`s, headings, paragraphs, tables and one `svg` per empty
+ * state. An attribute that carries text must now either be licensed by value at
+ * the call site or be added here, in a diff, with a reason.
+ *
+ * `aria-hidden` is on this list because it announces nothing ITSELF. What it
+ * SILENCES beneath it is a different defect — a suppression rather than an
+ * addition — and no scan over attribute values can see one; that is
+ * `expectNothingSilenced`'s job at the call sites.
  */
-export const ANNOUNCED_TEXT_ATTRS = [
-  'title',
-  'alt',
-  'placeholder',
-  'aria-label',
-  'aria-description',
-  'aria-roledescription',
-  'aria-valuetext',
-  'aria-placeholder',
+export const NON_ANNOUNCING_ATTRS = [
+  'class',
+  'style',
+  'id',
+  'role',
+  'tabindex',
+  'type',
+  'disabled',
+  'open',
+  'colspan',
+  'rowspan',
+  'scope',
+  'href',
+  // Announces nothing itself; what it hides is the reachability check's problem.
+  'aria-hidden',
+  // Id references carry no text of their own; that they must RESOLVE INSIDE the
+  // pinned surface is asserted separately.
+  'aria-labelledby',
+  'aria-describedby',
+  'aria-details',
+  // SVG: the icons `EmptyState` and `KpiCard` render.
+  'xmlns',
+  'width',
+  'height',
+  'viewbox',
+  'fill',
+  'stroke',
+  'stroke-width',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'd',
+  'points',
+  'cx',
+  'cy',
+  'r',
+  'x',
+  'y',
+  'x1',
+  'y1',
+  'x2',
+  'y2',
+  'rx',
+  'ry',
+  'transform',
 ] as const;
+
+/** The id-reference attributes, which must resolve inside the pinned surface. */
+export const ID_REFERENCE_ATTRS = ['aria-labelledby', 'aria-describedby', 'aria-details'] as const;

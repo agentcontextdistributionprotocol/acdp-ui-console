@@ -19,7 +19,8 @@ import { render, screen, cleanup } from '@testing-library/react';
 import type { CpDashboardOverview } from '@/lib/types';
 import { dashboardRevocationState } from '@/lib/utils/revocation';
 import {
-  ANNOUNCED_TEXT_ATTRS,
+  ID_REFERENCE_ATTRS,
+  NON_ANNOUNCING_ATTRS,
   DASHBOARD_CARD,
   DASHBOARD_PROSE,
   DASHBOARD_REPORTED_TILES,
@@ -1081,10 +1082,23 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
    */
   function announcedIn(el: HTMLElement): string[] {
     const found: string[] = [];
+    const structural = new Set<string>(NON_ANNOUNCING_ATTRS);
     for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
-      for (const attr of ANNOUNCED_TEXT_ATTRS) {
-        const v = node.getAttribute(attr);
-        if (v !== null && v !== '') found.push(normalize(v));
+      // ROUND 10 CORRECTION — THIS WALKED AN OPEN SET AND CALLED IT CLOSED.
+      // It iterated the attributes that DO announce, which is a list somebody
+      // has to keep complete: `<input readOnly value="No key in this deployment
+      // has been revoked." />` carries a whole unlicensed sentence to a sighted
+      // operator AND to a screen reader, and `value` was not on the list. The
+      // sibling #95 and #84 branches were each beaten by the same input, from
+      // three different authors, which is the argument for inverting rather
+      // than for a sixth attribute.
+      //
+      // It now walks EVERY attribute and skips only the ones that cannot carry
+      // text to a user — the closed side of the enumeration, listed and
+      // justified in `revocation-prose.ts`.
+      for (const attr of node.attributes) {
+        if (structural.has(attr.name.toLowerCase())) continue;
+        if (attr.value.trim()) found.push(normalize(attr.value));
       }
     }
     return found;
@@ -1095,7 +1109,7 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
       new Set(allowed.map(normalize)),
     );
     for (const node of [card, ...card.querySelectorAll<HTMLElement>('*')]) {
-      for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-details']) {
+      for (const attr of ID_REFERENCE_ATTRS) {
         for (const id of (node.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
           expect(
             card.querySelector(`#${CSS.escape(id)}`),
@@ -1106,11 +1120,59 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     }
   }
 
+  /**
+   * Half four: everything written down is still REACHABLE.
+   *
+   * The other three bound what is ADDED. None of them can see a SUPPRESSION:
+   * `aria-hidden="true"` on the card body deletes every pinned block from the
+   * accessibility tree while `textContent` is unchanged, so all three stay
+   * green while a screen-reader operator is told nothing at all. On the arm
+   * that says "no key has been revoked" that is a silent all-clear, which is
+   * the exact failure #97 is about.
+   *
+   * ROUND 10 CORRECTION: this file claimed three halves were "the whole
+   * surface". They are not; this is the fourth, and it was missing from both
+   * revocation surfaces.
+   *
+   * `expectedCount` is the anti-vacuity: a walk over no blocks asserts nothing,
+   * and the count is what the pin above says is on screen.
+   */
+  function expectNothingSilenced(card: HTMLElement, expectedCount: number, label?: string) {
+    const head = [...card.querySelectorAll<HTMLElement>('.card-header h2, .card-header .card-sub')];
+    const body = card.querySelector<HTMLElement>('.card-body');
+    const tiles = [...(body?.querySelectorAll<HTMLElement>('.kpi-card') ?? [])];
+    const blocks = [...head, ...(tiles.length ? tiles : [...(body?.querySelectorAll<HTMLElement>('p') ?? [])])];
+    const silences = (node: Element) =>
+      node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('hidden') || node.hasAttribute('inert');
+    let checked = 0;
+    for (const block of blocks) {
+      // UP: a suppressing ancestor takes the whole block with it.
+      for (let node: HTMLElement | null = block; node !== null; node = node.parentElement) {
+        expect(silences(node), `${label ?? ''} — a pinned block is inside a suppressed element`).toBe(false);
+      }
+      // DOWN: the sibling #84 branch measured the ancestor-only version of this
+      // walk and got 1122/1122 green with each fact's contents wrapped in
+      // `<span aria-hidden="true">`, and again with `inert` on the list. A
+      // suppressed descendant is a defect only when it silences TEXT — a
+      // decorative `<svg aria-hidden="true">` is correct markup.
+      for (const node of block.querySelectorAll('*')) {
+        if (!silences(node)) continue;
+        expect(
+          squash(node.textContent ?? ''),
+          `${label ?? ''} — a pinned block contains suppressed TEXT`,
+        ).toBe('');
+      }
+      checked += 1;
+    }
+    expect(checked, `${label ?? ''} — the reachability walk saw no blocks`).toBe(expectedCount);
+  }
+
   function expectPinnedCard(expected: string[], label?: string, announced: readonly string[] = []) {
     const card = revocationCard();
     expectBlocksPinned(card, expected, label);
     expectNothingOutside(card, expected, label);
     expectNothingAnnounced(card, announced, label);
+    expectNothingSilenced(card, expected.length, label);
   }
 
   it('pins every block of every prose arm, and nothing else is in the card', () => {

@@ -11,7 +11,8 @@ import { render, screen, cleanup } from '@testing-library/react';
 import type { CpRun, RunTrustSummary } from '@/lib/types';
 import type { TrustOverview } from '@/lib/hooks/use-trust';
 import {
-  ANNOUNCED_TEXT_ATTRS,
+  ID_REFERENCE_ATTRS,
+  NON_ANNOUNCING_ATTRS,
   TRUST_EMPTY,
   TRUST_KPI_CARDS,
   TRUST_KPI_HINT,
@@ -749,10 +750,15 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
    */
   function announcedIn(el: HTMLElement): string[] {
     const found: string[] = [];
+    const structural = new Set<string>(NON_ANNOUNCING_ATTRS);
     for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
-      for (const attr of ANNOUNCED_TEXT_ATTRS) {
-        const v = node.getAttribute(attr);
-        if (v !== null && v !== '') found.push(normalize(v));
+      // ROUND 10: this walked a list of attributes that DO announce, which is
+      // an open set — an `<input readOnly value="…">` put a whole unlicensed
+      // sentence on this card with 1038/1038 green. It now walks EVERY
+      // attribute and skips only the structural ones.
+      for (const attr of node.attributes) {
+        if (structural.has(attr.name.toLowerCase())) continue;
+        if (attr.value.trim()) found.push(normalize(attr.value));
       }
     }
     return found;
@@ -765,7 +771,7 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // An id reference can carry text in from outside the pinned surface, which
     // neither of the other halves reads. Required to resolve inside it.
     for (const node of [el, ...el.querySelectorAll<HTMLElement>('*')]) {
-      for (const attr of ['aria-labelledby', 'aria-describedby', 'aria-details']) {
+      for (const attr of ID_REFERENCE_ATTRS) {
         for (const id of (node.getAttribute(attr) ?? '').split(/\s+/).filter(Boolean)) {
           expect(
             el.querySelector(`#${CSS.escape(id)}`),
@@ -774,6 +780,55 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
         }
       }
     }
+  }
+
+  /**
+   * The fourth half: everything written down is still REACHABLE.
+   *
+   * The other three bound what is ADDED; none can see a SUPPRESSION. An
+   * `aria-hidden` on the violations table deletes every listed finding from the
+   * accessibility tree while `textContent` is unchanged — which on a card whose
+   * entire job is to report findings is the worst reading available. The
+   * sibling #84 branch measured exactly that, green.
+   *
+   * `expected.length` is the anti-vacuity: a walk over no blocks asserts
+   * nothing, and the block list is what the pin claims is on screen.
+   */
+  function silences(node: Element): boolean {
+    return (
+      node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('hidden') || node.hasAttribute('inert')
+    );
+  }
+
+  function expectNothingSilenced(el: HTMLElement, blocks: HTMLElement[], expectedCount: number, label?: string) {
+    for (const block of blocks) {
+      const said = normalize(block.textContent).slice(0, 40);
+      // UP: any suppressing ancestor takes the whole block with it.
+      for (let node: HTMLElement | null = block; node !== null; node = node.parentElement) {
+        expect(silences(node), `${label ?? ''} — "${said}…" is inside a suppressed element`).toBe(false);
+        if (node === el) break;
+      }
+      // DOWN, which the first version of this half did not do. The sibling #84
+      // branch measured the ancestor-only walk: wrapping each fact's contents in
+      // `<span aria-hidden="true">` left 1122/1122 green, because `textContent`
+      // is unchanged and no ancestor carries the attribute. `inert` did the same
+      // thing one element up.
+      //
+      // A suppressed descendant is only a defect if it SILENCES TEXT. A
+      // decorative `<svg aria-hidden="true">` inside a block is correct markup
+      // and this must not refuse it — so the rule is not "no suppressed
+      // descendant" but "no suppressed descendant that says anything".
+      for (const node of block.querySelectorAll('*')) {
+        if (!silences(node)) continue;
+        expect(
+          normalize(node.textContent ?? ''),
+          `${label ?? ''} — "${said}…" contains suppressed TEXT, which is announced to nobody`,
+        ).toBe('');
+      }
+    }
+    expect(blocks.length, `${label ?? ''} — the reachability walk visited no block`).toBe(
+      expectedCount,
+    );
   }
 
   function kpiGrid(container: HTMLElement): HTMLElement {
@@ -980,16 +1035,52 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     );
   }
 
+  /** The elements `violationsBlocks` read, for the reachability half. */
+  function violationsBlockElements(card: HTMLElement): HTMLElement[] {
+    const head = [...card.querySelectorAll<HTMLElement>('.card-header h2, .card-header .card-sub')];
+    const empty = card.querySelector<HTMLElement>('.empty-state');
+    if (empty) {
+      const parts = [...empty.children].filter(
+        (c): c is HTMLElement => c instanceof HTMLElement && c.tagName !== 'svg'.toUpperCase(),
+      );
+      return [...head, ...parts];
+    }
+    const table = card.querySelector<HTMLElement>('table.data-table');
+    return [...head, ...(table ? [...table.querySelectorAll<HTMLElement>('th, td')] : [])];
+  }
+
   /**
-   * The two halves are SEPARATE functions, and the split is not cosmetic: a
+   * The halves are SEPARATE functions, and the split is not cosmetic: a
    * self-test asserting "this helper throws on a bad render" is satisfied by
    * either half throwing, so loosening one is invisible while the other still
    * fires. Measured — turning the block equality into a containment stayed
    * green through a guard-the-guard written the other way.
+   *
+   * ROUND 10 CORRECTION — IT WAS TWO HALVES, AND THE DOCBLOCK SAID THREE.
+   * `d9d3f06`'s message claimed "a third half now pins the announced set on
+   * both surfaces". On the dashboard that was true; here `expectNothingAnnounced`
+   * was called by exactly two tests and NOT by this composite, so neither empty
+   * state ever ran it. The gate put a text-free
+   * `<div aria-label="No key in this deployment has been revoked." />` into the
+   * card on `violationRuns.length === 0` and it was green at 1038/1038 — round
+   * 9's escape, unchanged in mechanism, in the states the new half never ran
+   * in.
+   *
+   * `allowed` is the announced set for this render. It is a parameter and not a
+   * constant because `KpiCard` mirrors its `hint` into a `title`; the violations
+   * card renders no hint, so every caller here passes `[]` and a LOST
+   * announcement is a defect too.
    */
-  function expectPinnedViolations(card: HTMLElement, expected: string[], label?: string) {
+  function expectPinnedViolations(
+    card: HTMLElement,
+    expected: string[],
+    label?: string,
+    allowed: readonly string[] = [],
+  ) {
     expectBlocksPinned(card, expected, label);
     expectNothingOutside(card, expected, label);
+    expectNothingAnnounced(card, allowed, label);
+    expectNothingSilenced(card, violationsBlockElements(card), expected.length, label);
   }
 
   it('GUARDS THE GUARD: the violations pin REJECTS an appended clause and a stray element', () => {
@@ -1124,6 +1215,276 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       ],
     });
     expectPinnedViolations(card, expected, 'counter-only table');
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // THE VIOLATIONS CARD'S INPUT SPACE, ENUMERATED AND MAPPED.
+  //
+  // ROUND 10's B1. Every pin above picks a scenario by hand, and a hand-picked
+  // scenario set bounds the cells somebody thought of. Two of the states this
+  // card can actually be in had never been rendered anywhere in this file:
+  //
+  //   - MORE THAN ONE violation run. Every table test rendered exactly one, so
+  //     the row loop's per-run behaviour — the run cell repeating, the row
+  //     ORDER across runs, the counter row appearing once per run — was
+  //     unbounded. `flatMap` over one element is the same program as `map`.
+  //   - `revokedEvents === 0` WITH FINDINGS LISTED. The subtitle's revocation
+  //     clause is composed from the TOTALS and the table from the per-run
+  //     findings; they come from different places upstream and can disagree. A
+  //     card that says "0 revoked across 0 runs" above a listed
+  //     `revoked_at_or_after` row is the #97 defect exactly — a clean claim
+  //     over a surface that is reporting a violation — and no pin could reach
+  //     it, because every fixture made the two agree by construction.
+  //
+  // So the scenarios are DERIVED. The axes below are the inputs the card's copy
+  // is a function of, read off `app/trust/page.tsx`:
+  //
+  //   runs           the audited run count in this view (0 / 1 / 2)
+  //   finding        what each audited run carries
+  //   reported       `totals.revocationReportedRuns > 0`, which gates the clause
+  //   checkOff       `features.keyRevocationCheck === false`
+  //   preCompromise  `totals.preCompromiseEvents > 0`, which adds a clause
+  //   countersZeroed the totals disagree with the findings, as above
+  //
+  // and the EXPECTED COPY is composed by `trustViolationsSub` and the two
+  // `expected*Blocks` helpers in `test/support/revocation-prose.ts`, which hold
+  // hand copies. Nothing here reads a string off the page.
+  //
+  // WHAT IS HELD CONSTANT, stated rather than implied: the finding's STATUS
+  // (`revoked_at_or_after`), the discrepancy text, the timestamps and the ctx
+  // ids. Those are data the row renders verbatim, not arms of a decision — with
+  // the one exception of the status, which selects a chip class, and that is
+  // pinned separately below over every status the classifier knows.
+  // ══════════════════════════════════════════════════════════════════
+  type Finding = 'none' | 'flagged' | 'revoked' | 'counter' | 'both';
+  type ViolationsInput = {
+    runs: 0 | 1 | 2;
+    finding: Finding;
+    reported: boolean;
+    checkOff: boolean;
+    preCompromise: boolean;
+    countersZeroed: boolean;
+  };
+
+  const FLAGGED_CTX = 'acdp://registry-a.playground.local/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const REVOKED_CTX = 'acdp://registry-a.playground.local/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const BOUNDARY = '2026-08-01 00:00:00+00';
+  const DISCREPANCY = 'content_hash_mismatch:x';
+  const COUNTER_ONLY = 2;
+  const WHEN = '2026-09-25T00:01:00.000Z';
+
+  function runTrustFor(finding: Finding, n: number): RunTrustSummary {
+    const flagged = [
+      { eventId: `f${n}`, ctxId: FLAGGED_CTX, status: 'discrepancy', discrepancies: [DISCREPANCY] },
+    ];
+    const revoked = [{ ...revocation('revoked_at_or_after', `r${n}`), ctxId: REVOKED_CTX }];
+    switch (finding) {
+      case 'none':
+        return trust();
+      case 'flagged':
+        return trust({ flagged });
+      case 'revoked':
+        return trust({ revoked });
+      case 'counter':
+        return trust({ revoked: [], keyRevocationRevokedAtOrAfter: COUNTER_ONLY });
+      case 'both':
+        return trust({ flagged, revoked });
+    }
+  }
+
+  function totalsFor(i: ViolationsInput) {
+    const carriesFlag = i.finding === 'flagged' || i.finding === 'both';
+    const carriesRevoked = i.finding === 'revoked' || i.finding === 'both';
+    const carriesCounter = i.finding === 'counter';
+    const revokedEvents = (carriesRevoked ? i.runs : 0) + (carriesCounter ? i.runs * COUNTER_ONLY : 0);
+    const revokedRuns = carriesRevoked || carriesCounter ? i.runs : 0;
+    return {
+      flaggedEvents: carriesFlag ? i.runs : 0,
+      flaggedRuns: carriesFlag ? i.runs : 0,
+      revokedEvents: i.countersZeroed ? 0 : revokedEvents,
+      revokedRuns: i.countersZeroed ? 0 : revokedRuns,
+      revocationReportedRuns: i.reported ? i.runs : 0,
+      preCompromiseEvents: i.preCompromise ? 3 : 0,
+    };
+  }
+
+  function expectedViolations(i: ViolationsInput): string[] {
+    const tot = totalsFor(i);
+    const clause = i.reported
+      ? `${tot.revokedEvents} revoked across ${tot.revokedRuns} run${tot.revokedRuns === 1 ? '' : 's'}`
+      : i.checkOff
+        ? TRUST_VIOLATIONS_SUB['check-off']
+        : TRUST_VIOLATIONS_SUB['not-reported'];
+    const sub = trustViolationsSub({
+      flaggedEvents: tot.flaggedEvents,
+      flaggedRuns: tot.flaggedRuns,
+      revocationClause: clause,
+      preCompromiseEvents: tot.preCompromiseEvents,
+    });
+    if (i.finding === 'none') {
+      return expectedTrustViolationsBlocks({
+        sub,
+        empty: i.runs === 0 ? 'no-runs' : 'no-violations',
+        runs: i.runs,
+      });
+    }
+    const when = timeAgo(WHEN);
+    const rows: string[][] = [];
+    for (let n = 0; n < i.runs; n += 1) {
+      const runId = `run-${n}`;
+      // The order is the component's: flagged rows, then the counter-only row,
+      // then the fail-closed entries — per run, not per kind.
+      if (i.finding === 'flagged' || i.finding === 'both') {
+        rows.push([runId, formatCtxId(FLAGGED_CTX), 'discrepancy', DISCREPANCY, when]);
+      }
+      if (i.finding === 'counter') {
+        rows.push([
+          runId,
+          '—',
+          'reported without detail',
+          `${COUNTER_ONLY} fail-closed verdicts counted with no per-event detail`,
+          when,
+        ]);
+      }
+      if (i.finding === 'revoked' || i.finding === 'both') {
+        rows.push([
+          runId,
+          formatCtxId(REVOKED_CTX),
+          'revoked_at_or_after',
+          `key revoked · boundary ${new Date(BOUNDARY).toLocaleString()} · producer_signed`,
+          when,
+        ]);
+      }
+    }
+    return expectedTrustViolationsTableBlocks({ sub, rows });
+  }
+
+  function reachableViolationsInputs(): ViolationsInput[] {
+    const out: ViolationsInput[] = [];
+    for (const runs of [0, 1, 2] as const) {
+      for (const finding of ['none', 'flagged', 'revoked', 'counter', 'both'] as const) {
+        for (const reported of [false, true]) {
+          for (const checkOff of [false, true]) {
+            for (const preCompromise of [false, true]) {
+              for (const countersZeroed of [false, true]) {
+                // With no audited run there is nothing to carry a finding, to
+                // report a classification, or to count a pre-compromise event.
+                if (runs === 0 && (finding !== 'none' || reported || preCompromise || countersZeroed)) {
+                  continue;
+                }
+                const carriesRevocation =
+                  finding === 'revoked' || finding === 'counter' || finding === 'both';
+                // A run that carries a revocation verdict IS a reporting run —
+                // that is what `revocationReportedRuns` counts upstream. The
+                // inconsistency this file DOES model is the counter one below,
+                // which is reachable because the totals and the per-run findings
+                // are computed from different rows.
+                if (carriesRevocation && !reported) continue;
+                if (countersZeroed && !(reported && carriesRevocation)) continue;
+                out.push({ runs, finding, reported, checkOff, preCompromise, countersZeroed });
+              }
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  it('pins the violations card in EVERY reachable arm of its input space', () => {
+    const inputs = reachableViolationsInputs();
+    // Anti-vacuity on the enumeration: a filter that swallowed the space would
+    // make this loop assert nothing at all.
+    expect(inputs.length, 'the violations input enumeration collapsed').toBe(82);
+    const label = (i: ViolationsInput) =>
+      `runs=${i.runs} finding=${i.finding} reported=${i.reported} checkOff=${i.checkOff} ` +
+      `pre=${i.preCompromise} zeroed=${i.countersZeroed}`;
+    const groups = new Map<string, ViolationsInput[]>();
+    for (const i of inputs) {
+      cleanup();
+      const { container } = renderWith(
+        overview(
+          Array.from({ length: i.runs }, (_, n) => ({
+            runId: `run-${n}`,
+            trust: runTrustFor(i.finding, n),
+          })),
+          totalsFor(i),
+          i.checkOff ? { ...FEATURES_ON, keyRevocationCheck: false } : FEATURES_ON,
+        ),
+      );
+      const expected = expectedViolations(i);
+      expectPinnedViolations(violationsCard(container), expected, label(i));
+      const key = JSON.stringify(expected);
+      groups.set(key, [...(groups.get(key) ?? []), i]);
+    }
+    // ...and on the DERIVATION, which is the half a count alone does not give.
+    // Two inputs producing an identical card means the card does not
+    // distinguish two states -- the defect class this page is about -- so the
+    // collisions are characterised, not merely counted. Measured: 50 distinct
+    // cards over 82 inputs, and every one of the 32 collisions is the same
+    // pair.
+    expect(groups.size, 'the arms collapsed onto one another').toBe(50);
+    for (const group of groups.values()) {
+      if (group.length === 1) continue;
+      // The ONLY axis whose two values may produce one card is `checkOff`, and
+      // only once a run has reported -- at which point the clause is composed
+      // from the counters and the deployment flag is correctly not consulted.
+      // Any other collision is a state this card is failing to tell apart.
+      expect(group.length, 'three inputs produced one card').toBe(2);
+      const [a, b] = group;
+      expect(
+        a.reported && b.reported && a.checkOff !== b.checkOff,
+        'two inputs produced one card for a reason other than the reported/checkOff pair: ' +
+          `${label(a)} / ${label(b)}`,
+      ).toBe(true);
+      expect({ ...a, checkOff: false }, 'the colliding pair differs on more than checkOff').toEqual({
+        ...b,
+        checkOff: false,
+      });
+    }
+  }, 120_000);
+
+  it('pins the chip class of every revocation status the classifier knows', () => {
+    // ROUND 10's B5. The finding cell's chip is read from
+    // `revocationChipClass(r.status)`, and no pin read it AT THE CALL SITE:
+    // `revocation.test.ts` covers the function, which says nothing about
+    // whether this page still calls it. Measured in round 10: replacing the
+    // call with a literal `'chip bad'` was green, and it makes a
+    // HISTORICALLY AUTHORIZED entry render in danger red on the violations
+    // list — the page stating the opposite of the fact.
+    //
+    // The expectations are HAND-WRITTEN, not derived by calling
+    // `revocationChipClass` here: deriving them from the same function the
+    // component calls would pass whatever that function returns, which is the
+    // tautology this branch has found three times.
+    const arms: Array<[status: string, chip: string]> = [
+      ['revoked_at_or_after', 'chip bad'],
+      ['revoked_time_unverifiable', 'chip warn'],
+      ['pre_compromise', 'chip ok'],
+    ];
+    for (const [status, chip] of arms) {
+      cleanup();
+      const { container } = renderWith(
+        overview(
+          [{ runId: 'run-chip', trust: trust({ revoked: [revocation(status)], flagged: [] }) }],
+          { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+          FEATURES_ON,
+        ),
+      );
+      const card = violationsCard(container);
+      const cells = [...card.querySelectorAll<HTMLElement>('tbody td span.chip, tbody td span[class^="chip"]')];
+      const found = cells.find((c) => normalize(c.textContent) === status);
+      // `pre_compromise` is historically authorized, so it is NOT a violation
+      // and the run does not reach the table at all — which is itself the
+      // claim, and is asserted rather than skipped.
+      if (status === 'pre_compromise') {
+        expect(found, 'a historically authorized entry is listed as a violation').toBeUndefined();
+        expect(card.querySelector('.empty-state'), 'the card should be in an empty state').toBeTruthy();
+        continue;
+      }
+      expect(found, `no chip for ${status}`).toBeTruthy();
+      expect(found!.getAttribute('class'), `${status} renders the wrong chip`).toBe(chip);
+    }
   });
 
   it('GUARDS THE GUARD: the TABLE state rejects an all-clear beside the findings', () => {
