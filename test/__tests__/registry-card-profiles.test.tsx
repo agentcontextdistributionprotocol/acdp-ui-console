@@ -1707,6 +1707,24 @@ describe('the source guards are not vacuous', () => {
     expect(() => assertNoRuntimeCopyForms('export const X = 1;')).not.toThrow();
   });
 
+  it('the id SHAPE matches a mis-cased id and not a spec citation', () => {
+    const shaped = (s: string) => [...s.matchAll(PCT.PROFILE_ID_SHAPE)].map((m) => m[0]);
+    // ROUND 13's B3, both directions in one place because the fix for one broke
+    // the other. The case-SENSITIVE pattern missed these two, and putting them
+    // in a gloss left 969/969 green…
+    expect(shaped('also advertised as acdp-Federated or ACDP-consumer')).toEqual([
+      'acdp-Federated',
+      'ACDP-consumer',
+    ]);
+    expect(shaped('acdp_log_witness')).toEqual(['acdp_log_witness']);
+    // …and the naive case-INSENSITIVE fix matched the spec citation that every
+    // gloss in the table ends with, so the guard refused the real component and
+    // took six tests down with it. Requiring a letter after the separator is
+    // what separates an id from a citation and from a version marker.
+    expect(shaped('Mandatory registry baseline (RFC-ACDP-0001 §9.1)')).toEqual([]);
+    expect(shaped('Signed registry receipts at publish time (RFC-ACDP-0010, acdp 0.2.0)')).toEqual([]);
+  });
+
   it('the two guards profileCopyTable() does NOT run still run, here', () => {
     // `assertNoProseOutsideLabelTable` and `assertGlossIsPureOfId` are not
     // invoked by `profileCopyTable()` — it runs `RUN_ON_READ`, which holds every
