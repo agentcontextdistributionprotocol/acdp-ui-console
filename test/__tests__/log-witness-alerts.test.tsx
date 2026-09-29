@@ -30,10 +30,12 @@ import type {
   AckStage,
   AckListingConsequence,
   AckOutcome,
+  AckRecordEffect,
 } from '@/components/registries/log-witness-alerts';
 import {
   ackListingConsequence,
   ackOutcome,
+  ackRecordEffect,
   ackStage,
 } from '@/components/registries/log-witness-alerts';
 import {
@@ -47,6 +49,7 @@ import {
   ALL_CONSEQUENCES,
   ALL_FOOTER_STATES,
   ALL_OUTCOMES,
+  ALL_RECORD_EFFECTS,
   ALL_STAGES,
   ID_REFERENCE_ATTRS,
   NON_ANNOUNCING_ATTRS,
@@ -1040,6 +1043,11 @@ type PinOpts = {
   consequence: AckListingConsequence | null;
   outcome: AckOutcome;
   footer: AckFooterState;
+  // ROUND 7's N12: whether this acknowledgement is the first one on the row or
+  // overwrites an existing one. Required, not optional, for the same reason
+  // `AckStage` is exhaustive — a new arm must state what it claims the write
+  // records, rather than inheriting the previous arm's sentence.
+  recordEffect: AckRecordEffect;
   authority: string;
   reason: string;
   diagnostic?: string;
@@ -1882,15 +1890,38 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     consequence: AckListingConsequence | null;
     outcome: AckOutcome;
     footer: AckFooterState;
+    recordEffect: AckRecordEffect;
   };
+
+  /**
+   * The row the operator opened the dialog on.
+   *
+   * ROUND 7's N12. One helper, used by BOTH `armOf` and `enterDialog`, because
+   * the expected copy and the rendered copy now disagree about the whole first
+   * bullet if the two builds of this row drift apart — and "the fixture the
+   * expectation derives from is not the fixture the component rendered" is a
+   * failure that reads as a copy bug.
+   */
+  const subjectRow = (reAcknowledge: boolean): LogWitnessAlertRow =>
+    reAcknowledge
+      ? row({ acknowledgedAt: '2026-09-27T09:00:00.000Z', acknowledgedBy: 'a1b2c3d4...' })
+      : row();
 
   function armOf(i: DialogInput): Arm {
     const error = ACK_ERRORS[i.error]();
-    const stage = ackStage(i.live === 'listed' ? row() : null, error);
+    const subject = subjectRow(i.reAcknowledge);
+    const stage = ackStage(i.live === 'listed' ? subject : null, error);
     return {
       stage,
       consequence: ackListingConsequence(stage, i.showAcknowledged),
       outcome: ackOutcome(stage, error),
+      // Derived by CALLING the component's own function on the same two
+      // arguments the component gets — the live row (gone once the listing has
+      // dropped it) and the snapshot the dialog opened on — rather than
+      // re-expressing `reAcknowledge ? 'replaces' : 'first'` here. The
+      // fall-back to `openedOn` when the row is gone is the whole point of the
+      // function and a hand copy would not have it.
+      recordEffect: ackRecordEffect(i.live === 'listed' ? subject : null, subject),
       // The footer is the one axis the component tests inline rather than
       // through a named function, so this expression is a hand copy of
       // `log-witness-alerts.tsx`'s footer conditions, and
@@ -1936,8 +1967,25 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     return out;
   }
 
+  /**
+   * The identity of a rendered arm, derived from the arm's OWN members.
+   *
+   * ROUND 7's N12 found this hand-written as `${a.stage} / ${a.consequence} /
+   * ${a.outcome} / ${a.footer}` — four members spelled out — so adding
+   * `recordEffect` to `Arm` left the coverage set counting 13 arms while the
+   * loop rendered 26, and the "every enumerated arm was rendered" check
+   * silently compared a coarser partition than the one the copy depends on.
+   * `tsc` cannot catch that: a template literal that reads four of five
+   * members is well typed.
+   *
+   * Keyed off `Object.keys(a)` instead, so a new member of `Arm` is in the key
+   * the moment it is in the object. There is no list to keep complete.
+   */
   const armKey = (a: Arm) =>
-    `${a.stage} / ${a.consequence ?? 'no bullets'} / ${a.outcome} / ${a.footer}`;
+    (Object.keys(a) as (keyof Arm)[])
+      .sort()
+      .map((k) => `${k}=${a[k] ?? 'no bullets'}`)
+      .join(' / ');
 
   // ── THE OTHER HALF OF B1: WHAT THE DIALOG MAY READ ──────────────────
   //
@@ -1985,6 +2033,10 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     outcome: 'modelled',
     mut: 'modelled',
     error: 'modelled',
+    // ROUND 7's N12. `recordEffect` chooses between two spellings of the first
+    // bullet, so it is `modelled` and `DialogInput`'s `reAcknowledge` axis is
+    // the thing that renders both of its values.
+    recordEffect: 'modelled',
   };
 
   /** Identifiers that are structure, not data: components, helpers, hooks. */
@@ -2000,6 +2052,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     'ackStage',
     'ackListingConsequence',
     'ackOutcome',
+    'ackRecordEffect',
   ];
 
   /**
@@ -2033,9 +2086,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
 
     // …and whether this row has been acknowledged before, which decides the
     // control the operator clicks and was never once set in this file.
-    const subject = i.reAcknowledge
-      ? row({ acknowledgedAt: '2026-09-27T09:00:00.000Z', acknowledgedBy: 'a1b2c3d4...' })
-      : row();
+    const subject = subjectRow(i.reAcknowledge);
     const { rerender } = renderWith({ data: rows([subject]) });
     // The toggle starts at "Acknowledged shown" — the unfiltered worklist — so
     // reaching `leaves-view` means switching AWAY from the default.
@@ -2254,12 +2305,17 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     const armsWanted = new Set(inputs.map((i) => armKey(armOf(i))));
 
     // Anti-vacuity, asserted BEFORE the loop — and it is now about the PRODUCT,
-    // not about four marginals. Thirteen is not a number anyone chose: it is
-    // what the three exported functions produce over the input space, and it is
+    // not about four marginals. Twenty-two is not a number anyone chose: it is
+    // what the FOUR exported functions produce over the input space, and it is
     // pinned so that a change to the state machine which silently collapses two
     // arms into one shows up here rather than as a quietly smaller matrix.
+    //
+    // It was 13 before round 7's N12 added `ackRecordEffect`. The jump is the
+    // measurement that matters: 9 of the arms this file has rendered since
+    // round 3 were two distinct arms wearing one key, and the first bullet of
+    // the dialog said the same thing in both.
     expect(inputs.length, 'the input enumeration collapsed').toBe(72);
-    expect(armsWanted.size, 'the reachable arm space changed shape').toBe(13);
+    expect(armsWanted.size, 'the reachable arm space changed shape').toBe(22);
     // The marginals are still asserted, because a product can be the right SIZE
     // while missing a member of one axis — and each set is read off a `Record`
     // keyed by one of the component's own unions, so none of them can drift.
@@ -2270,6 +2326,14 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     );
     expect(new Set(arms.map((a) => a.outcome))).toEqual(new Set(ALL_OUTCOMES));
     expect(new Set(arms.map((a) => a.footer))).toEqual(new Set(ALL_FOOTER_STATES));
+    expect(new Set(arms.map((a) => a.recordEffect))).toEqual(new Set(ALL_RECORD_EFFECTS));
+    // …and the marginals are checked against the MEMBERS of `Arm`, not against
+    // a list of four names somebody keeps. A new member with no marginal
+    // assertion is a red test here rather than a coverage claim nobody re-read.
+    expect(
+      new Set(Object.keys(arms[0])),
+      'a member of `Arm` has no marginal assertion above',
+    ).toEqual(new Set(['stage', 'consequence', 'outcome', 'footer', 'recordEffect']));
 
     const armsSeen = new Set<string>();
     for (const i of inputs) {
@@ -2433,6 +2497,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2452,6 +2517,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2476,6 +2542,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2495,6 +2562,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2525,6 +2593,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2550,6 +2619,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2598,6 +2668,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2639,6 +2710,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
     });
@@ -2727,6 +2799,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
         consequence: 'stays-listed',
         outcome: 'none',
         footer: 'confirmable',
+        recordEffect: 'first',
         authority: AUTH,
         reason: MISMATCH,
       });
@@ -2800,6 +2873,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
         consequence: 'stays-listed',
         outcome: 'none',
         footer: 'confirmable',
+        recordEffect: 'first',
         authority: AUTH,
         reason: MISMATCH,
       });
@@ -2870,6 +2944,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
       label: 'second row of a two-row listing',
@@ -2912,6 +2987,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'stays-listed',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
       label: 'second dialog opened straight from the first',
@@ -2946,6 +3022,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: null,
       outcome: 'already-resolved',
       footer: 'closed-out',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
       label: 'resolved, after the live row changed reason',
@@ -2974,6 +3051,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       consequence: 'already-gone',
       outcome: 'none',
       footer: 'confirmable',
+      recordEffect: 'first',
       authority: AUTH,
       reason: MISMATCH,
       label: 'left-listing, no error',

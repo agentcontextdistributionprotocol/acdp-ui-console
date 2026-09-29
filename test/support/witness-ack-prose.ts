@@ -57,6 +57,7 @@ import type {
   AckStage,
   AckListingConsequence,
   AckOutcome,
+  AckRecordEffect,
 } from '@/components/registries/log-witness-alerts';
 
 /**
@@ -95,13 +96,31 @@ export const ACK_LEAD: Record<AckStage, (authority: string, reason: string) => s
 };
 
 /**
- * The two bullets that are true of the acknowledgement itself, whatever the
- * listing is doing. Constant across every arm that renders bullets at all.
+ * The first bullet: what confirming does to the stored acknowledgement.
+ *
+ * ROUND 7's N12. This was one constant string, described here as "true of the
+ * acknowledgement itself, whatever the listing is doing" — and it was, of a
+ * FIRST acknowledgement. Upstream's `acknowledgeAlert` sets `acknowledgedAt`
+ * and `acknowledgedBy` on the cursor row, one per `(tenant, authority)`, with
+ * no history table; so on a row whose own button reads **Re-acknowledge**, the
+ * sentence "It records which key saw this alert, and when" is describing a
+ * write that DESTROYS the record of who saw it first. The one bullet about
+ * attribution was silent on the case where confirming removes an attribution.
+ *
+ * Keyed on `AckRecordEffect` now, which is derived in the component from the
+ * row the dialog is actually about.
  */
-export const ACK_FACT_KEY =
-  'It records which key saw this alert, and when. The control plane derives that from the ' +
-  'credential this console sends — it is not a person’s name, and you cannot acknowledge on ' +
-  'someone else’s behalf.';
+export const ACK_FACT_KEY: Record<AckRecordEffect, string> = {
+  first:
+    'It records which key saw this alert, and when. The control plane derives that from the ' +
+    'credential this console sends — it is not a person’s name, and you cannot acknowledge on ' +
+    'someone else’s behalf.',
+  replaces:
+    'It replaces the key and time already recorded for this authority. The control plane keeps ' +
+    'one acknowledgement per row and no history, so the earlier sighting is not retained. The key ' +
+    'comes from the credential this console sends — it is not a person’s name, and you cannot ' +
+    'acknowledge on someone else’s behalf.',
+};
 
 export const ACK_FACT_NOT_CLEARED =
   'It does not clear the alert and does not touch the retained head. The authority stays alerted ' +
@@ -476,6 +495,8 @@ export function expectedDialogBlocks(opts: {
   consequence: AckListingConsequence | null;
   outcome: AckOutcome;
   footer: AckFooterState;
+  /** Round 7's N12: whether confirming creates or REPLACES the stored sighting. */
+  recordEffect: AckRecordEffect;
   authority: string;
   reason: string;
   /**
@@ -495,7 +516,7 @@ export function expectedDialogBlocks(opts: {
     ACK_LEAD[opts.stage](opts.authority, opts.reason),
   ];
   if (opts.consequence !== null) {
-    parts.push(ACK_FACT_KEY, ACK_FACT_NOT_CLEARED, ACK_LISTING[opts.consequence]);
+    parts.push(ACK_FACT_KEY[opts.recordEffect], ACK_FACT_NOT_CLEARED, ACK_LISTING[opts.consequence]);
   }
   if (opts.outcome === 'already-resolved') {
     // The 404 panel passes no `details`: there is nothing diagnostic about an
@@ -546,3 +567,4 @@ export function squash(text: string | null | undefined): string {
  */
 export const ALL_STAGES = Object.keys(ACK_LEAD) as AckStage[];
 export const ALL_CONSEQUENCES = Object.keys(ACK_LISTING) as AckListingConsequence[];
+export const ALL_RECORD_EFFECTS = Object.keys(ACK_FACT_KEY) as AckRecordEffect[];

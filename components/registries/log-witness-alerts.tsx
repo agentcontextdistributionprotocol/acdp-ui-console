@@ -118,11 +118,33 @@ function AcknowledgedCell({ row }: { row: LogWitnessAlertRow }) {
  * What the 404 means HERE, which is not what a 404 usually means.
  *
  * `acknowledgeAlert` updates `WHERE alerted = true`, so the row has to be
- * alerting for the ack to land. A 404 therefore says the alert went away
- * between the render and the click — the condition RESOLVED and
- * `advanceCursor` cleared the row — not that the authority is unknown. Calling
- * that a failure would have an operator chasing a registry that just got
- * better.
+ * alerting for the ack to land. On this screen the overwhelmingly likely
+ * reading is therefore that the alert went away between the render and the
+ * click, and calling that a failure would have an operator chasing a registry
+ * that just got better.
+ *
+ * ROUND 7's N11, and the correction is in two places at once. Verified
+ * read-only against `acdp-control-plane`:
+ *
+ *   - The WHERE has THREE conjuncts, not one:
+ *     `and(eq(tenantId), eq(registryAuthority), eq(alerted, true))`
+ *     (`src/storage/log-witness.repository.ts`, `acknowledgeAlert`). So "not
+ *     that the authority is unknown" was false — an authority this tenant has
+ *     no cursor row for returns exactly the same 404, and so would a
+ *     cross-tenant request. This console only ever sends an authority it just
+ *     listed FROM that feed, which is what makes the resolved reading the
+ *     likely one; it is not what makes the other readings impossible. The copy
+ *     below already hedges ("most likely"); this docblock did not, and a
+ *     docblock that is more certain than the copy is how the next reader stops
+ *     checking.
+ *   - `advanceCursor` does not "clear the row". It UPSERTS the cursor with
+ *     `alerted: false` (and clears `acknowledgedAt`/`acknowledgedBy`, so a
+ *     later alert on the same authority is unacknowledged again). The row stays
+ *     in `log_witness_cursors` and keeps its retained head — deliberately, per
+ *     that repository's own docblock, so the pre-failure root stays available
+ *     as §9.2 `first_root` evidence. What removes it from THIS screen is
+ *     `listAlerted`'s `alerted = true` filter, which is a different fact and
+ *     the one this component actually depends on.
  */
 const ACK_ALREADY_RESOLVED =
   'There is no longer an alert to acknowledge for this authority. The control plane clears the ' +
@@ -180,6 +202,46 @@ export function ackStage(live: LogWitnessAlertRow | null, error: unknown): AckSt
  * is a claim about an action that will not occur.
  */
 export type AckListingConsequence = 'stays-listed' | 'leaves-view' | 'already-gone';
+
+/**
+ * What confirming does to the acknowledgement record that is already there.
+ *
+ * ── ROUND 7's N12 ────────────────────────────────────────────────────
+ *
+ * The first bullet said "It records which key saw this alert, and when", full
+ * stop, on every arm — including the one reached from a row whose button reads
+ * **Re-acknowledge**. Verified read-only against `acdp-control-plane`:
+ * `acknowledgeAlert` does `.set({ acknowledgedAt: now, acknowledgedBy, … })`
+ * on the cursor row, and `log_witness_cursors` holds ONE acknowledgement per
+ * `(tenant, authority)`. There is no history table. So a re-acknowledgement
+ * OVERWRITES who saw it first and when, and nothing on this screen said so.
+ *
+ * That is a disclosure defect of exactly the kind this dialog exists to fix.
+ * The surface is an audit surface — the whole bullet is about attributing a
+ * sighting to a key — and the one sentence about attribution was silent on the
+ * case where confirming destroys the previous attribution. An operator
+ * re-acknowledging to "refresh" the marker loses the record of the first
+ * sighting, which is the record that matters in an incident.
+ *
+ * A separate axis rather than a clause bolted onto `AckListingConsequence`:
+ * they are independent facts (one is about the stored record, the other about
+ * the listing), and this file's own history is that a sentence which is a
+ * function of two things and is keyed on one of them is false in the states the
+ * other one names.
+ */
+export type AckRecordEffect = 'first' | 'replaces';
+
+export function ackRecordEffect(
+  live: LogWitnessAlertRow | null,
+  openedOn: LogWitnessAlertRow,
+): AckRecordEffect {
+  // The LIVE row when there is one, for the same reason the `alerting` lead
+  // reads it: what confirming will overwrite is whatever the control plane
+  // holds NOW, not what it held when the dialog opened. Falling back to the
+  // snapshot keeps the sentence available on `left-listing`, where the live row
+  // is gone and the snapshot is the only record of what the operator clicked.
+  return (live ?? openedOn).acknowledgedAt === null ? 'first' : 'replaces';
+}
 
 export function ackListingConsequence(
   stage: AckStage,
@@ -348,6 +410,7 @@ function AcknowledgeDialog({
   const resolved = stage === 'resolved';
   const consequence = ackListingConsequence(stage, showAcknowledged);
   const outcome = ackOutcome(stage, mut.error);
+  const recordEffect = ackRecordEffect(live, openedOn);
 
   return (
     <Modal
@@ -432,11 +495,27 @@ function AcknowledgeDialog({
             something was recorded when nothing was. */}
         {consequence && (
           <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 6 }}>
-            <li>
-              It records <strong>which key</strong> saw this alert, and when. The control plane
-              derives that from the credential this console sends — it is not a person&rsquo;s name,
-              and you cannot acknowledge on someone else&rsquo;s behalf.
-            </li>
+            {/* A function of whether this authority is ALREADY acknowledged —
+                round 7's N12. Upstream stores one acknowledgement per row and
+                overwrites it, with no history, so on a re-acknowledgement this
+                bullet's subject is not "records" but "replaces". See
+                `ackRecordEffect`. */}
+            {recordEffect === 'first' && (
+              <li>
+                It records <strong>which key</strong> saw this alert, and when. The control plane
+                derives that from the credential this console sends — it is not a person&rsquo;s
+                name, and you cannot acknowledge on someone else&rsquo;s behalf.
+              </li>
+            )}
+            {recordEffect === 'replaces' && (
+              <li>
+                It <strong>replaces</strong> the key and time already recorded for this authority.
+                The control plane keeps one acknowledgement per row and no history, so the earlier
+                sighting is not retained. The key comes from the credential this console sends — it
+                is not a person&rsquo;s name, and you cannot acknowledge on someone else&rsquo;s
+                behalf.
+              </li>
+            )}
             <li>
               It does <strong>not clear the alert</strong> and does not touch the retained head. The
               authority stays alerted until the control plane witnesses a consistent checkpoint again.
@@ -760,6 +839,21 @@ export function LogWitnessAlerts() {
                         detail" — so the null case gets WORDS instead. An empty
                         or dashed cell reads as a rendering bug; "Time not
                         recorded" is the fact.
+
+                        ROUND 7's N11: this branch is DEFENSIVE, and the
+                        paragraph above reads as though nulls arrive. Verified
+                        read-only against `acdp-control-plane`: `last_alert_at`
+                        is a nullable column, but the only write that sets
+                        `alerted = true` is `markAlert`, which sets
+                        `lastAlertAt` in the SAME statement, and `listAlerted`
+                        returns only `alerted = true` rows. `markFailure` never
+                        touches the alert fields at all. So a null `at` is
+                        unreachable from a correct control plane today. It is
+                        still rendered as words rather than trusted away,
+                        because the column permits it and the type this console
+                        parses permits it — the cost of the branch is one
+                        ternary and the cost of being wrong is a trust row that
+                        looks like a rendering bug.
                       */}
                       {row.at === null ? 'Time not recorded' : `${timeAgo(row.at)} · ${clockTime(row.at)}`}
                     </td>

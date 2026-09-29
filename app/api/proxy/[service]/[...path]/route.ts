@@ -83,11 +83,21 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     // become reachable by GET.
     //
     // Upstream declares `log-witness/alerts` BEFORE `:authority/log-witness`
-    // (`registries.controller.ts:51` and `:117`), which is why Nest does not
-    // swallow `log-witness` as an `:authority` there. Our matching is
-    // order-independent (`some` at `isAllowedRoute`), so we do not depend on
-    // that — but do not "simplify" these two into one pattern on the strength
-    // of it either. There is no per-authority `alerts` route upstream, so
+    // (`registries.controller.ts:51` and `:117`). ROUND 7's N11: an earlier
+    // version of this comment said that ordering "is why Nest does not swallow
+    // `log-witness` as an `:authority` there", and that causal claim is wrong.
+    // The two routes are DISJOINT whatever order they are declared in:
+    // `:authority/log-witness` requires the segment after the authority to be
+    // the literal `log-witness`, and in `/registries/log-witness/alerts` that
+    // segment is `alerts`. Declaration order decides nothing here, so an
+    // upstream refactor that reorders them changes nothing — which is a
+    // stronger statement than the one it replaces, and it is the one this file
+    // should have been making. (Order-dependence between those two WOULD
+    // matter for a hypothetical `GET :authority/log-witness/alerts`; upstream
+    // serves no such route, which is the next paragraph's point.)
+    // Our own matching is order-independent regardless (`some` at
+    // `isAllowedRoute`) — but do not "simplify" these two into one pattern on
+    // the strength of any of that. There is no per-authority `alerts` route upstream, so
     // widening the collection pattern's middle segment to `[^/]+` would admit
     // a shape the control plane does not serve; the route test asserts that
     // case by name, alongside three other widenings, and four adjacent shapes
