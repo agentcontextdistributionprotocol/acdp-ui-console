@@ -22,7 +22,11 @@
 // tooltip is a gloss on it. What is asserted is that the gloss exists and is
 // reachable for every advertisable id — the opposite failure from the one the
 // rule guards. The tooltip predates this change; whether it should be a tooltip
-// at all is a separate question, and it is filed rather than settled here.
+// at all is a separate question, and it is filed rather than settled here — as
+// issue #124, "Registry profile chips disclose what a profile means only on
+// hover". ROUND 13's N8: "it is filed" was written here with no number, which is
+// a claim a reader cannot check and this file's own standard for a citation is
+// that it name the thing.
 // ══════════════════════════════════════════════════════════════════════
 import { describe, expect, it, afterEach } from 'vitest';
 import ts from 'typescript';
