@@ -24,6 +24,11 @@ import {
 import * as MockData from '@/lib/data/mock-data';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
+import { profileCopyTable } from '../support/profile-copy-table';
+import {
+  REGISTRY_ADVERTISABLE_PROFILES,
+  NOT_ADVERTISABLE,
+} from '../support/advertisable-profiles';
 
 describe('mock scenarios', () => {
   it('covers the full catalog', () => {
@@ -590,55 +595,12 @@ describe('run-revoked-1: the RFC-ACDP-0014 fixture', () => {
 // deliberately about the CLASS of drift rather than this instance.
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * A literal mirror of `REGISTRY_ADVERTISABLE_PROFILES` from
- * `acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340` — the set
- * `acdp-registry-server/src/main.rs:415-431` enforces at STARTUP, so a registry
- * advertising anything outside it does not run.
- *
- * Mirrored rather than imported on purpose. A cross-repo import is not
- * available here and would be wrong if it were: this repo must not take a
- * dependency on a Rust crate's source layout.
- *
- * BE PRECISE ABOUT WHAT THE MIRROR CAN AND CANNOT DETECT, because the first
- * version of this comment got it backwards. A hand-copied list has no coupling
- * to its source, so nothing here observes upstream at all. The two staleness
- * directions are not symmetric:
- *
- *   Upstream ADDS an eighth profile → the mirror is now STRICTER than reality.
- *     A fixture advertising the new id fails the subset check below. That is a
- *     false red, which is loud and self-explaining — annoying, not dangerous.
- *
- *   Upstream REMOVES or RENAMES one → the mirror is now MORE PERMISSIVE than
- *     reality. A fixture advertising the dead id passes here while a real
- *     registry refuses to boot on it — the exact defect #95 was. Nothing in
- *     this repo can see that happen. The length assertion below does not help:
- *     the removal changes a number upstream and no number here.
- *
- * So the guard that follows makes NO claim about upstream. What it does pin is
- * the local failure mode, which is the likely one: the cheapest way to make a
- * fixture pass the subset check is to add the invalid id to this mirror, and
- * `acdp-consumer`/`acdp-federated` are exactly the two values that would be
- * added. Widening the mirror is what it catches.
- *
- * The mitigation for the unguarded direction is not a test, it is provenance:
- * the file:line above is where to re-check, and upstream keeps ITS copy honest
- * with a conformance test (`registry_advertisable_profiles_matches_spec`) that
- * recomputes the set from the pinned spec's `registries/profiles.json`, so the
- * const cannot drift from the SPEC without upstream CI going red first. A
- * machine-readable list this repo could actually consume is requested in
- * `acdp-registry-rs#347`; until one exists, a mirror plus a citation is the
- * honest ceiling.
- */
-const REGISTRY_ADVERTISABLE_PROFILES = [
-  'acdp-registry-core',
-  'acdp-registry-discovery',
-  'acdp-registry-federated',
-  'acdp-registry-receipts',
-  'acdp-registry-head-receipts',
-  'acdp-registry-transparency-log',
-  'acdp-registry-lifecycle',
-];
+// `REGISTRY_ADVERTISABLE_PROFILES` and `NOT_ADVERTISABLE` are imported from
+// `test/support/advertisable-profiles.ts`, where the mirror's provenance and
+// the precise limits of what a hand-copy can detect are written out. Shared
+// because `registry-card-profiles.test.tsx` makes a DIFFERENT claim about the
+// same seven strings, and two copies of a mirror can disagree.
+
 
 /**
  * The acdp version each profile first appears in, for the version-coherence
@@ -668,14 +630,28 @@ function atLeast(actual: string, required: string): boolean {
 }
 
 describe('demo registry profiles are ones a real registry would start with', () => {
-  it('cannot be widened to launder an invalid id through the subset check', () => {
-    // NOT a staleness guard — see the docblock; a local literal compared to a
-    // local number observes nothing upstream, and the first version of this test
-    // claimed otherwise. What it guards is the local shortcut: the cheapest way
-    // to make an invalid fixture pass the subset check below is to add the id
-    // here, and these are the two ids that would be added.
-    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-consumer');
-    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-federated');
+  it('cannot be widened to launder any id a real registry refuses to boot with', () => {
+    // NOT a staleness guard — see the mirror's own docblock; a local literal
+    // compared to a local number observes nothing upstream, and the first
+    // version of this test claimed otherwise. What it guards is the local
+    // shortcut: the cheapest way to make an invalid fixture pass the subset
+    // check below is to add the id here, and `NOT_ADVERTISABLE` is the list of
+    // ids that would be added.
+    //
+    // The title named "the two" while the list held THREE — it was written
+    // before `acdp-log-witness` joined, and a title that enumerates a set it
+    // does not own goes stale silently. It now names the PROPERTY, which is
+    // what the loop below actually delivers: whatever `NOT_ADVERTISABLE` holds,
+    // none of it may be laundered in here.
+    //
+    // Still narrower than "no invalid id can get through", and deliberately so.
+    // Round 2 of the gate measured the wider claim and found it false:
+    // inventing a WELL-FORMED id and adding it to the mirror, the fixture,
+    // `PROFILE_MIN_VERSION` and `PROFILE_INFO` together — four coordinated
+    // edits — passes everything. Widening the mirror ALONE is caught; a
+    // four-file conspiracy is not, and no test in this repo claims to catch
+    // one.
+    for (const id of NOT_ADVERTISABLE) expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain(id);
     // Every entry must look like a registry profile id. `acdp-consumer` fails
     // this on its own shape, which is the property that generalises: a consumer
     // or agent profile smuggled in later is caught without being named.
@@ -700,6 +676,12 @@ describe('demo registry profiles are ones a real registry would start with', () 
     // Not a taste call. `acdp-playground/config/registry-b.toml:8` is
     // `["acdp-registry-core", "acdp-registry-discovery"]`, and this demo depicts
     // that playground — so the set is copied, and copied in order.
+    //
+    // TWO, not three. Issue #95's parenthetical says registry-b is configured
+    // with `acdp-registry-federated` as well. It is not — re-read at
+    // `registry-b.toml:8` while implementing this, and the line has exactly the
+    // two ids above. The issue is wrong on that detail and this fixture follows
+    // the config, so nobody re-litigates it from the issue text later.
     expect(MOCK_CAPABILITIES.b.profiles).toEqual([
       'acdp-registry-core',
       'acdp-registry-discovery',
@@ -731,9 +713,14 @@ describe('demo registry profiles are ones a real registry would start with', () 
     }
   });
 
-  it('records a minimum version for every advertisable profile', () => {
-    // Otherwise the guard above silently skips any profile the table forgot.
-    for (const p of REGISTRY_ADVERTISABLE_PROFILES) expect(PROFILE_MIN_VERSION[p]).toBeDefined();
+  it('records a minimum version for EXACTLY the advertisable profiles', () => {
+    // Both directions. "Every advertisable profile has an entry" alone leaves
+    // the table widenable: adding `'acdp-consumer': '0.1.0'` was green, which is
+    // the same two-copies-that-may-disagree shape `advertisable-profiles.ts`
+    // was created to remove — this was the last un-pinned copy of the seven.
+    expect(Object.keys(PROFILE_MIN_VERSION).sort()).toEqual(
+      [...REGISTRY_ADVERTISABLE_PROFILES].sort(),
+    );
   });
 
   it('agrees with the version each profile chip already names on screen', () => {
@@ -744,13 +731,21 @@ describe('demo registry profiles are ones a real registry would start with', () 
     //
     // `PROFILE_INFO` in `registry-card.tsx` puts the version in the operator's
     // tooltip — "(RFC-ACDP-0010, acdp 0.2.0)" — so the two files are now held to
-    // each other and neither can be edited alone. Source text rather than an
-    // import because `PROFILE_INFO` is private to the component, and widening a
-    // component's public API to let a test read a constant is the wrong trade.
-    const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
+    // each other and neither can be edited alone.
+    //
+    // Read with the TYPESCRIPT COMPILER, not by importing the object and not by
+    // regex. An early version ran an unanchored, first-match-wins regex over the
+    // RAW file, so a docblock line reading `'acdp-registry-receipts': { title:
+    // 'baseline (acdp 0.1.0)' }` shadowed the real entry and let the table be
+    // lowered to match. The version after that imported the object, which
+    // required exporting it — and the export let any module mutate the table at
+    // module scope, invisible to a guard in a different test file because Vitest
+    // isolates module graphs. `profileCopyTable()` needs neither: it parses the
+    // file and fails CLOSED on anything it cannot account for.
+    const { entries: copy } = profileCopyTable();
     for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
-      const entry = new RegExp(`'${p}':\\s*\\{([\\s\\S]*?)\\}`).exec(src)?.[1];
-      expect(entry, `no PROFILE_INFO entry for ${p}`).toBeDefined();
+      const entry = copy.get(p);
+      expect(entry, `no profile copy entry for ${p}`).toBeDefined();
       // Baseline profiles carry no version marker because they ARE the 0.1.0
       // baseline; anything later says so in the copy. The default is asserted,
       // not assumed — a marker appearing on a baseline profile is drift too.
@@ -758,6 +753,38 @@ describe('demo registry profiles are ones a real registry would start with', () 
       expect(named, `${p}: tooltip says acdp ${named}, PROFILE_MIN_VERSION says ${PROFILE_MIN_VERSION[p]}`).toBe(
         PROFILE_MIN_VERSION[p],
       );
+    }
+  });
+
+  it('each tooltip names the RFC the pinned spec assigns that profile', () => {
+    // The version half of every tooltip was cross-checked; the RFC half was
+    // checked only against /RFC-ACDP-\d{4}/, so rewriting `RFC-ACDP-0012` to
+    // `RFC-ACDP-0099` in operator-facing copy left the whole suite green.
+    //
+    // `acdp-spec-pinned/registries/profiles.md` carries the exact mapping, and
+    // the three baseline profiles genuinely share RFC-ACDP-0001 §9.1 — the
+    // later ones cite their own RFC first and RFC-ACDP-0001 §9.1 second, and
+    // the tooltip names the FIRST, which is the one that describes the feature.
+    const PROFILE_RFC: Record<string, string> = {
+      'acdp-registry-core': 'RFC-ACDP-0001',
+      'acdp-registry-discovery': 'RFC-ACDP-0001',
+      'acdp-registry-federated': 'RFC-ACDP-0001',
+      'acdp-registry-receipts': 'RFC-ACDP-0010',
+      'acdp-registry-head-receipts': 'RFC-ACDP-0011',
+      'acdp-registry-transparency-log': 'RFC-ACDP-0012',
+      'acdp-registry-lifecycle': 'RFC-ACDP-0013',
+    };
+    // Pinned both ways, so the table cannot be silently narrowed to whatever
+    // the tooltips happen to say.
+    expect(new Set(Object.keys(PROFILE_RFC))).toEqual(new Set(REGISTRY_ADVERTISABLE_PROFILES));
+
+    const { entries: copy } = profileCopyTable();
+    for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
+      const title = copy.get(p);
+      expect(title, `no copy entry for ${p}`).toBeDefined();
+      const named = /(RFC-ACDP-\d{4})/.exec(title!)?.[1];
+      expect(named, `${p}: tooltip names no RFC at all`).toBeDefined();
+      expect(named, `${p}: tooltip says ${named}, spec says ${PROFILE_RFC[p]}`).toBe(PROFILE_RFC[p]);
     }
   });
 
