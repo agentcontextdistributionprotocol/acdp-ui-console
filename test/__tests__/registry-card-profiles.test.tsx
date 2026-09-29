@@ -40,7 +40,7 @@ import {
   NOT_ADVERTISABLE,
   PROFILE_GLOSS_TEXT,
 } from '../support/advertisable-profiles';
-import { contentDeclarations, contentOccurrences } from '../support/stylesheet-text';
+import * as SHEET from '../support/stylesheet-text';
 import * as PCT from '../support/profile-copy-table';
 import {
   profileCopyTable,
@@ -63,41 +63,21 @@ import {
 /**
  * Every visible string `RegistryCard` is allowed to render.
  *
- * The CLOSED SET, and the reason it is a list of labels rather than a pattern:
- * asking "does this sentence disclose a non-advertisable profile" is an
- * open-world question over English, and eight rounds of answering it with
- * patterns and probes were defeated by a coordinate or a phrasing nobody had
- * enumerated. A closed set has nothing to evade.
+ * ROUND 15's B4 moved the list itself into `test/support/profile-copy-table.ts`
+ * and left the CLAIM here. The reason is the finding: this file's copy was the
+ * only copy, `assertNoProseOutsideLabelTable` received it as a parameter, and
+ * the new supply guard needed it too — so adding two entries HERE widened the
+ * source walk and the render walk in one edit, which is what got
+ * `acdp-consumer advertised` onto the card with 975/975 green. One
+ * hand-written list, pinned below in both membership and SHAPE.
  *
- * THE SCOPE, corrected in round 10: this list bounds the string LITERALS that
- * appear syntactically in JSX child positions, plus the `JsxText`. It does not
- * bound "every string in the file" — that is what it claimed, and a string
- * reaching the screen through an identifier or a call is invisible to the
- * source walk. The RENDERED closed world further down this file is what bounds
- * the strings, by asking what is on screen rather than how it got there.
- *
- * Adding an entry is the review step. It should be a label a reviewer can point
- * to on the rendered card, not a sentence about a profile.
+ * The reason it is a list of labels rather than a pattern: asking "does this
+ * sentence disclose a non-advertisable profile" is an open-world question over
+ * English, and eight rounds of answering it with patterns and probes were
+ * defeated by a coordinate or a phrasing nobody had enumerated. A closed set
+ * has nothing to evade.
  */
-const CARD_LABELS = [
-  '● healthy',
-  'Event count',
-  'Base URL',
-  '—',
-  'Last seen',
-  'ACDP version',
-  'Algorithms',
-  // Compared TRIMMED, because JSX text nodes carry the surrounding source
-  // indentation. So the join separator `', '` and the unit `' KB'` appear here
-  // without their padding.
-  ',',
-  'Profiles',
-  'Max payload',
-  'KB',
-  'Anon reads',
-  'enabled',
-  'disabled',
-] as const as readonly string[];
+const CARD_LABELS: readonly string[] = PCT.CARD_LABELS;
 
 afterEach(cleanup);
 
@@ -463,6 +443,65 @@ describe('the dead tooltip copy is gone', () => {
     }
   });
 
+  it('EVERY licensing list is pinned and shaped, not just the one', () => {
+    // ROUND 15's B1. `assertEveryStringLiteralIsLicensed` licenses from six
+    // sets. Round 14 pinned ONE of them (`CARD_LABELS`) and wrote in three
+    // docblocks that the supply was bounded. `STRUCTURAL_LITERALS` and
+    // `INLINE_COPY_LITERALS` had neither a pin nor a shape rule and were read
+    // by no test at all — so the measured escape was two edits, one of them
+    // "add the sentence to the allow-list":
+    //
+    //   const OPERATOR_NOTE = 'Any profile id may be advertised here; the
+    //     console does not check them.';
+    //   {registry.authority.length > 40 && (<span className="metric-val">
+    //     {OPERATOR_NOTE}</span>)}
+    //
+    // 975/975 green, typecheck clean, lint clean. An allow-list that licenses
+    // the thing it is defending against is not a bound, and "pinned exactly"
+    // was true of one sixth of the licensing surface.
+    expect([...PCT.STRUCTURAL_LITERALS]).toEqual([
+      'use client',
+      'card',
+      'card-header',
+      'card-body',
+      'metric-row',
+      'metric-name',
+      'metric-val',
+      'did',
+      'chip',
+      'chip ok',
+      'flex',
+      'flex-end',
+      'center',
+      'column',
+      'wrap',
+      'var(--text)',
+      'var(--muted)',
+      'ok',
+      'neutral',
+      'complete',
+      'pub',
+      ', ',
+    ]);
+    expect([...PCT.INLINE_COPY_LITERALS]).toEqual(['—', 'enabled', 'disabled']);
+    // …and the SHAPE, which is the half that bounds a FUTURE entry rather than
+    // the current ones. A structural token is a class name, a CSS value or a
+    // tone: one or two words, short, and never anything id-shaped. A sentence
+    // cannot satisfy this however it is phrased.
+    for (const token of [...PCT.STRUCTURAL_LITERALS, ...PCT.INLINE_COPY_LITERALS]) {
+      expect(token.trim().split(/\s+/).length, `\`${token}\` is prose, not a token`).toBeLessThan(3);
+      expect(token.length, `\`${token}\` is too long to be a structural token`).toBeLessThanOrEqual(16);
+      expect(token, `\`${token}\` is profile-id-shaped`).not.toMatch(PCT.PROFILE_ID_SHAPE);
+    }
+    // The gloss table and the id mirror are the other two sets, and both are
+    // pinned elsewhere in this file ("the gloss an operator reads…" and "has
+    // copy for EXACTLY the advertisable seven"). The import specifiers are the
+    // sixth, pinned by `assertModuleShape`'s own allow-list test below. Stated
+    // here because "which sets license this card" is the question round 15
+    // found nobody had answered in one place.
+    expect(Object.keys(ALLOWED_IMPORTS).length, 'the import allow-list changed size').toBe(4);
+  });
+
   it('the label allow-list is a list of LABELS, not a place to put a sentence', () => {
     // ROUND 13's N2. `CARD_LABELS` is what licenses every string this card may
     // render in a child position, and nothing pinned it: adding one entry
@@ -486,11 +525,18 @@ describe('the dead tooltip copy is gone', () => {
       'disabled',
     ]);
     // …and bounded in SHAPE, which is the half that survives someone editing
-    // the list above. A label is at most two words; prose is not. This is what
-    // makes the allow-list structurally unable to license a sentence, rather
-    // than merely currently not licensing one.
+    // the list above. A label is at most two words; prose is not.
+    //
+    // ROUND 15's B4: two words is not enough on its own. `acdp-consumer
+    // advertised` is two words, and adding it to this list put the id #95
+    // deleted into visible body text with 975/975 green — because this list
+    // licenses BOTH the source walk and the rendered closed world. So the
+    // second rule is the one that matters: no label may be profile-id-shaped.
+    // The ids themselves are licensed by the mirror, not by this list.
     for (const label of CARD_LABELS) {
       expect(label.trim().split(/\s+/).length, `\`${label}\` reads as prose, not a label`).toBeLessThan(3);
+      expect(label, `\`${label}\` names a profile id`).not.toMatch(PCT.PROFILE_ID_SHAPE);
+      expect(label.length, `\`${label}\` is too long to be a label`).toBeLessThanOrEqual(16);
     }
   });
 
@@ -502,20 +548,135 @@ describe('the dead tooltip copy is gone', () => {
     // world and the source closed world can both be green while the card names
     // an id no registry may advertise.
     //
-    // Provenance of the bound is in `test/support/stylesheet-text.ts`. Here:
-    // every declaration is empty, and the scanner is neither over- nor
-    // under-matching.
-    const decls = contentDeclarations();
-    for (const value of decls) {
-      expect(value, `a CSS rule generates the text ${value}`).toMatch(/^(''|"")$/);
+    // ROUND 15's B5: the previous version of this read one hardcoded path
+    // under a docblock asserting "there is exactly one stylesheet in this
+    // app". Nothing measured that. A new `app/profile-chips.css` carrying
+    // exactly the rule above, imported from `app/layout.tsx`, left 975/975
+    // green. So the SET is enumerated first and pinned, and every member of it
+    // is scanned — the bound is over the app's stylesheets, not over a path
+    // someone remembered to type.
+    const sheets = SHEET.stylesheetPaths();
+    expect(sheets, 'the app has gained a stylesheet that nothing here bounds').toEqual(['app/globals.css']);
+
+    // The union of what the repository HOLDS and what the app LOADS. The two
+    // are not the same set, and the difference is not hypothetical: the first
+    // run of this enumeration turned up `@xyflow/react/dist/style.css`, 625
+    // lines of vendor CSS that no walk of this repository can reach. Scanning
+    // it is the answer; allow-listing it by name would have been the defect
+    // this round exists to remove, one level up.
+    const universe = SHEET.stylesheetUniverse();
+    expect(universe.map((s) => s.label), 'the CSS universe is not both enumerations').toEqual([
+      'app/globals.css',
+      '@xyflow/react/dist/style.css',
+    ]);
+    let total = 0;
+    for (const { label, css } of universe) {
+      const decls = SHEET.contentDeclarations(css);
+      for (const value of decls) {
+        expect(value, `${label} generates the text ${value}`).toMatch(/^(''|"")$/);
+      }
+      // Per sheet: the scanner is neither over- nor under-matching. A scanner
+      // that swallowed `justify-content` would find eight more in globals.css.
+      expect(decls.length, `the scanner disagrees with an independent count in ${label}`).toBe(
+        SHEET.contentOccurrences(css),
+      );
+      // …and no sheet reaches a sheet this enumeration has not read.
+      expect(SHEET.cssAtImports(css), `${label} pulls in a stylesheet nothing here reads`).toEqual([]);
+      total += decls.length;
     }
-    // Anti-vacuity, two ways. A scanner that matched nothing would pass the loop
-    // above; one that swallowed `justify-content` would find eight more.
-    expect(decls.length, 'the stylesheet scanner found no content declarations').toBeGreaterThan(1);
-    expect(decls.length, 'the scanner disagrees with an independent count').toBe(contentOccurrences());
+    // Anti-vacuity for the walk AND for the scan: an enumeration that returned
+    // nothing, or a regex that matched nothing, would satisfy every loop above.
+    expect(total, 'the stylesheet scanner found no content declarations at all').toBeGreaterThan(1);
     // …and the trap itself, stated as a case rather than as a comment.
-    expect(contentDeclarations('.a { justify-content: center; }')).toEqual([]);
-    expect(contentDeclarations(".a::after { content: 'x'; }")).toEqual(["'x'"]);
+    expect(SHEET.contentDeclarations('.a { justify-content: center; }')).toEqual([]);
+    expect(SHEET.contentDeclarations(".a::after { content: 'x'; }")).toEqual(["'x'"]);
+
+    // ROUND 15's N1: the emptiness rule above was the ONLY layer on this
+    // channel, and gutting it to `expect(typeof value).toBe('string')` was a
+    // green edit. This is the second half — a PIN on the exact rule set, which
+    // fails when a declaration is added or moved without reading its value's
+    // shape, where the rule above fails on the value without reading the
+    // selector. Round 15's measured escape is red under either one alone.
+    expect(
+      universe.flatMap(({ css }) => SHEET.contentRules(css)),
+      'the set of text-generating CSS rules has changed',
+    ).toEqual([
+      { selector: '.kpi-card::before', value: "''" },
+      { selector: '.event-row::before', value: "''" },
+    ]);
+    // GUARDS THE GUARD: the selector half is not satisfied by any declaration.
+    expect(SHEET.contentRules(".chip::after { content: ' (x)'; }")).toEqual([
+      { selector: '.chip::after', value: "' (x)'" },
+    ]);
+    expect(SHEET.contentRules('.a { justify-content: center; }')).toEqual([]);
+  });
+
+  it('no OTHER channel can put a character on this card either', () => {
+    // The three remaining ways past both closed worlds, from the same round-15
+    // finding. Each is pinned as an empty or exact set rather than described.
+    const sources = SHEET.renderedSourcePaths();
+    // Anti-vacuity first: every assertion below is over this list, so a walk
+    // that silently returned nothing would make all of them pass.
+    expect(sources.length, 'the source walk found nothing to scan').toBeGreaterThan(40);
+    expect(sources, 'the walk did not reach the card itself').toContain('components/registries/registry-card.tsx');
+    expect(sources, 'the walk did not reach the layout').toContain('app/layout.tsx');
+
+    // (2) Which stylesheets the app LOADS, which is not the set the repository
+    // HOLDS. Pinned exactly, so a new import is a red test; the test above
+    // then reads and scans every member, so a pinned vendor sheet is measured
+    // rather than trusted.
+    expect(SHEET.cssImportSpecifiers(sources), 'the app loads a stylesheet nothing scans').toEqual([
+      { file: 'app/layout.tsx', specifier: './globals.css' },
+      { file: 'components/runs/lineage-dag.tsx', specifier: '@xyflow/react/dist/style.css' },
+    ]);
+    // Resolution is part of the bound: a specifier that cannot be read must be
+    // loud, because a skipped sheet and a clean sheet look identical.
+    expect(SHEET.loadedStylesheets(sources).map((s) => s.specifier)).toEqual([
+      './globals.css',
+      '@xyflow/react/dist/style.css',
+    ]);
+    // …and a loaded sheet inside the repository is labelled by the same
+    // repo-relative path the repository walk uses, so the union counts it once.
+    expect(SHEET.loadedStylesheets(sources).map((s) => s.label)).toEqual([
+      'app/globals.css',
+      '@xyflow/react/dist/style.css',
+    ]);
+    expect(() =>
+      SHEET.readLoadedStylesheet({ file: 'app/layout.tsx', specifier: './not-a-real-sheet.css' }),
+    ).toThrow(/must be scanned, not skipped/);
+    expect(() =>
+      SHEET.readLoadedStylesheet({ file: 'app/layout.tsx', specifier: 'no-such-pkg/x.css' }),
+    ).toThrow(/must be scanned, not skipped/);
+
+    // (4) and (5) A `<style>` element, and `dangerouslySetInnerHTML` — refused
+    // everywhere under app/, components/ and lib/, not only inside the card:
+    // an ancestor injecting into the card's subtree reaches the same pixels.
+    expect(SHEET.htmlInjectionSites(sources), 'a component injects raw HTML or CSS').toEqual([]);
+
+    // The spellings scanned for are themselves a list, so they are pinned too.
+    expect(SHEET.INJECTION_SPELLINGS.map((s) => s.name)).toEqual([
+      '<style> element',
+      'dangerouslySetInnerHTML prop',
+    ]);
+
+    // GUARDS THE GUARD, both directions, against a synthetic file list. The
+    // trailing `=`/`:` is what separates a prop from a word, and two files in
+    // `components/` genuinely name `dangerouslySetInnerHTML` in a comment
+    // saying they do not use it — so a scan without it reports them and a scan
+    // that over-corrects reports nothing. Direction one: real usage is caught.
+    const hits = (src: string) =>
+      SHEET.INJECTION_SPELLINGS.filter((s) => s.re.test(src)).map((s) => s.name);
+    expect(hits('return <style>{css}</style>;')).toEqual(['<style> element']);
+    expect(hits('<style jsx>{`.a{}`}</style>')).toEqual(['<style> element']);
+    expect(hits('<div dangerouslySetInnerHTML={{ __html: x }} />')).toEqual(['dangerouslySetInnerHTML prop']);
+    expect(hits("createElement('div', { dangerouslySetInnerHTML: h })")).toEqual([
+      'dangerouslySetInnerHTML prop',
+    ]);
+    // Direction two: prose is not usage.
+    expect(hits('// A text child, so React escapes it. No dangerouslySetInnerHTML.')).toEqual([]);
+    expect(hits('// never reached through dangerouslySetInnerHTML')).toEqual([]);
+    // …and the CSS-import scan is likewise not fooled by, nor blind to, either.
+    expect(SHEET.cssImportSpecifiers.length, 'cssImportSpecifiers lost its file argument').toBe(1);
   });
 
   it('contains NOTHING at module scope but its imports, the table and the component', () => {
@@ -2228,6 +2389,27 @@ describe('every source guard is exercised against a subject it must reject', () 
             "<span key={p} className={p === 'acdp-registry-core' ? 'chip ok' : 'chip'} title={info?.title}>",
           ]),
         },
+        {
+          // ROUND 15's B3, verbatim. The receiver-text comparison did not see
+          // this as a `capabilities.profiles.map`, so it was not counted as a
+          // second one — and a second per-profile surface rendering gloss copy
+          // as visible body text left 975/975 green.
+          label: 'a map reached through .filter()',
+          source: mutate([
+            '{capabilities.profiles.map((p) => {',
+            '{capabilities.profiles.filter(() => true).map((p) => {',
+          ]),
+        },
+        {
+          // ROUND 15's B2. Nothing inside the row changes; every chip
+          // disappears on any deployment whose authority is 40 characters or
+          // longer.
+          label: 'the profiles row behind a derived-coordinate gate',
+          source: mutate([
+            '{capabilities.profiles.map((p) => {',
+            '{registry.authority.length < 40 && capabilities.profiles.map((p) => {',
+          ]),
+        },
       ],
     },
     assertNoProseOutsideLabelTable: {
@@ -2265,6 +2447,28 @@ describe('every source guard is exercised against a subject it must reject', () 
           source: mutate([CHIP_CHILD, '                      {`${p} — see the profile notes`}\n                    </span>']),
         },
         { label: 'a file with almost no literals (vacuity)', source: 'export const X = 1;' },
+        {
+          // ROUND 15's B4: JSX text is body copy and is not a string literal,
+          // so neither source walk read it. This exact row — behind an
+          // `authority.length > 40` gate — named `acdp-consumer` on the card
+          // with 975/975 green.
+          label: 'an unlicensed JSX text',
+          source: mutate([
+            '<span className="metric-name">Profiles</span>',
+            '<span className="metric-name">Profiles advertised by acdp-consumer</span>',
+          ]),
+        },
+        {
+          // …and that arm's own anti-vacuity floor. Three labels replaced by
+          // `{null}`, which adds no literal, leaves 7 of the 10 JSX texts, and
+          // so reaches the floor rather than the licence check.
+          label: 'a card that has stopped rendering its labels as JSX text',
+          source: mutate(
+            ['<span className="metric-name">Event count</span>', '<span className="metric-name">{null}</span>'],
+            ['<span className="metric-name">Base URL</span>', '<span className="metric-name">{null}</span>'],
+            ['<span className="metric-name">Last seen</span>', '<span className="metric-name">{null}</span>'],
+          ),
+        },
       ],
     },
     assertNoForeignProfileId: {
@@ -2279,6 +2483,15 @@ describe('every source guard is exercised against a subject it must reject', () 
             'export const X = `see ${a} acdp-log-witness notes`;',
         },
         { label: 'a file with almost no literals (vacuity)', source: 'export const X = 1;' },
+        {
+          // The JsxText arm's own anti-vacuity. A count over literals alone was
+          // satisfied by a file with no JSX in it at all, so the arm round 15
+          // added could have been deleted the day after with that pin green.
+          label: 'a file with literals but no JSX text (vacuity)',
+          source:
+            "const a='one'; const b='two'; const c='three'; const d='four'; const e='five';\n" +
+            'export function R() { return <span className="chip" />; }',
+        },
       ],
     },
   };

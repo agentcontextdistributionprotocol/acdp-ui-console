@@ -113,8 +113,24 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     callback is denied the index parameter and `info` may only ever be
  *     `glossFor(p)`, so the gloss is a function of the profile id at every
  *     index and every field value, with nothing enumerated. It now also
- *     refuses a SECOND `capabilities.profiles.map(...)` — it bound only the
- *     last one in source order, and an earlier one carrying `i > 2` was green.
+ *     refuses a SECOND `.map(...)` of ANY receiver — it bound only the last
+ *     `capabilities.profiles.map` in source order, and an earlier one carrying
+ *     `i > 2` was green; then it recognised a second map by comparing receiver
+ *     TEXT, and `capabilities.profiles.filter(() => true).map(...)` carrying
+ *     `i > 8` was green too (round 15's B3, 975/975). The enumeration is
+ *     inverted now: every `.map` in the file is collected and each one's
+ *     receiver must be exactly `capabilities.profiles`, because the set of
+ *     spellings that reach an array is open and the set of `.map` calls in one
+ *     file is not.
+ *   - `assertGlossIsPureOfId()` also bounds THE PATH FROM THIS COMPONENT'S
+ *     RETURN DOWN TO THAT MAP: the only condition allowed to stand between them
+ *     is `capabilities`. Round 15's B2 wrapped the whole Profiles row in
+ *     `{registry.authority.length < 40 && ( … )}` — 975/975 green, typecheck
+ *     clean, and every chip, id and gloss gone for any registry whose authority
+ *     name is forty characters or longer, which is a production deployment name
+ *     rather than a contrivance. Nothing inside the row had changed, so every
+ *     guard that reads the row was satisfied; the escape was in the JSX above
+ *     it, which nothing was looking at.
  *   - `assertNoProseOutsideLabelTable()` bounds the STRING LITERALS IN JSX
  *     CHILD POSITIONS and the `JsxText`, read from the source rather than the
  *     DOM. It was described here as bounding "the SET OF STRINGS this card may
@@ -122,20 +138,44 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     identifier or a function call is invisible to it, and round 9's gate got
  *     `acdp-log-witness` onto every card that way, twice.
  *   - `assertEveryStringLiteralIsLicensed()` bounds THE SUPPLY. Every string
- *     literal in this file must be one of: an allow-listed import specifier, one
- *     of the seven ids, one of the seven glosses hand-copied under `test/`, or a
- *     structural token (a class name, a CSS variable, a `Badge` variant). A
- *     template literal with substitutions is refused outright. This is the bound
- *     that does not care HOW a string reaches the screen — a sentence has to be
- *     spelled somewhere, so an identifier, an attribute, a call and a gated
- *     branch are all closed by the same check. It is also what makes the gloss
- *     text itself bounded: every other guard licensed the gloss by reading it
- *     off this card.
+ *     literal AND every piece of `JsxText` in this file must be one of FIVE
+ *     licensed sets: an allow-listed import specifier, one of the seven ids, one
+ *     of the seven glosses hand-copied under `test/`, a structural token
+ *     (`STRUCTURAL_LITERALS` — a class name, a CSS variable, a `Badge`
+ *     variant), or an inline copy token (`INLINE_COPY_LITERALS` — `—`,
+ *     `enabled`, `disabled`). A template literal with substitutions is refused
+ *     outright. This is the bound that does not care HOW a string reaches the
+ *     screen: an identifier, an attribute, a call and a gated branch are all
+ *     closed by the same check. It is also what makes the gloss text itself
+ *     bounded, since every other guard licensed the gloss by reading it off
+ *     this card.
+ *
+ *     "A sentence has to be spelled somewhere" is how this bullet used to
+ *     justify itself, and round 15 falsified it twice over — both halves being
+ *     the same defect, an enumeration under a closed-set sentence.
+ *
+ *     B4: `JsxText` is source, is a sentence, and is not a string literal.
+ *     Neither this guard nor `assertNoForeignProfileId` visited that node kind,
+ *     so `<span className="metric-val">acdp-consumer advertised</span>` was
+ *     975/975 green. Both walks visit `JsxText` now, each with its own
+ *     anti-vacuity floor so a walk that stops finding any is red rather than
+ *     quiet.
+ *
+ *     B1: a sentence spelled in a licensed SET is licensed. Two of the five
+ *     sets had no pin and no shape rule — `grep` found `STRUCTURAL_LITERALS`
+ *     and `INLINE_COPY_LITERALS` read by nothing but their own module — so
+ *     appending 'Any profile id may be advertised here; the console does not
+ *     check them.' to one of them and rendering it from the component was
+ *     975/975 green, where the component edit alone was 11 red. All five sets
+ *     are now pinned exactly and bounded in SHAPE (under three words, at most
+ *     sixteen characters, and no entry may match `PROFILE_ID_SHAPE`), which is
+ *     the half that survives the next person editing a list.
  *   - `assertGlossChokePoint()`, `assertGlossIsGated()` and
  *     `assertNoForeignProfileId()` bound, respectively, the ONE expression that
  *     may reach a rendered `title`, both of `glossFor`'s statements, and any
- *     profile-id-shaped string naming an id outside the seven (case-insensitively
- *     matched, exactly compared).
+ *     profile-id-shaped string literal, template literal or piece of `JsxText`
+ *     naming an id outside the seven (case-insensitively matched, compared
+ *     exactly as written).
  *   - the RENDERED closed world (`registry-card-profiles.test.tsx`) is what
  *     bounds what is on the screen. Over a fixture matrix, every text node and
  *     every announced attribute must be derivable FROM THE FIXTURE — so it asks
@@ -164,9 +204,20 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     and round 11 falsified it: suppression has a SECOND home, the map
  *     callback's return, and a `capabilities.limits.max_search_limit > 500` gate
  *     dropped every tooltip on every affected registry with `glossFor`
- *     untouched and 963 tests green. It now rests on that guard AND on
- *     `assertGlossIsPureOfId()` pinning the callback to two statements whose
- *     second returns one JSX element with a pinned attribute set.
+ *     untouched and 963 tests green. So the next version named two homes — that
+ *     guard, plus `assertGlossIsPureOfId()` pinning the callback to two
+ *     statements whose second returns one JSX element with a pinned attribute
+ *     set — and round 15's B2 falsified THAT by finding a THIRD: the JSX above
+ *     the callback. A row that is never rendered needs no gate inside it.
+ *
+ *     Counting homes is the error the three rounds have in common, so this no
+ *     longer counts them. Suppression is bounded by a PATH: `glossFor`'s two
+ *     statements, the callback's two statements, and — since B2 — every
+ *     condition on the ancestry from `RegistryCard`'s return down to the map,
+ *     which may only be `capabilities`. A conditional anywhere on that path,
+ *     however spelled, is refused rather than recognised. What remains outside
+ *     it is genuinely outside this file: `glossFor` reading a global, and the
+ *     CSS channel, which `test/support/stylesheet-text.ts` bounds separately.
  *   - COMMENTS are exempt from the source walks — a guard that banned discussing
  *     the problem would be uncomfortable enough to get deleted — and a string
  *     can still be DERIVED at runtime from licensed parts (a `.slice`, a
@@ -180,6 +231,15 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     coordinate-gated escapes past both in the same round. They are two partial
  *     bounds that overlap, not a cover, and each new round has closed a hole by
  *     widening what a guard is ABOUT rather than by adding a case to it.
+ *   - NEITHER WORLD CAN SEE CSS, and round 15's B5 is the measurement: a second
+ *     stylesheet carrying `.chip::after { content: ' (see acdp-consumer)'; }`,
+ *     imported from `app/layout.tsx`, put that id on every chip on every card
+ *     in every real browser at 975/975 green. Generated content is not in this
+ *     file, so no source walk sees it, and `textContent` never includes it in
+ *     any browser, so no DOM walk sees it either. That channel is bounded in
+ *     `test/support/stylesheet-text.ts`, over the union of the stylesheets this
+ *     repository HOLDS and the ones the app LOADS — the second set is larger,
+ *     and finding out that it was larger is what the enumeration was for.
  */
 const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },

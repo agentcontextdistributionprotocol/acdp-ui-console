@@ -225,13 +225,21 @@ export function CHIP_ATTRIBUTES(param: string): Record<string, string> {
  * ("ratified two invalid ids for whoever read it next") back through the very
  * surface #95 is about, in the tooltip #95 rewrote.
  *
- * It is now case-INSENSITIVE, accepts `_` as the separator, and the match is
- * lower-cased before comparison — so a spelling the allow-list does not hold
- * EXACTLY is refused whatever case it arrives in. A profile id is
- * case-sensitive upstream (`config.rs` compares raw `&str`), which is the
- * argument FOR matching loosely and comparing strictly: `ACDP-consumer` is not
- * a valid id at all, and a string that merely LOOKS like one is exactly what
- * misleads a reader.
+ * It is now case-INSENSITIVE and accepts `_` as the separator, and the match is
+ * compared to the allow-list EXACTLY AS WRITTEN — `allowed.has(m[0])` on the
+ * raw match, with no normalisation of any kind. Match loosely, compare
+ * strictly: a spelling the allow-list does not hold character for character is
+ * refused whatever case it arrives in.
+ *
+ * ROUND 15's N4 — THIS PARAGRAPH SAID THE OPPOSITE OF THE CODE. It read "the
+ * match is lower-cased before comparison", which would have made the guard
+ * ACCEPT `ACDP-REGISTRY-CORE` and contradicted the very next clause. The code
+ * was right and the sentence was wrong, which is the more dangerous of the two
+ * directions: the next reader reconciles a guard against its docblock, so a
+ * sentence describing a weaker guard is an invitation to "simplify" the real one
+ * down to it. A profile id is case-sensitive upstream (`config.rs` compares raw
+ * `&str`), so `ACDP-consumer` is not a valid id at all, and a string that
+ * merely LOOKS like one is exactly what misleads a reader.
  *
  * THE SEGMENT AFTER THE SEPARATOR MUST START WITH A LETTER, and that is load
  * bearing rather than tidy. Dropping case sensitivity made `RFC-ACDP-0001`
@@ -241,8 +249,9 @@ export function CHIP_ATTRIBUTES(param: string): Record<string, string> {
  * and every version marker is `acdp <semver>`. Requiring a letter separates
  * them without a denylist, and a citation is not a thing anyone can mistake for
  * an id anyway. `acdp_version` — a real property name on the capabilities
- * payload — would match, which is another reason this walk reads only string
- * LITERALS and never identifiers.
+ * payload — would match, which is why the walks that use this pattern read the
+ * nodes that carry TEXT (string literals, template literals, and since round
+ * 16's B4, `JsxText`) and never identifiers or property names.
  */
 export const PROFILE_ID_SHAPE = /acdp[-_][a-z][a-z0-9_-]*/gi;
 
@@ -819,6 +828,27 @@ export function assertGlossIsGated(source?: string): void {
  * closes anything if the guard is looking at every expression of that shape,
  * and a guard that silently picks one of several is an enumeration of one.
  *
+ * ── ROUND 15's B3: "MULTIPLICITY" HELD ONLY FOR ONE SPELLING ─────────
+ *
+ * The sentence above was true of the guard and false of the claim, because the
+ * collector recognised a second map by comparing its RECEIVER TEXT to
+ * `capabilities.profiles`. `capabilities.profiles.filter(() => true).map(...)`
+ * has receiver text `capabilities.profiles.filter(()=>true)`, so it was not a
+ * second map — it was not a map at all. Measured: that call, carrying
+ * `{i > 8 ? glossFor(q)?.title : null}` as visible body text, left 975/975
+ * green, `tsc` clean and `eslint` clean, restoring round 7/8's index-gated
+ * per-profile copy surface through a guard whose own docblock claimed to have
+ * closed it. (`i > 8` because the closed world's widest shape carries eight
+ * profiles, so no fixture renders the branch.)
+ *
+ * A receiver spelling is an open set: `.filter()`, `.slice()`, `.toSorted()`,
+ * `[...capabilities.profiles]`, a local alias. So the enumeration is INVERTED,
+ * the same move every other guard in this file has had to make: collect EVERY
+ * `.map(...)` call in the file, whatever its receiver, and require each one's
+ * receiver to be exactly `capabilities.profiles`. The closed side is now "there
+ * is one map and it is over the profiles array", not "there is one call whose
+ * receiver I recognised".
+ *
  * ── What it does NOT cover ───────────────────────────────────────────
  *
  * It says nothing about what `glossFor` itself does, and nothing about the
@@ -855,19 +885,48 @@ export function assertGlossIsPureOfId(source?: string): void {
   // `copyTableNode` in this same file already refuses a second `PROFILE_INFO`
   // initializer for the same reason; this is that discipline, applied where it
   // was missing.
+  // EVERY `.map` in the file, not every `capabilities.profiles.map`.
+  //
+  // ROUND 15's B3. The collector compared the receiver's TEXT to
+  // `capabilities.profiles`, so `capabilities.profiles.filter(() => true).map(…)`
+  // had receiver text `capabilities.profiles.filter(()=>true)` and was not
+  // counted — and a second, unbounded per-profile surface rendering
+  // `i > 8 ? glossFor(q)?.title : null` as visible body text left 975/975
+  // green. That falsified this guard's own argument, quoted from the docblock
+  // above: "a guard that silently picks one of several is an enumeration of
+  // one".
+  //
+  // An exact-text match is an enumeration of spellings — `.filter().map()`,
+  // `.slice().map()`, `.toReversed().map()`, `[...profiles].map()` — so the
+  // collection is inverted the way the attribute lists were: collect ALL of
+  // them and require the file to contain exactly one, whose receiver is the
+  // pinned spelling. The component has one; a second `.map` of any kind over
+  // anything is a construct a reviewer should see.
   const mapCalls: ts.CallExpression[] = [];
   const findMap = (node: ts.Node): void => {
     if (
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.name.getText(sf) === 'map' &&
-      node.expression.expression.getText(sf).replace(/\s+/g, '') === 'capabilities.profiles'
+      node.expression.name.getText(sf) === 'map'
     ) {
       mapCalls.push(node);
     }
     ts.forEachChild(node, findMap);
   };
   findMap(sf);
+  for (const call of mapCalls) {
+    const receiver = (call.expression as ts.PropertyAccessExpression).expression
+      .getText(sf)
+      .replace(/\s+/g, '');
+    if (receiver !== 'capabilities.profiles') {
+      fail(
+        `calls \`${receiver.slice(0, 40)}.map(...)\`, and the only \`.map\` this component may ` +
+          'contain is `capabilities.profiles.map(...)`. A second one is a second, unbounded place ' +
+          'to render per-profile copy — and comparing the RECEIVER TEXT let ' +
+          '`capabilities.profiles.filter(() => true).map(...)` past this check with every guard green',
+      );
+    }
+  }
   if (mapCalls.length === 0) {
     fail('no `capabilities.profiles.map(...)` found — this guard lost its subject');
   }
@@ -878,6 +937,49 @@ export function assertGlossIsPureOfId(source?: string): void {
     );
   }
   const call: ts.CallExpression = mapCalls[0];
+
+  // ── SUPPRESSION'S THIRD HOME: the JSX ABOVE the callback ─────────────
+  //
+  // ROUND 15's B2. Round 10 pinned `glossFor`'s two statements and round 11
+  // pinned the callback's two statements, and the docblocks then said
+  // suppression "rests on that guard AND on assertGlossIsPureOfId". It does
+  // not. Wrapping the whole Profiles row in
+  //
+  //   {registry.authority.length < 40 && ( …the row, unchanged… )}
+  //
+  // left 975/975 green, typecheck clean, and dropped every chip, every profile
+  // id and every gloss for any registry whose authority is forty characters or
+  // longer — a real deployment name, not a contrivance. Every guard was
+  // satisfied because nothing INSIDE the row had changed: one `title`, an
+  // untouched `glossFor`, one map with the pinned callback and attributes.
+  //
+  // The escape gates on a DERIVED coordinate (`authority.length`), which is why
+  // the rendered closed world cannot see it either: its "every field varies"
+  // detector walks JSON leaves, and no leaf changes.
+  //
+  // So the PATH is bounded, not another coordinate. Between the map and the
+  // component's return there may be exactly one condition, and it is the one
+  // this component is written with: `{capabilities && …}`. Anything else — a
+  // ternary, a second `&&`, an early `return null` above it — fails here.
+  const CONDITION_ALLOW_LIST = ['capabilities'];
+  for (let n: ts.Node | undefined = call; n; n = n.parent) {
+    if (ts.isFunctionDeclaration(n)) break;
+    let gate: ts.Expression | undefined;
+    if (ts.isConditionalExpression(n)) gate = n.condition;
+    else if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      gate = n.left;
+    } else if (ts.isIfStatement(n)) gate = n.expression;
+    if (!gate) continue;
+    const text = gate.getText(sf).replace(/\s+/g, '');
+    if (!CONDITION_ALLOW_LIST.includes(text)) {
+      fail(
+        `renders the profiles row behind the condition \`${text.slice(0, 50)}\`, and the only ` +
+          `condition allowed above it is \`${CONDITION_ALLOW_LIST.join('`, `')}\`. A gate here ` +
+          'suppresses every chip, every id and every gloss on whichever deployments fail it, ' +
+          'with nothing inside the row changed and every other guard in this file satisfied',
+      );
+    }
+  }
 
   const cb = call.arguments[0];
   if (!cb || (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb))) {
@@ -1043,14 +1145,23 @@ export function assertGlossIsPureOfId(source?: string): void {
  *
  * ── Scope, stated narrowly ───────────────────────────────────────────
  *
- * String literals, no-substitution template literals, and the literal SPANS of
- * a template with substitutions. Comments are exempt: this file's own
- * docblocks name the forbidden ids constantly, and so do the component's, and
- * a guard that banned discussing the problem would be uncomfortable enough to
- * get deleted. That exemption is also the residual: a comment cannot render,
- * so nothing is lost, but `// eslint` games aside, a maintainer who wants to
- * smuggle a string past this can still assemble it from parts — which is what
- * the rendered closed world is for.
+ * String literals, no-substitution template literals, the literal SPANS of a
+ * template with substitutions, AND `JsxText`.
+ *
+ * ROUND 15's B4: `JsxText` was not read, and the headline above says "in the
+ * component's SOURCE". JSX text IS source and is not a string literal —
+ * `<span className="metric-val">acdp-consumer advertised</span>` is a `JsxText`
+ * node — so the one channel this file calls "the loudest there is" was the one
+ * channel this walk did not visit. Measured: that row, behind an
+ * `authority.length > 40` gate, left 975/975 green while the card named
+ * `acdp-consumer` in visible body text, which is #95's stated harm exactly.
+ *
+ * Comments are exempt: this file's own docblocks name the forbidden ids
+ * constantly, and so do the component's, and a guard that banned discussing the
+ * problem would be uncomfortable enough to get deleted. That exemption is also
+ * the residual: a comment cannot render, so nothing is lost, but a maintainer
+ * who wants to smuggle a string past this can still assemble it from parts —
+ * which is what the rendered closed world is for.
  */
 export function assertNoForeignProfileId(source?: string): void {
   const sf = sourceFile(source);
@@ -1075,24 +1186,38 @@ export function assertNoForeignProfileId(source?: string): void {
     }
   };
 
+  let jsxTexts = 0;
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       check(node.text, node);
     } else if (ts.isTemplateExpression(node)) {
       check(node.head.text, node);
       for (const span of node.templateSpans) check(span.literal.text, node);
+    } else if (ts.isJsxText(node)) {
+      if (node.text.trim() !== '') {
+        jsxTexts += 1;
+        check(node.text, node);
+      }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
 
-  // ANTI-VACUITY. A walk that stopped finding literals would pass on anything.
-  // The component demonstrably contains string literals — every `className` is
-  // one — so finding none means this is looking at the wrong nodes.
+  // ANTI-VACUITY, one pin per BRANCH of the walk rather than one for the walk.
+  // A count over literals alone was satisfied by a file with no JSX at all, so
+  // the `JsxText` arm added in round 15 could have been deleted the day after
+  // it was written with this check still green. The component demonstrably has
+  // both — every `className` is a literal, every metric label is JSX text.
   if (scanned < 5) {
     fail(
-      `found only ${scanned} string literals in the component — it has many more, so this walk ` +
+      `found only ${scanned} strings in the component — it has many more, so this walk ` +
         'is looking at the wrong nodes and is passing vacuously',
+    );
+  }
+  if (jsxTexts < 5) {
+    fail(
+      `found only ${jsxTexts} pieces of JSX text in the component — it renders at least eight ` +
+        'labels as JSX text, so this walk has stopped visiting them',
     );
   }
 }
@@ -1106,7 +1231,7 @@ export function assertNoForeignProfileId(source?: string): void {
  * cost: every other string in this file is either an import specifier, a
  * profile id, a gloss, or a label, and each of those has its own pinned set.
  */
-const STRUCTURAL_LITERALS = [
+export const STRUCTURAL_LITERALS = [
   'use client',
   // `className` values.
   'card',
@@ -1139,7 +1264,49 @@ const STRUCTURAL_LITERALS = [
  * Small copy that is not a LABEL and so is not in `CARD_LABELS`: the em-dash
  * fallback and the two words the anonymous-reads flag renders as.
  */
-const INLINE_COPY_LITERALS = ['—', 'enabled', 'disabled'] as const;
+export const INLINE_COPY_LITERALS = ['—', 'enabled', 'disabled'] as const;
+
+/**
+ * Every visible label `RegistryCard` may render as JSX TEXT.
+ *
+ * ROUND 15's B4 moved this here from `registry-card-profiles.test.tsx`, and the
+ * move is the fix rather than tidying. `JsxText` is source, it is not a string
+ * literal, and neither source walk visited it — so
+ * `<span className="metric-val">acdp-consumer advertised</span>` behind an
+ * `authority.length > 40` gate left 975/975 green while the card named an id no
+ * registry may advertise, in visible body text, which is #95's stated harm.
+ *
+ * Licensing JSX text needs the label list, and the label list lived in the test
+ * file, where `assertNoProseOutsideLabelTable` received it as a parameter. One
+ * hand-written list in one place, used by the guard and pinned by the test, is
+ * what stops a widening in one file from widening the other silently — round
+ * 15 measured exactly that: adding two entries to the test's copy widened the
+ * source walk AND the render walk in a single edit.
+ *
+ * Adding an entry is the review step. It should be a label a reviewer can point
+ * to on the rendered card, not a sentence about a profile — and the test asserts
+ * that shape (at most two words, and nothing that matches `PROFILE_ID_SHAPE`,
+ * because `acdp-consumer advertised` is two words).
+ */
+export const CARD_LABELS = [
+  '● healthy',
+  'Event count',
+  'Base URL',
+  '—',
+  'Last seen',
+  'ACDP version',
+  'Algorithms',
+  // Compared TRIMMED, because JSX text nodes carry the surrounding source
+  // indentation. So the join separator `', '` and the unit `' KB'` appear here
+  // without their padding.
+  ',',
+  'Profiles',
+  'Max payload',
+  'KB',
+  'Anon reads',
+  'enabled',
+  'disabled',
+] as const;
 
 /**
  * EVERY string literal in the file is in a pinned set.
@@ -1173,21 +1340,30 @@ const INLINE_COPY_LITERALS = ['—', 'enabled', 'disabled'] as const;
  *
  * ── The answer is not another walk. It is to bound the SUPPLY ────────
  *
- * Both escapes need a string literal somewhere in the file, and there is no
- * expression, gate, attribute or indirection that gets around that — a
- * sentence has to be spelled somewhere. So this stops asking WHERE a string is
- * used and asks whether the string EXISTS. The file has 43 string literals and
- * 10 pieces of JSX text; every one of them belongs to exactly one pinned set:
+ * Both escapes need a string somewhere in the file, and there is no expression,
+ * gate, attribute or indirection that gets around that — a sentence has to be
+ * spelled somewhere. So this stops asking WHERE a string is used and asks
+ * whether the string EXISTS. Every string literal and every piece of JSX text
+ * must be in one of the pinned sets: the allow-listed import specifiers, the
+ * seven advertisable ids, the seven hand-pinned glosses, `STRUCTURAL_LITERALS`,
+ * `INLINE_COPY_LITERALS`, or `CARD_LABELS`.
  *
- *   ALLOWED_IMPORTS keys       4   module specifiers
- *   REGISTRY_ADVERTISABLE_PROFILES  7   the ids, from the shared mirror
- *   PROFILE_GLOSS_TEXT values  7   the glosses, hand-pinned (round 13's N1)
- *   STRUCTURAL_LITERALS       22   class names, style values, tones
- *   INLINE_COPY_LITERALS       3   `—`, `enabled`, `disabled`
+ * ROUND 15's N3: a table of set sizes stood here, summing to 43, under the
+ * sentence "the file has 43 string literals". Those are different quantities —
+ * the file has 68 string-literal NODES, 43 of them distinct, which is the same
+ * number by coincidence — and the count in prose was read as the occurrence
+ * count it was not. No table now; `npm test` measures it.
  *
- * A new sentence in this file is now a red test whatever it is attached to,
- * whatever gates it, and whether or not any fixture reaches it. That is the
- * property the two docblocks above were claiming and did not have.
+ * ROUND 15's B4: `JsxText` was not read at all, and the claim directly above
+ * ("a sentence has to be spelled somewhere") was false for the one node kind
+ * that renders as body copy. It is read now, licensed against `CARD_LABELS`.
+ *
+ * A new sentence in this file is a red test whatever it is attached to,
+ * whatever gates it, and whether or not any fixture reaches it — PROVIDED the
+ * pinned sets are themselves bounded, which round 15's B1 found they were not:
+ * `STRUCTURAL_LITERALS` had no pin and no shape rule, so a sentence added to it
+ * licensed a sentence on the card. All six sets are now pinned exactly and
+ * shape-bounded in `registry-card-profiles.test.tsx`.
  *
  * ── What it does NOT cover, stated so nobody over-reads it again ─────
  *
@@ -1211,8 +1387,10 @@ export function assertEveryStringLiteralIsLicensed(source?: string): void {
     ...Object.values(PROFILE_GLOSS_TEXT),
     ...STRUCTURAL_LITERALS,
     ...INLINE_COPY_LITERALS,
+    ...CARD_LABELS,
   ]);
   let scanned = 0;
+  let jsxTexts = 0;
 
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
@@ -1221,11 +1399,27 @@ export function assertEveryStringLiteralIsLicensed(source?: string): void {
         fail(
           `contains the unlicensed string ${JSON.stringify(node.text.slice(0, 80))}. Every string ` +
             'literal in this file must be an allow-listed import specifier, one of the seven ' +
-            'advertisable profile ids, one of the seven pinned glosses, or a structural token — ' +
-            'because a sentence has to be spelled somewhere, and round 13 put operator-facing ' +
-            'prose on this card twice through an identifier and an `<input value>`, each behind a ' +
-            'coordinate no fixture visits, with every other guard green',
+            'advertisable profile ids, one of the seven pinned glosses, a card label, or a ' +
+            'structural token — because a sentence has to be spelled somewhere, and round 13 put ' +
+            'operator-facing prose on this card twice through an identifier and an ' +
+            '`<input value>`, each behind a coordinate no fixture visits, with every other guard ' +
+            'green',
         );
+      }
+    } else if (ts.isJsxText(node)) {
+      // ROUND 15's B4. JSX text is not a string literal, and it is the channel
+      // this file calls the loudest there is.
+      const text = node.text.trim();
+      if (text !== '') {
+        jsxTexts += 1;
+        if (!licensed.has(text)) {
+          fail(
+            `renders the unlicensed JSX text ${JSON.stringify(text.slice(0, 80))}. JSX text is ` +
+              'body copy — the loudest channel this card has — and it is not a string literal, ' +
+              'which is why no source walk here read it until round 15 measured ' +
+              '`acdp-consumer advertised` onto the card with 975/975 green',
+          );
+        }
       }
     } else if (ts.isTemplateExpression(node)) {
       fail(
@@ -1238,14 +1432,24 @@ export function assertEveryStringLiteralIsLicensed(source?: string): void {
   };
   visit(sf);
 
-  // ANTI-VACUITY, and it has to be a real floor rather than `> 0`: the file has
-  // 43 string literals, four of them import specifiers that any version of this
-  // file would carry. A walk that found only those would pass on a file with
-  // every other string deleted.
-  if (scanned < 20) {
+  // ANTI-VACUITY, one floor per BRANCH, and each has to be a real floor rather
+  // than `> 0`. Four of the literals are import specifiers that any version of
+  // this file would carry, so a walk that found only those would pass on a file
+  // with every other string deleted.
+  //
+  // ROUND 15's N3: the floor was 20 against a measured 68, so two-thirds of the
+  // file's literals could go missing with this green. Measured now and set just
+  // under: 68 literal nodes and 10 pieces of JSX text.
+  if (scanned < 60) {
     fail(
-      `found only ${scanned} string literals — this file has over forty, so this walk is looking ` +
-        'at the wrong nodes and is passing vacuously',
+      `found only ${scanned} string literals — this file has around seventy, so this walk is ` +
+        'looking at the wrong nodes and is passing vacuously',
+    );
+  }
+  if (jsxTexts < 8) {
+    fail(
+      `found only ${jsxTexts} pieces of JSX text — this card renders ten labels that way, so the ` +
+        'JsxText arm of this walk has stopped visiting them',
     );
   }
 }
