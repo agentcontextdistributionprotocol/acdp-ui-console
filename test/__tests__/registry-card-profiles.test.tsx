@@ -2455,6 +2455,26 @@ describe('every source guard is exercised against a subject it must reject', () 
   // gaps between fragments. Two sites that differ only in their interpolations
   // are still distinguished, because the ordered fragments differ: `declares \``
   // and `declares function \`` are not substrings of one another at position 0.
+  //
+  // MEASURED (round 14), 20 mutations applied one at a time under `tsc --noEmit`
+  // plus this file and `mock-data.test.ts`, each reverted before the next:
+  //
+  //   killed  17 — the supply guard dropped from `RUN_ON_READ`, emptied, its
+  //                licence check short-circuited and its anti-vacuity removed;
+  //                unlicensed prose, mis-cased ids and an APPENDED sentence in a
+  //                gloss (the first two were green before this round); the id
+  //                shape reverted to case-sensitive and its letter rule dropped;
+  //                the chip name-set and spelling checks emptied; this matcher
+  //                loosened to `return true`; a mutation anchor broken so it
+  //                matches nothing; a late-branch subject deleted; a sentence
+  //                added to `CARD_LABELS`; a stylesheet rule given text; the
+  //                `content:` scanner widened to swallow `justify-content`.
+  //   survived  3 — deleting THIS test's `uncovered` assertion, deleting the
+  //                `CARD_LABELS` exact pin (the two-word shape rule still bounds
+  //                any future entry), and loosening the guard-count pin (the
+  //                `Record<GuardName, …>` obligation fails at compile time).
+  //                All three are the same base case: an assertion cannot guard
+  //                itself, and is a survivor once its guarantee lives elsewhere.
   // ══════════════════════════════════════════════════════════════════
   type FailSite = {
     fn: string;
