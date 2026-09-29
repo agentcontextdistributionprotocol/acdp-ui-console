@@ -14,13 +14,20 @@
 // back. Inverting the render condition, or deleting it, fails one of each pair
 // — neither can pass on an empty render.
 // ══════════════════════════════════════════════════════════════════════
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import type { CpDashboardOverview } from '@/lib/types';
+import type { CpDashboardOverview, CpRun } from '@/lib/types';
 import { dashboardRevocationState } from '@/lib/utils/revocation';
 import {
   ID_REFERENCE_ATTRS,
   NON_ANNOUNCING_ATTRS,
+  cssCustomProperties,
+  inlineStyleDeclarations,
+  lastRuleFor,
+  suppressorOn,
+  unreadMemberPostures,
   DASHBOARD_CARD,
   DASHBOARD_PROSE,
   DASHBOARD_REPORTED_TILES,
@@ -1142,8 +1149,11 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     const body = card.querySelector<HTMLElement>('.card-body');
     const tiles = [...(body?.querySelectorAll<HTMLElement>('.kpi-card') ?? [])];
     const blocks = [...head, ...(tiles.length ? tiles : [...(body?.querySelectorAll<HTMLElement>('p') ?? [])])];
-    const silences = (node: Element) =>
-      node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('hidden') || node.hasAttribute('inert');
+    // ROUND 13's B4. One definition, in the prose module, shared with
+    // `trust-page.test.tsx` — round 11's B4 was these two copies differing by
+    // one line, and "fix both copies" is a promise about future edits where
+    // one copy is a property of the code.
+    const silences = (node: Element) => suppressorOn(node) !== null;
     let checked = 0;
     for (const block of blocks) {
       // UP: a suppressing ancestor takes the whole block with it.
@@ -1165,7 +1175,44 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
       checked += 1;
     }
     expect(checked, `${label ?? ''} — the reachability walk saw no blocks`).toBe(expectedCount);
+    // ── ROUND 13's B4: the styling channel, on this surface too ────────
+    //
+    // `<div style={{ display: 'none' }}><RevocationBody …/></div>` inside the
+    // Key Revocation `CardBody` was 42 files / 1050 tests green: a card with a
+    // header and an empty body, every text pin satisfied. A denylist of
+    // suppressing properties is an open set, so the allow side is bounded —
+    // every inline declaration on and above this card is pinned.
+    for (const decl of inlineStyleDeclarations(card, blocks)) {
+      expect(
+        INLINE_STYLES_ON_DASHBOARD,
+        `${label ?? ''} — the inline style \`${decl}\` is on or above the pinned card and is not pinned`,
+      ).toContain(decl);
+    }
   }
+
+  /** Every inline style declaration on or above the pinned card. Measured. */
+  const INLINE_STYLES_ON_DASHBOARD: readonly string[] = [
+    'div align-items: center',
+    'div display: flex',
+    'div gap: 8px',
+    'div.card margin-top: 12px',
+    'div.kpi-card --kpi-accent: var(--danger)',
+    'div.kpi-card --kpi-accent: var(--success)',
+    'div.kpi-card --kpi-accent: var(--warning)',
+    'div.kpi-delta color: var(--muted)',
+    'div.kpi-delta font-size: 10.5px',
+    'div.kpi-delta font-weight: 400',
+    'p color: var(--muted)',
+    'p font-size: 12px',
+    'p line-height: 1.6',
+    'p margin-bottom: 0px',
+    'p margin-left: 0px',
+    'p margin-right: 0px',
+    'p margin-top: 0px',
+    'p margin: 0px',
+    'strong color: var(--text)',
+    'svg.lucide.lucide-shield-alert color: var(--danger)',
+  ];
 
   function expectPinnedCard(expected: string[], label?: string, announced: readonly string[] = []) {
     const card = revocationCard();
@@ -1210,6 +1257,169 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
       // also the three tooltips — and nothing else may be.
       DASHBOARD_REPORTED_TILES.map((t) => t.hint),
     );
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // ROUND 13's B5: EVERY INPUT THIS CARD RECEIVES, NOT ONE OF THEM
+  //
+  // The Key Revocation card reads exactly two members of `CpDashboardOverview`
+  // — `d.keyRevocation` and `d.features` (`app/dashboard/page.tsx:218`) — and
+  // exactly one member of `CpDashboardFeatures`, `keyRevocationCheck`
+  // (`lib/utils/revocation.ts`). Every OTHER member arrives on every render,
+  // and `overview()` above pinned all of them to one posture: zero counts,
+  // empty arrays, no `recentRuns`. Round 13 measured four one-line escapes
+  // through exactly that gap, each 42 files / 1050 tests green:
+  //
+  //   {d.recentRuns.length > 0 && <p>No key in this deployment has been
+  //    revoked.</p>}                         MOCK_DASHBOARD sets five runs
+  //   {d.features?.witnessCosigning === false && …}   MOCK_DASHBOARD sets false
+  //   {d.features?.receiptAudit === false && …}       upstream default false
+  //   {d.totalRuns === 0 && …}                        a quiet window
+  //
+  // Two of the four render on the console's own demo posture. The sweep below
+  // is the shared instrument from `test/support/revocation-prose.ts`, given a
+  // READ/UNREAD partition checked against `lib/types.ts` itself — so a new
+  // member of either interface lands in neither list and throws rather than
+  // becoming a coordinate nothing varies.
+  // ══════════════════════════════════════════════════════════════════
+  const TYPES_SRC = readFileSync(join(process.cwd(), 'lib/types.ts'), 'utf8');
+
+  it('pins the card against the OVERVIEW members it does not read', () => {
+    const READ = ['keyRevocation', 'features'] as const;
+    const UNREAD = [
+      'window',
+      'totalRuns',
+      'totalContexts',
+      'totalAgents',
+      'recentRuns',
+      'byScenario',
+      'byRegistry',
+      'receiptCoverage',
+      'didMethods',
+    ] as const;
+    // The EMPTIEST payload the route admits — every count zero, every list
+    // empty, both optional lists absent — so a gate written either way round
+    // (`length > 0` and `length === 0`, `=== 0` and `> 0`) is swept.
+    const lean: CpDashboardOverview = {
+      window: '24h',
+      totalRuns: 0,
+      totalContexts: 0,
+      totalAgents: 0,
+      recentRuns: [],
+      byScenario: [],
+      byRegistry: [],
+      receiptCoverage: undefined,
+      didMethods: undefined,
+      keyRevocation: SOME,
+      features: FEATURES,
+    };
+    const richRun: CpRun = {
+      runId: 'run-rich',
+      tenantId: 'tenant-a',
+      scenarioId: 'scenario-a',
+      status: 'completed',
+      startedAt: '2026-09-25T00:00:00.000Z',
+      completedAt: '2026-09-25T00:01:00.000Z',
+      contextsCount: 3,
+      registries: ['registry-a.playground.local'],
+      inputs: null,
+      result: null,
+      trust: null,
+    };
+    const postures = unreadMemberPostures<CpDashboardOverview>({
+      source: TYPES_SRC,
+      interfaceName: 'CpDashboardOverview',
+      read: READ,
+      unread: UNREAD,
+      lean,
+      rich: {
+        window: '30d',
+        totalRuns: 41,
+        totalContexts: 42,
+        totalAgents: 43,
+        recentRuns: [richRun],
+        byScenario: [{ scenario_id: 'scenario-a', run_count: 3 }],
+        byRegistry: [{ registry_authority: 'registry-a.playground.local', event_count: 9 }],
+        receiptCoverage: [
+          { registry_authority: 'registry-a.playground.local', publish_count: 12, receipt_count: 4 },
+        ],
+        didMethods: [{ method: 'did:web', publish_count: 7 }],
+      },
+    });
+    expect(postures, 'the CpDashboardOverview sweep lost a posture').toHaveLength(UNREAD.length + 1);
+    // `SOME` is `{ 9, 0, 0 }` — the demo dataset's own triple, and the arm an
+    // operator most often sees. The card must paint it identically from the
+    // emptiest surrounding payload to the busiest.
+    const expected = expectedDashboardCardBlocks({ key: null, counts: ['9', '0', '0'] });
+    for (const p of postures) {
+      cleanup();
+      renderWith(p.input);
+      expectPinnedCard(expected, p.label, DASHBOARD_REPORTED_TILES.map((t) => t.hint));
+    }
+  });
+
+  it('pins the card against the FEATURE FLAGS it does not read', () => {
+    const READ = ['keyRevocationCheck'] as const;
+    const UNREAD = [
+      'receiptAudit',
+      'logInclusionAudit',
+      'logWitness',
+      'witnessCosigning',
+      'witnessQuorum',
+    ] as const;
+    // `CLEAN` is a COMPLETE all-zero triple, so `hasCounters` is satisfied and
+    // the arm is decided by the one flag this card reads: `false` -> disabled,
+    // `true` -> checked-clean. Both arms get the whole five-flag sweep.
+    const keys = new Set<ProseKey>();
+    for (const keyRevocationCheck of [false, true]) {
+      const lean: NonNullable<CpDashboardOverview['features']> = {
+        keyRevocationCheck,
+        receiptAudit: false,
+        logWitness: false,
+        logInclusionAudit: false,
+        witnessCosigning: false,
+        witnessQuorum: false,
+      };
+      const key = proseKeyFor(dashboardRevocationState(CLEAN, lean));
+      expect(key, `keyRevocationCheck=${keyRevocationCheck} reached no pinned prose arm`).not.toBeNull();
+      keys.add(key as ProseKey);
+      const expected = expectedDashboardCardBlocks({ key: key as ProseKey });
+      const postures = unreadMemberPostures({
+        source: TYPES_SRC,
+        interfaceName: 'CpDashboardFeatures',
+        read: READ,
+        unread: UNREAD,
+        lean,
+        rich: {
+          receiptAudit: true,
+          logWitness: true,
+          logInclusionAudit: true,
+          witnessCosigning: true,
+          witnessQuorum: true,
+        },
+      });
+      expect(postures, 'the CpDashboardFeatures sweep lost a posture').toHaveLength(UNREAD.length + 1);
+      for (const p of postures) {
+        cleanup();
+        renderWith(
+          overview({
+            keyRevocation: CLEAN,
+            features: p.input as NonNullable<CpDashboardOverview['features']>,
+          }),
+        );
+        expectPinnedCard(expected, `${p.label} · keyRevocationCheck=${keyRevocationCheck}`);
+      }
+    }
+    // The `keyRevocationCheck: true, receiptAudit: false` postures above depict
+    // a deployment upstream REFUSES TO BOOT (`app-config.service.ts:573-574`
+    // throws on exactly that pair). They are swept deliberately: nothing
+    // validates this payload on arrival, and `lib/types.ts`'s own docblock says
+    // the all-six requirement is "a claim about UPSTREAM, not a guarantee the
+    // wire makes". The card must render the same whatever actually arrives.
+    //
+    // Anti-vacuity on the READ side: the one flag this card does read has to
+    // change what it renders, or the loop above is two identical sweeps.
+    expect(keys.size, 'the disabled arm collapsed onto checked-clean').toBe(2);
   });
 
   // ══════════════════════════════════════════════════════════════════
@@ -1324,6 +1534,63 @@ describe('dashboard — the Key Revocation card renders a CLOSED set of blocks',
     expect(accents).toEqual(DASHBOARD_REPORTED_TILES.map((t) => t.accent));
     // The complement, so "paint everything danger" cannot pass either.
     expect(new Set(accents).size, 'two tiles share an accent').toBe(accents.length);
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 13's B3, ON THIS SURFACE TOO
+    //
+    // Everything above is about token NAMES, and `new Set(accents).size === 3`
+    // is satisfied by three distinct names resolving to two colours. Round 13
+    // named this tile in its finding: one line in the file `CLAUDE.md` calls
+    // the only home for colour —
+    //
+    //   :root { --danger: #f05d7a; }  ->  :root { --danger: #22d48f; }
+    //
+    // — repaints "Revoked at/after boundary" in success green, and every text
+    // pin, every accent pin and every prose pin on this card stays green. The
+    // sibling assertion on `/trust` was fixed in the same round and this one
+    // was not, which is round 11's B4 again in a different channel: one copy
+    // of a guard corrected, the other left as the version that was wrong.
+    // ══════════════════════════════════════════════════════════════════
+    const css = readFileSync(join(process.cwd(), 'app/globals.css'), 'utf8');
+    const vars = cssCustomProperties(css);
+    // Anti-vacuity on the table: a resolver reading an empty map resolves
+    // everything to `undefined` and every comparison below is trivially equal.
+    expect(Object.keys(vars).length, 'the :root custom-property table read as empty').toBeGreaterThan(10);
+    const resolve = (accent: string): string => {
+      const ref = accent.match(/^var\((--[\w-]+)\)$/);
+      expect(ref, `the tile accent \`${accent}\` is not a token reference`).toBeTruthy();
+      const hex = vars[ref![1]];
+      expect(hex, `\`${accent}\` resolves to no colour in app/globals.css`).toBeTruthy();
+      return hex;
+    };
+    const tones = accents.map(resolve);
+    // This is the assertion the token names were standing in for.
+    expect(new Set(tones).size, 'two tiles resolve to the same COLOUR').toBe(accents.length);
+    expect(tones.every((t) => /^#|^rgb/.test(t)), 'a tile accent did not resolve past its token').toBe(
+      true,
+    );
+    // …and the fail-closed tile is the DANGER colour, not merely a different
+    // one from its neighbours — three distinct colours can be three greens.
+    expect(tones[1], 'the fail-closed tile is no longer painted as one').toBe(vars['--danger']);
+    expect(tones[0], 'the authorized tile lost its success colour').toBe(vars['--success']);
+    expect(tones[2], 'the unverifiable tile lost its warning colour').toBe(vars['--warning']);
+    // An accent nothing paints with is a variable, not a colour: the rule that
+    // CONSUMES `--kpi-accent` has to exist and has to read it.
+    expect(
+      lastRuleFor(css, '.kpi-card::before'),
+      'nothing in app/globals.css paints with --kpi-accent any more',
+    ).toContain('var(--kpi-accent');
+    // GUARDS THE GUARD, on both channels: the `:root` repaint that walked past
+    // the name pin must collapse two tiles here, and the rule reader must not
+    // invent a rule that is not there.
+    const repainted = cssCustomProperties(
+      css.replace(/(--danger:\s*)#[0-9a-f]{6}/i, `$1${vars['--success']}`),
+    );
+    expect(
+      new Set(accents.map((a) => repainted[a.slice(4, -1)])).size,
+      'a :root repaint is invisible to the resolved-colour pin',
+    ).toBeLessThan(accents.length);
+    expect(lastRuleFor(css, '.kpi-card-no-such-class'), 'the rule reader invents a rule').toBeNull();
   });
 
   /**

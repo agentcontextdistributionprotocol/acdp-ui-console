@@ -747,3 +747,300 @@ export const NON_ANNOUNCING_ATTRS = [
 
 /** The id-reference attributes, which must resolve inside the pinned surface. */
 export const ID_REFERENCE_ATTRS = ['aria-labelledby', 'aria-describedby', 'aria-details'] as const;
+
+// ══════════════════════════════════════════════════════════════════════
+// ROUND 13's B3, B4 and B5: three instruments the two revocation surfaces
+// had one copy of each, or none.
+//
+// Round 11's B4 was the two surfaces' reachability walks differing by one
+// line. The answer then was to fix both copies; the answer now is that there
+// is one copy, here, and both surfaces import it — because "fix both copies"
+// is a promise about future edits and this is a property of the code.
+// ══════════════════════════════════════════════════════════════════════
+
+/**
+ * The attributes that remove a subtree from a reader without removing it from
+ * the DOM.
+ *
+ * Genuinely closed, and worth saying why rather than asserting it: HTML gives
+ * `hidden` and `inert`, ARIA gives `aria-hidden`, and there is no fourth. Every
+ * OTHER way to make text unreadable is a styling question, which is bounded
+ * below by a completely different mechanism because a denylist of styling
+ * properties is not a closed set and this branch has been beaten by open sets
+ * in four consecutive rounds.
+ */
+export const SUPPRESSING_ATTRS = ['aria-hidden', 'hidden', 'inert'] as const;
+
+export function suppressorOn(node: Element): string | null {
+  if (node.getAttribute('aria-hidden') === 'true') return 'aria-hidden="true"';
+  if (node.hasAttribute('hidden')) return 'hidden';
+  if (node.hasAttribute('inert')) return 'inert';
+  return null;
+}
+
+/**
+ * Every inline style declaration on the pinned surface and on everything above
+ * it, as `<tag.class> prop: value` — the PRODUCT, for the caller to pin.
+ *
+ * ── ROUND 13's B4: THE SUPPRESSION CHANNEL THIS APP ACTUALLY USES ────
+ *
+ * `suppressorOn` models three attributes, and both reachability walks were
+ * built on it alone under a docblock saying "everything written down is still
+ * REACHABLE". Measured on both surfaces:
+ *
+ *   <div className="kpi-grid" style={{ display: 'none' }}>            SURVIVED
+ *   <div className="kpi-grid" style={{ visibility: 'hidden' }}>       SURVIVED
+ *   <div style={{ display: 'none' }}><RevocationBody …/></div>        SURVIVED
+ *
+ * each at 42 files / 1050 tests green, while `aria-hidden="true"` on the same
+ * element is 3 red. `display: none` is a STRICTLY STRONGER suppression — it
+ * removes the subtree from the accessibility tree and from the visual render —
+ * so the walks caught the weaker one and not the stronger.
+ *
+ * The excuse written beside them was "not a styling check: jsdom applies no
+ * stylesheet, so `display: none` and `visibility: hidden` are invisible from
+ * here". The premise is about STYLESHEETS. jsdom reflects an INLINE `style`
+ * attribute exactly, and `CLAUDE.md` mandates inline styles for this
+ * repository — so the one styling channel these pages actually use is the one
+ * that sentence excused itself from.
+ *
+ * A denylist (`display`, `visibility`, `opacity`, `font-size: 0`, `clip-path`,
+ * `color: transparent`, `content-visibility`, `transform: scale(0)`, …) is an
+ * open set. So the ALLOW side is bounded instead, the way every other
+ * enumeration on this branch has had to be inverted: this returns every inline
+ * declaration on and above the pinned surface, and the caller pins the whole
+ * product. A new inline style anywhere on the path is then a reviewable diff
+ * whatever property it sets, and nobody has to have anticipated it.
+ */
+export function inlineStyleDeclarations(root: HTMLElement, blocks: readonly HTMLElement[]): string[] {
+  const seen = new Set<Element>();
+  const out = new Set<string>();
+  const describe = (el: Element): string => {
+    const cls = el.getAttribute('class');
+    return `${el.tagName.toLowerCase()}${cls ? '.' + cls.trim().split(/\s+/).join('.') : ''}`;
+  };
+  const visit = (el: Element): void => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    const style = (el as HTMLElement).style;
+    if (!style) return;
+    for (let n = 0; n < style.length; n += 1) {
+      const prop = style.item(n);
+      out.add(`${describe(el)} ${prop}: ${style.getPropertyValue(prop).trim()}`);
+    }
+  };
+  for (const el of [root, ...root.querySelectorAll('*')]) visit(el);
+  // …and UPWARDS to the document, because suppression is inherited: an
+  // ancestor above the pinned surface removes it exactly as one inside it
+  // does. This is round 11's B4 in the styling channel.
+  for (const block of blocks) {
+    for (let n: Element | null = block; n !== null; n = n.parentElement) visit(n);
+  }
+  return [...out].sort();
+}
+
+/**
+ * The members of an `export interface X { … }`, read out of the module that
+ * declares it.
+ *
+ * ── ROUND 13's B5: ONE TYPE, ON ONE SURFACE ──────────────────────────
+ *
+ * Round 12 closed NB1 by varying the six `TrustTotals` members the violations
+ * card does not read, and checking the read/unread split against the interface
+ * so a new member lands in neither list and is red. The commit said "a new
+ * member of that interface lands in neither list and is a red test rather than
+ * a new unvaried coordinate" — true of `TrustTotals`, and the general property
+ * it reads as was never built. Round 13 measured seven escapes through the
+ * types it was not carried to, each a one-line coordinate rendering a
+ * deployment-wide all-clear at 42 files / 1050 tests green, and two of them
+ * fire on the console's own DEFAULT DEMO POSTURE:
+ *
+ *   d.recentRuns.length > 0                        (dashboard — MOCK_DASHBOARD
+ *                                                   sets five)
+ *   features?.logInclusionAudit === false          (MOCK_DASHBOARD sets false)
+ *   d.features?.witnessCosigning === false         (MOCK_DASHBOARD sets false)
+ *   features?.receiptAudit === false               (upstream default false)
+ *   runs.some(r => r.run.status === 'completed')   (CpRun cast with 3 of 12
+ *   runs.some(r => (r.run.registries ?? []).length) members set)
+ *
+ * So the instrument is here, and `assertClassifiesEveryMember` is what makes
+ * "this surface renders identically across every member of every input it is
+ * handed" a property of the code rather than a sentence in a commit message.
+ */
+export function interfaceMembers(source: string, name: string): string[] {
+  const body = source.match(new RegExp(`(?:export )?interface ${name} \\{([\\s\\S]*?)\\n\\}`));
+  if (!body) throw new Error(`no \`interface ${name}\` in the given source — this classification lost its subject`);
+  const members = [...body[1].matchAll(/^\s{2}(\w+)\??\s*:/gm)].map((m) => m[1]).sort();
+  if (members.length === 0) throw new Error(`\`interface ${name}\` parsed to no members — the reader is vacuous`);
+  return members;
+}
+
+/**
+ * The read and unread lists must PARTITION the interface: every member in
+ * exactly one, and nothing in neither.
+ *
+ * "In neither" is the whole point. A member nobody classified is a coordinate
+ * no fixture varies, which is the shape of every escape round 13 found.
+ */
+export function classificationGaps(
+  members: readonly string[],
+  read: readonly string[],
+  unread: readonly string[],
+): { unclassified: string[]; unknown: string[]; both: string[] } {
+  const r = new Set(read);
+  const u = new Set(unread);
+  return {
+    unclassified: members.filter((m) => !r.has(m) && !u.has(m)),
+    unknown: [...r, ...u].filter((n) => !members.includes(n)).sort(),
+    both: members.filter((m) => r.has(m) && u.has(m)),
+  };
+}
+
+/**
+ * Every posture that varies a member of an input the pinned surface does NOT
+ * read — one member at a time, and then all of them at once.
+ *
+ * ── THE INSTRUMENT, NOT THE INSTANCE ─────────────────────────────────
+ *
+ * Round 12 built this shape ONCE, by hand, for `TrustTotals` on the violations
+ * card. Round 13 then measured seven one-line escapes through the other inputs
+ * the same two surfaces receive, each rendering a deployment-wide all-clear at
+ * 42 files / 1050 tests green, and two of them fire on the console's own
+ * default demo posture. The instrument was right; it was applied to one type on
+ * one page, and the commit message generalised it anyway.
+ *
+ * So the sweep is derived rather than written:
+ *
+ *  - `read` / `unread` must PARTITION the interface, read out of the module
+ *    that declares it. A member in neither list throws — a new field is a
+ *    coordinate nothing varies, which is the shape of every escape round 13
+ *    found, and a hand-written pair of lists cannot notice its own gap.
+ *  - Every unread member must have a value in `rich` that DIFFERS from the one
+ *    in `lean`, or this throws. A posture that varies a field to the value it
+ *    already holds distinguishes nothing, and would leave the sweep green and
+ *    vacuous.
+ *  - `lean` is the emptiest posture the input admits and `rich` the most
+ *    eventful one, so a gate reading the member in EITHER direction
+ *    (`x.length > 0` and `x.length === 0`, `=== true` and `=== false`) is
+ *    caught. Round 13's escapes came in both.
+ *
+ * The caller renders `lean` for its expectation and then asserts every returned
+ * posture renders identically. The claim that buys is "this surface renders the
+ * same thing whatever those members hold", which is about the surface's INPUTS
+ * rather than about the code that happens to ignore them today — and that is
+ * the version that survives the next edit.
+ */
+export function unreadMemberPostures<T extends object>(opts: {
+  source: string;
+  interfaceName: string;
+  read: readonly string[];
+  unread: readonly string[];
+  lean: T;
+  rich: Record<string, unknown>;
+}): { label: string; input: T }[] {
+  const { source, interfaceName, read, unread, lean, rich } = opts;
+  const gaps = classificationGaps(interfaceMembers(source, interfaceName), read, unread);
+  if (gaps.unclassified.length > 0) {
+    throw new Error(
+      `${interfaceName} has member(s) nothing here classifies: ${gaps.unclassified.join(', ')} — ` +
+        'a member in neither list is a coordinate no posture varies',
+    );
+  }
+  if (gaps.unknown.length > 0) {
+    throw new Error(`${interfaceName} no longer declares: ${gaps.unknown.join(', ')}`);
+  }
+  if (gaps.both.length > 0) {
+    throw new Error(`${interfaceName} member(s) called both read and unread: ${gaps.both.join(', ')}`);
+  }
+  if (unread.length === 0) {
+    throw new Error(`${interfaceName} has no unread member — this sweep would assert nothing`);
+  }
+  const show = (v: unknown): string => JSON.stringify(v) ?? 'undefined';
+  const postures: { label: string; input: T }[] = [];
+  const together: Record<string, unknown> = {};
+  for (const member of unread) {
+    if (!(member in rich)) {
+      throw new Error(
+        `no varied value for ${interfaceName}.${member} — an unswept member is an unvaried coordinate`,
+      );
+    }
+    if (show((lean as Record<string, unknown>)[member]) === show(rich[member])) {
+      throw new Error(
+        `${interfaceName}.${member} varies to the value it already holds (${show(rich[member])}) — ` +
+          'this posture distinguishes nothing',
+      );
+    }
+    together[member] = rich[member];
+    postures.push({
+      label: `${interfaceName}.${member} = ${show(rich[member])}`,
+      input: { ...lean, [member]: rich[member] } as T,
+    });
+  }
+  postures.push({
+    label: `${interfaceName}: all ${unread.length} unread members at once`,
+    input: { ...lean, ...together } as T,
+  });
+  return postures;
+}
+
+/**
+ * The `:root` custom-property table of a stylesheet.
+ *
+ * ── ROUND 13's B3: A TOKEN NAME IS NOT A COLOUR ──────────────────────
+ *
+ * The colour pin asserted `colourOf('.chip.bad') === 'var(--danger)'` and that
+ * the three token NAMES are distinct, under a docblock calling that "the
+ * property an operator actually relies on". An operator relies on distinct
+ * COLOURS. Measured, one line in the file `CLAUDE.md` names as the only home
+ * for colour:
+ *
+ *   :root { --danger: #f05d7a; }  ->  :root { --danger: #22d48f; }
+ *
+ * 42 files / 1050 tests green, and it repaints the fail-closed chip, the
+ * detail cell, `/trust`'s "Revoked events" KPI accent and the dashboard's
+ * "Revoked at/after boundary" tile — every danger surface in the console — in
+ * success green. `new Set(tones).size === 3` passes, because three distinct
+ * names can resolve to two colours.
+ *
+ * Two more channels went with it. `rule()` used `css.match`, which returns the
+ * FIRST occurrence while the cascade takes the last, so appending
+ * `.data-table .chip.bad { color: var(--success) }` was invisible; and an
+ * inline `style={{ color: C.success }}` on the chip is invisible to every
+ * attribute-based half because `style` is licensed as non-announcing.
+ */
+export function cssCustomProperties(css: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const block of css.matchAll(/:root\s*\{([^}]*)\}/g)) {
+    for (const decl of block[1].matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)) {
+      out[decl[1]] = decl[2].trim();
+    }
+  }
+  return out;
+}
+
+/**
+ * The LAST rule whose selector ends with the given one — the cascade's answer,
+ * not the first match's.
+ *
+ * The selector is matched at a token boundary, so `.data-table .chip.bad` is
+ * found as a rule for `.chip.bad` and `.chip.badge` is not.
+ */
+export function lastRuleFor(css: string, selector: string): string | null {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rules = [...css.matchAll(new RegExp(`([^{}]*${esc})\\s*\\{([^}]*)\\}`, 'g'))].filter(
+    (m) => !/[A-Za-z0-9_-]/.test(css.slice(m.index + m[1].length, m.index + m[1].length + 1)),
+  );
+  return rules.length === 0 ? null : rules[rules.length - 1][2];
+}
+
+/** The colour a selector RESOLVES to, through the `:root` table. */
+export function resolvedColour(css: string, selector: string): string | null {
+  const block = lastRuleFor(css, selector);
+  if (block === null) return null;
+  const m = block.match(/(?:^|[;{])\s*color\s*:\s*([^;}]+)/);
+  if (!m) return null;
+  const value = m[1].trim();
+  const vars = cssCustomProperties(css);
+  const ref = value.match(/^var\((--[\w-]+)\)$/);
+  return ref ? (vars[ref[1]] ?? null) : value;
+}

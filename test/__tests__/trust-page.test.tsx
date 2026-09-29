@@ -12,9 +12,17 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import type { CpRun, RunTrustSummary } from '@/lib/types';
 import type { TrustOverview } from '@/lib/hooks/use-trust';
+import { MAX_RUNS } from '@/lib/hooks/use-trust';
 import {
   ID_REFERENCE_ATTRS,
   NON_ANNOUNCING_ATTRS,
+  SUPPRESSING_ATTRS,
+  cssCustomProperties,
+  inlineStyleDeclarations,
+  lastRuleFor,
+  resolvedColour,
+  suppressorOn,
+  unreadMemberPostures,
   TRUST_EMPTY,
   TRUST_KPI_CARDS,
   TRUST_KPI_HINT,
@@ -835,11 +843,11 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
    * `expected.length` is the anti-vacuity: a walk over no blocks asserts
    * nothing, and the block list is what the pin claims is on screen.
    */
-  function silences(node: Element): boolean {
-    return (
-      node.getAttribute('aria-hidden') === 'true' || node.hasAttribute('hidden') || node.hasAttribute('inert')
-    );
-  }
+  // ROUND 13's B4. This was a local copy of a three-attribute predicate, and
+  // the dashboard had its own. One definition now, in the prose module, for
+  // the reason round 11's B4 gave: the two surfaces differing by one line is a
+  // property of having two copies, not of either copy being wrong.
+  const silences = (node: Element): boolean => suppressorOn(node) !== null;
 
   function expectNothingSilenced(el: HTMLElement, blocks: HTMLElement[], expectedCount: number, label?: string) {
     for (const block of blocks) {
@@ -888,7 +896,64 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     expect(blocks.length, `${label ?? ''} — the reachability walk visited no block`).toBe(
       expectedCount,
     );
+    // ── ROUND 13's B4: THE STYLING CHANNEL THESE PAGES ACTUALLY USE ────
+    //
+    // The three attributes above are the ARIA/HTML suppressors and they really
+    // are closed. The STYLING suppressors are not — `display`, `visibility`,
+    // `opacity`, `font-size: 0`, `clip-path`, `color: transparent`,
+    // `content-visibility`, `transform: scale(0)` and whatever is next — and
+    // `<div className="kpi-grid" style={{ display: 'none' }}>` was 42 files /
+    // 1050 tests green while `aria-hidden="true"` on the SAME element is 3
+    // red. `display: none` is the strictly stronger suppression.
+    //
+    // The excuse written beside this walk was "jsdom applies no stylesheet".
+    // jsdom reflects an INLINE style exactly, and `CLAUDE.md` mandates inline
+    // styles here, so the one styling channel these pages use is the one that
+    // sentence excused itself from.
+    //
+    // A denylist of suppressing properties is an open set. So the ALLOW side
+    // is bounded: every inline declaration on and above this surface is
+    // pinned, and a new one is a reviewable diff whatever it sets.
+    for (const decl of inlineStyleDeclarations(el, blocks)) {
+      expect(
+        INLINE_STYLES_ON_TRUST,
+        `${label ?? ''} — the inline style \`${decl}\` is on or above the pinned surface and is not pinned`,
+      ).toContain(decl);
+    }
   }
+
+  /**
+   * Every inline style declaration the `/trust` page puts on or above a pinned
+   * surface, as `<tag.class> prop: value`.
+   *
+   * Measured, not chosen. The page styles with the `C.*` tokens per
+   * `CLAUDE.md`, so this is short and it is the closed side of the suppression
+   * bound: `display: none`, `visibility: hidden`, `opacity: 0` and every other
+   * spelling all land here as an unpinned entry.
+   */
+  const INLINE_STYLES_ON_TRUST: readonly string[] = [
+    'a color: var(--info)',
+    'div align-items: center',
+    'div color: var(--muted)',
+    'div display: flex',
+    'div flex-direction: column',
+    'div font-size: 11px',
+    'div font-size: 13px',
+    'div gap: 3px',
+    'div gap: 8px',
+    'div max-width: 360px',
+    'div.card margin-bottom: 12px',
+    'div.kpi-card --kpi-accent: var(--danger)',
+    'div.kpi-card --kpi-accent: var(--muted)',
+    'div.kpi-card --kpi-accent: var(--success)',
+    'div.kpi-card --kpi-accent: var(--warning)',
+    'div.kpi-delta color: var(--muted)',
+    'div.kpi-delta font-size: 10.5px',
+    'div.kpi-delta font-weight: 400',
+    'span.did color: var(--danger)',
+    'span.did font-size: 10.5px',
+    'td color: var(--muted)',
+  ] as const;
 
   function kpiGrid(container: HTMLElement): HTMLElement {
     const grid = container.querySelector<HTMLElement>('.kpi-grid');
@@ -1393,6 +1458,29 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
           card.parentElement!.setAttribute('aria-hidden', 'true');
         },
       ],
+      [
+        // ROUND 13's B4. The five above are all ATTRIBUTE suppressions, so the
+        // styling branch — which is a different mechanism, not a sixth
+        // attribute — had no owner, and the three measured escapes
+        // (`display: none` on `.kpi-grid`, `visibility: hidden` on the same,
+        // and a `display: none` wrapper around the dashboard's card body) were
+        // all green. A branch with no injection is a branch that can be
+        // deleted silently, which is the property the fifth injection was
+        // added to give the upward walk.
+        'the pinned card suppressed by an inline STYLE, not an attribute',
+        (card) => {
+          card.style.display = 'none';
+        },
+      ],
+      [
+        // …and above it, because inline suppression is inherited exactly as
+        // the attribute kind is. This is the arm that reaches the `.kpi-grid`
+        // and `.page` escapes.
+        'an ANCESTOR of the pinned card suppressed by an inline STYLE',
+        (card) => {
+          card.parentElement!.style.visibility = 'hidden';
+        },
+      ],
     ];
     for (const [label, inject] of injections) {
       cleanup();
@@ -1409,10 +1497,12 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
         `the composite ADMITS ${label}`,
       ).toThrow();
     }
-    // FIVE injections for four halves: the reachability half has two
-    // independent branches (up and down) and round 11's B3 is that one
-    // injection cannot attribute both.
-    expect(injections).toHaveLength(5);
+    // SEVEN injections for four halves. The reachability half has FOUR
+    // independent branches — up and down, by attribute and by inline style —
+    // and round 11's B3 and round 13's B4 are the same lesson twice: an
+    // injection can only attribute the branch it actually travels, so a branch
+    // with no injection of its own can be deleted with the suite green.
+    expect(injections).toHaveLength(7);
   });
 
   it('GUARDS THE GUARD: the violations pin REJECTS an appended clause and a stray element', () => {
@@ -1518,35 +1608,39 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     ]);
   });
 
-  it('pins the counter-only row, which reports a count and no events', () => {
-    cleanup();
-    const { container } = renderWith(
-      overview(
-        [{ runId: 'run-counters', trust: trust({ revoked: [], keyRevocationRevokedAtOrAfter: 2 }) }],
-        { revokedEvents: 2, revokedRuns: 1, revocationReportedRuns: 1 },
-        FEATURES_ON,
-      ),
-    );
-    const card = violationsCard(container);
-    const when = timeAgo('2026-09-25T00:01:00.000Z');
-    const expected = expectedTrustViolationsTableBlocks({
-      sub: trustViolationsSub({
-        flaggedEvents: 0,
-        flaggedRuns: 0,
-        revocationClause: '2 revoked across 1 run',
-        preCompromiseEvents: 0,
-      }),
-      rows: [
-        [
-          'run-counters',
-          '—',
-          'reported without detail',
-          '2 fail-closed verdicts counted with no per-event detail',
-          when,
-        ],
-      ],
-    });
-    expectPinnedViolations(card, expected, 'counter-only table');
+  it('pins the counter-only row at BOTH sides of its singular/plural boundary', () => {
+    // ROUND 13's NB3. `COUNTER_ONLY` is fixed at 2 throughout the cross product
+    // below, so the row's own `=== 1 ? '' : 's'` branch — the one arm of this
+    // row that is a DECISION rather than data — was rendered by nothing in the
+    // file. A count of 1 is the most ordinary counter-only payload there is.
+    const cases: Array<[count: number, detail: string, clause: string]> = [
+      [1, '1 fail-closed verdict counted with no per-event detail', '1 revoked across 1 run'],
+      [2, '2 fail-closed verdicts counted with no per-event detail', '2 revoked across 1 run'],
+    ];
+    for (const [count, detail, revocationClause] of cases) {
+      cleanup();
+      const { container } = renderWith(
+        overview(
+          [{ runId: 'run-counters', trust: trust({ revoked: [], keyRevocationRevokedAtOrAfter: count }) }],
+          { revokedEvents: count, revokedRuns: 1, revocationReportedRuns: 1 },
+          FEATURES_ON,
+        ),
+      );
+      const when = timeAgo('2026-09-25T00:01:00.000Z');
+      const expected = expectedTrustViolationsTableBlocks({
+        sub: trustViolationsSub({
+          flaggedEvents: 0,
+          flaggedRuns: 0,
+          revocationClause,
+          preCompromiseEvents: 0,
+        }),
+        rows: [['run-counters', '—', 'reported without detail', detail, when]],
+      });
+      expectPinnedViolations(violationsCard(container), expected, `counter-only table, count=${count}`);
+    }
+    // Anti-vacuity: the two cases have to differ in the detail cell, or this is
+    // the same render twice under two labels.
+    expect(new Set(cases.map((c) => c[1])).size).toBe(2);
   });
 
   // ══════════════════════════════════════════════════════════════════
@@ -1606,6 +1700,29 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
   //     and `revoked[]` from one row set, so it is a defensive path rather than
   //     a live one; recorded here because "defensive" is a claim about upstream
   //     and this file cannot check it.
+  //
+  // ROUND 13 CORRECTION (its NB3 and NB6): that correction was incomplete in
+  // its turn, twice over.
+  //
+  //   · The singular arm of the counter-only row was still unrendered — the
+  //     paragraph above names `COUNTER_ONLY` as a held constant and calls it
+  //     "its singular/plural boundary" without pinning either side. Now pinned
+  //     at 1 and at 2 by "pins the counter-only row at BOTH sides of its
+  //     singular/plural boundary".
+  //   · The list is about the FINDING ROW's fields and says nothing about the
+  //     four INPUTS the card receives whole — `TrustTotals`, `TrustOverview`,
+  //     `CpDashboardFeatures` and the `CpRun` behind every row. Every one of
+  //     them was pinned to a single posture by the fixtures above, and round 13
+  //     measured seven one-line escapes through them. They are no longer held
+  //     constant: `unreadMemberPostures` sweeps every member each of those four
+  //     types declares that this card does not read, from the emptiest posture
+  //     to the busiest, in the four tests below "ROUND 13's B5". A new member
+  //     of any of them lands in neither the READ nor the UNREAD list and
+  //     throws.
+  //
+  // Still held constant, and now genuinely the whole list: the ctx ids, the
+  // discrepancy text, the timestamps, and `revoked[].boundary`/`trustClass`,
+  // all of which the row renders verbatim.
   // ══════════════════════════════════════════════════════════════════
   type Finding = 'none' | 'flagged' | 'revoked' | 'counter' | 'both';
   type ViolationsInput = {
@@ -1822,50 +1939,87 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
   }, 120_000);
 
   /**
-   * The ceiling on `runs`, READ FROM the hook that imposes it.
+   * The ceiling on `runs`: the VALUE the hook uses, imported from it.
    *
-   * Not written down here. `MAX_RUNS` is a private const in
-   * `lib/hooks/use-trust.ts`, and a number copied into a test is a number that
-   * drifts — this file already carried `0 | 1 | 2` as an axis while the hook
-   * fetched twenty-five. Parsed instead, and a hook that stops declaring a
-   * ceiling is a red test rather than a silently unbounded sweep.
+   * ── ROUND 13's B2: A PARSER THAT DRIFTS IS WORSE THAN A NUMBER ───────
+   *
+   * This read `/const\s+MAX_RUNS\s*=\s*(\d+)/` out of `use-trust.ts`, under a
+   * docblock saying "a number copied into a test is a number that drifts …
+   * parsed instead, and a hook that stops declaring a ceiling is a red test
+   * rather than a silently unbounded sweep". The pattern is unanchored, so it
+   * stops at the first integer in the initializer: rewriting the hook to
+   * `const MAX_RUNS = 5 * 5` — the same value, the same fetch, an ordinary
+   * refactor — left the sweep running 1..5 against a hook fetching 25, with 42
+   * files / 1050 tests green. Measured: with `25` the gate
+   * `{runs.length > 6 && <p>No key…revoked.</p>}` is 1 red; with `5 * 5` the
+   * identical gate SURVIVES. A hand-written number is visible in a diff; a
+   * mis-parse is not.
+   *
+   * So the value is imported. The guard is then about the number the hook
+   * USES, which is what the claim was always about, and it survives any
+   * expression form. The source read that remains is a different claim — that
+   * the constant still bounds the FETCH — and it is anchored, so a non-literal
+   * `limit:` is red rather than quietly accepted.
    */
   function maxAuditedRuns(): number {
     const src = readFileSync(join(process.cwd(), 'lib/hooks/use-trust.ts'), 'utf8');
-    const m = src.match(/const\s+MAX_RUNS\s*=\s*(\d+)/);
-    expect(m, 'use-trust.ts no longer declares MAX_RUNS — this sweep has lost its ceiling').toBeTruthy();
-    const n = Number(m![1]);
-    expect(src, 'MAX_RUNS is declared but no longer bounds the fetch').toMatch(/limit:\s*MAX_RUNS/);
-    return n;
+    expect(src, 'MAX_RUNS is declared but no longer bounds the fetch').toMatch(/limit:\s*MAX_RUNS\b/);
+    expect(src, 'MAX_RUNS is no longer exported, so this sweep would be reading a stale copy').toMatch(
+      /export const MAX_RUNS\b/,
+    );
+    return MAX_RUNS;
   }
 
-  it('bounds the runs axis WHOLE, at every value the hook can deliver', () => {
-    // ── ROUND 11's B1, the half that closes the axis rather than sampling it ──
+  it('bounds the runs axis WHOLE — every SHAPE, at every value the hook can deliver', () => {
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 13's B1: "WHOLE" MEANT THREE LINES THROUGH THE SPACE
     //
-    // The cross product above visits four `runs` values because visiting
-    // twenty-six of them across six other axes is 800 renders. This visits ALL
-    // of them, for three fixed shapes — which is the trade that makes the claim
-    // true: every coordinate gate on `runs.length` has a threshold, and a
-    // threshold anywhere in 0..MAX_RUNS is crossed here.
+    // This swept `runs` 1..MAX_RUNS for THREE hand-written shapes, under a
+    // test name saying "at every value the hook can deliver" and a docblock
+    // saying "every coordinate gate on `runs.length` has a threshold, and a
+    // threshold anywhere in 0..MAX_RUNS is crossed here". Crossing the
+    // threshold is necessary and not sufficient — the gate's OTHER conjuncts
+    // have to hold too, and three fixed shapes satisfy three of the forty the
+    // enumeration produces. Measured:
     //
-    // Measured before this existed: `{runs.length > 2 && <p>No key in this
-    // deployment has been revoked.</p>}` in the violations body was 42 files /
-    // 1045 tests green, and the default demo posture renders it — seven of the
-    // eight mock runs carry a trust summary.
+    //   {runs.length > 3 && t.flaggedEvents > 0 && t.revokedEvents === 0 &&
+    //     <p>No key in this deployment has been revoked.</p>}       SURVIVED
+    //   {runs.length > 3 && <p>…same sentence…</p>}                 1 red
     //
-    // The expectation is the SAME derivation the cross product uses, so this is
-    // not a second copy of the card's copy: what it adds is that the derivation
-    // predicts the card at every run count, and a card that says something the
-    // derivation does not predict is red whatever produced it.
+    // both at 42 files / 1050 tests. The surviving one is not a contrivance:
+    // `KEY_REVOCATION_CHECK_ENABLED` defaults false upstream, so every
+    // revocation counter is a legitimate zero, while one bad content hash
+    // gives a flagged finding — the flagged-and-unmonitored posture is the
+    // DEFAULT one, and the card would print a deployment-wide all-clear in the
+    // same paint as the listed discrepancy. That is round 11's B1 moved one
+    // axis over, which is what this sweep was built to stop.
+    //
+    // So the shapes are not written here at all: they are the cross product's
+    // own enumeration with `runs` PROJECTED OUT. A shape added there is swept
+    // here in the same commit, a shape dropped there is red here, and neither
+    // needs anybody to remember this test exists.
+    // ══════════════════════════════════════════════════════════════════
     const ceiling = maxAuditedRuns();
     expect(ceiling, 'the hook no longer fetches more runs than the cross product samples').toBeGreaterThan(
       VIOLATIONS_RUNS_AXIS[VIOLATIONS_RUNS_AXIS.length - 1],
     );
-    const shapes: Array<Omit<ViolationsInput, 'runs'>> = [
-      { finding: 'none', reported: false, checkOff: false, preCompromise: false, countersZeroed: false },
-      { finding: 'both', reported: true, checkOff: false, preCompromise: true, countersZeroed: false },
-      { finding: 'counter', reported: true, checkOff: true, preCompromise: false, countersZeroed: false },
-    ];
+    // `runs` is NORMALISED out of the key rather than destructured away, so a
+    // new axis added to `reachableViolationsInputs` joins the shape in the same
+    // commit instead of needing this line edited.
+    const byKey = new Map<string, ViolationsInput>();
+    for (const input of reachableViolationsInputs()) {
+      if (input.runs === 0) continue; // the no-runs arm has no `runs` to sweep
+      const shape = { ...input, runs: 0 };
+      byKey.set(JSON.stringify(shape), shape);
+    }
+    const shapes = [...byKey.values()];
+    // Anti-vacuity, and the link to the cross product stated as an assertion
+    // rather than as a comment: these ARE that enumeration's shapes.
+    expect(shapes.length, 'the shape projection collapsed').toBe(40);
+    expect(
+      new Set(reachableViolationsInputs().filter((i) => i.runs > 0).map((i) => JSON.stringify({ ...i, runs: 0 }))).size,
+      'the projection is not injective, so a shape is being swept under two names',
+    ).toBe(shapes.length);
     let pinned = 0;
     for (const shape of shapes) {
       for (let runs = 1; runs <= ceiling; runs += 1) {
@@ -1881,16 +2035,76 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
         expectPinnedViolations(
           violationsCard(container),
           expectedViolations(i),
-          `runs=${runs} finding=${i.finding}`,
+          `runs=${runs} finding=${i.finding} reported=${i.reported} checkOff=${i.checkOff} ` +
+            `pre=${i.preCompromise} zeroed=${i.countersZeroed}`,
         );
         pinned += 1;
       }
     }
-    // Anti-vacuity on the sweep itself: an empty `shapes`, or a loop that never
-    // enters, asserts nothing at all.
-    expect(pinned, 'the runs sweep rendered nothing').toBe(shapes.length * ceiling);
-    expect(shapes.length, 'the runs sweep lost its shapes').toBe(3);
-  }, 120_000);
+    // The product, not two marginals: a loop that never entered, a shape list
+    // that emptied, or a ceiling that collapsed all make this fail.
+    expect(pinned, 'the runs sweep rendered less than the whole product').toBe(shapes.length * ceiling);
+  }, 300_000);
+
+  // ══════════════════════════════════════════════════════════════════
+  // ROUND 13's B5: ONE TYPE, ON ONE PAGE — AND THE INSTRUMENT THAT FIXES IT
+  //
+  // Round 12 built the sweep below ONCE, by hand, for `TrustTotals`, and the
+  // commit said it made "a new member of that interface land in neither list
+  // and be a red test rather than a new unvaried coordinate". True of
+  // `TrustTotals`. The general property it reads as — *this surface renders
+  // identically across every member of every input it is handed* — was never
+  // built, and round 13 measured seven one-line escapes through the inputs the
+  // instrument was not carried to, two of them live on the console's own
+  // default demo posture.
+  //
+  // So `unreadMemberPostures` is the instrument, and the four tests below are
+  // four instantiations of it, one per input this card receives:
+  //
+  //   TrustTotals            the aggregate figures       (round 12's original)
+  //   CpDashboardFeatures    the deployment flag set
+  //   TrustOverview          the hook's whole payload
+  //   CpRun                  the run behind every table row
+  //
+  // Each declares a READ / UNREAD partition checked against the interface as
+  // the module declares it, so a new member lands in neither list and throws;
+  // and each sweeps from the EMPTIEST posture the input admits to the most
+  // eventful one, so a gate reading a member in either direction is caught.
+  // Round 13's escapes came in both (`recentRuns.length > 0` and
+  // `logInclusionAudit === false`).
+  // ══════════════════════════════════════════════════════════════════
+  const USE_TRUST_SRC = readFileSync(join(process.cwd(), 'lib/hooks/use-trust.ts'), 'utf8');
+  const TYPES_SRC = readFileSync(join(process.cwd(), 'lib/types.ts'), 'utf8');
+
+  /** Render one posture and assert the violations card has not moved. */
+  function expectViolationsUnmoved(data: TrustOverview, expected: string[], label: string): void {
+    cleanup();
+    const { container } = renderWith(data);
+    expectPinnedViolations(violationsCard(container), expected, label);
+  }
+
+  const SWEEP_BASE: ViolationsInput = {
+    runs: 2,
+    finding: 'revoked',
+    reported: true,
+    checkOff: false,
+    preCompromise: false,
+    countersZeroed: false,
+  };
+
+  function sweepRuns(i: ViolationsInput) {
+    return Array.from({ length: i.runs }, (_, n) => ({
+      runId: `run-${n}`,
+      trust: runTrustFor(i.finding, n),
+    }));
+  }
+
+  /** Every `TrustTotals` member at rest, before `totalsFor` fills the read six. */
+  const ZERO_TOTALS: TrustOverview['totals'] = {
+    audited: 0, verified: 0, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0,
+    flaggedRuns: 0, flaggedEvents: 0, revokedRuns: 0, revokedEvents: 0, preCompromiseEvents: 0,
+    revocationReportedRuns: 0,
+  };
 
   it('pins the violations card against the TOTALS fields it does not read', () => {
     // ROUND 11's NB1, and the sibling of the `sources` case below. The
@@ -1907,52 +2121,11 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // SAME thing whatever those six hold. That is a claim about the card's
     // inputs rather than about the code that happens to ignore them, which is
     // the version that survives the next edit.
-    const UNREAD = ['audited', 'verified', 'verifiedHistorical', 'structural', 'noReceipt', 'errors'] as const;
-    const base: ViolationsInput = {
-      runs: 2,
-      finding: 'revoked',
-      reported: true,
-      checkOff: false,
-      preCompromise: false,
-      countersZeroed: false,
-    };
-    const expected = expectedViolations(base);
-    // Zero, one, and a set of DISTINCT values — so a card that started reading
-    // one of the six is red whichever one it read.
-    const postures: Array<Record<string, number>> = [
-      {},
-      Object.fromEntries(UNREAD.map((k) => [k, 1])),
-      Object.fromEntries(UNREAD.map((k, n) => [k, (n + 1) * 7])),
-    ];
-    for (const extra of postures) {
-      cleanup();
-      const { container } = renderWith(
-        overview(
-          Array.from({ length: base.runs }, (_, n) => ({
-            runId: `run-${n}`,
-            trust: runTrustFor(base.finding, n),
-          })),
-          { ...totalsFor(base), ...extra },
-          FEATURES_ON,
-        ),
-      );
-      expectPinnedViolations(
-        violationsCard(container),
-        expected,
-        `unread totals = ${JSON.stringify(extra)}`,
-      );
-    }
-    // Anti-vacuity, both on the loop and on the list: an empty `UNREAD` would
-    // make every posture identical, and an empty `postures` asserts nothing.
-    expect(UNREAD).toHaveLength(6);
-    expect(postures).toHaveLength(3);
-    expect(new Set(Object.values(postures[2])).size, 'the distinct posture stopped distinguishing fields').toBe(6);
-    // …and these really are ALL the fields the card does not read. The two
-    // lists together must be the whole of `TrustTotals`, read out of
-    // `use-trust.ts` rather than retyped — otherwise a new member arrives in
-    // neither list, is varied by nothing, and is exactly the coordinate this
-    // test exists to make unavailable. A hand-written pair of lists cannot
-    // notice its own gap; the type can.
+    //
+    // ROUND 13's B5 changed only HOW it is expressed: the partition check and
+    // the postures are now the shared instrument, and each member is varied
+    // ALONE as well as with the others, which round 12's three bulk postures
+    // did not do.
     const READ = [
       'flaggedEvents',
       'flaggedRuns',
@@ -1961,14 +2134,305 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       'revocationReportedRuns',
       'preCompromiseEvents',
     ] as const;
-    const src = readFileSync(join(process.cwd(), 'lib/hooks/use-trust.ts'), 'utf8');
-    const body = src.match(/export interface TrustTotals \{([\s\S]*?)\n\}/);
-    expect(body, 'use-trust.ts no longer declares TrustTotals — this classification lost its subject').toBeTruthy();
-    const members = [...body![1].matchAll(/^\s{2}(\w+)\s*:/gm)].map((m) => m[1]).sort();
-    expect(members.length, 'the TrustTotals reader found no members').toBeGreaterThan(6);
-    expect([...READ, ...UNREAD].sort(), 'TrustTotals gained a member nothing here classifies').toEqual(
-      members,
+    const UNREAD = ['audited', 'verified', 'verifiedHistorical', 'structural', 'noReceipt', 'errors'] as const;
+    const expected = expectedViolations(SWEEP_BASE);
+    const lean: TrustOverview['totals'] = { ...ZERO_TOTALS, ...totalsFor(SWEEP_BASE) };
+    const postures = unreadMemberPostures({
+      source: USE_TRUST_SRC,
+      interfaceName: 'TrustTotals',
+      read: READ,
+      unread: UNREAD,
+      lean,
+      // Pairwise distinct, so a card that started reading one of the six is red
+      // whichever one it read and whatever it compared it against.
+      rich: { audited: 11, verified: 13, verifiedHistorical: 17, structural: 19, noReceipt: 23, errors: 29 },
+    });
+    // …plus round 12's UNIFORM posture, which the one-at-a-time sweep does not
+    // subsume: a gate reading two members against each other (`verified ===
+    // audited`) is false under distinct values and true under equal ones.
+    const all: { label: string; input: TrustOverview['totals'] }[] = [
+      ...postures,
+      {
+        label: 'TrustTotals: every unread member = 1',
+        input: { ...lean, ...Object.fromEntries(UNREAD.map((k) => [k, 1])) },
+      },
+    ];
+    expect(all, 'the TrustTotals sweep lost a posture').toHaveLength(UNREAD.length + 2);
+    for (const p of all) {
+      expectViolationsUnmoved(overview(sweepRuns(SWEEP_BASE), p.input, FEATURES_ON), expected, p.label);
+    }
+  });
+
+  it('pins the violations card against the FEATURE FLAGS it does not read', () => {
+    // ROUND 13's B5, escape 2 and 3. `/trust` reads exactly ONE member of
+    // `CpDashboardFeatures` — `features?.keyRevocationCheck === false`, and
+    // `use-trust.ts`'s own docblock explains why only that arm is safe here.
+    // The other five arrive on every render and were pinned to `true` in every
+    // fixture on this page (`FEATURES_ON`), so a coordinate on one of them was
+    // unreachable by everything above. Measured, inside the violations
+    // CardBody:
+    //
+    //   {features?.logInclusionAudit === false && <p>No key in this deployment
+    //    has been revoked.</p>}
+    //
+    // 42 files / 1050 tests green — and `MOCK_DASHBOARD` sets that flag false,
+    // so it renders on the console's own demo posture.
+    const READ = ['keyRevocationCheck'] as const;
+    const UNREAD = [
+      'receiptAudit',
+      'logInclusionAudit',
+      'logWitness',
+      'witnessCosigning',
+      'witnessQuorum',
+    ] as const;
+    const subtitles = new Set<string>();
+    for (const keyRevocationCheck of [false, true]) {
+      // `reported: false`, so the ONE read flag actually decides the subtitle:
+      // `check-off` against `not-reported`. A read member that stopped being
+      // read would collapse the two, and the assertion after the loop is red.
+      const base: ViolationsInput = {
+        ...SWEEP_BASE,
+        finding: 'flagged',
+        reported: false,
+        checkOff: keyRevocationCheck === false,
+      };
+      const expected = expectedViolations(base);
+      subtitles.add(expected.join(''));
+      const postures = unreadMemberPostures({
+        source: TYPES_SRC,
+        interfaceName: 'CpDashboardFeatures',
+        read: READ,
+        unread: UNREAD,
+        // All five OFF, which no fixture on this page had ever rendered…
+        lean: {
+          keyRevocationCheck,
+          receiptAudit: false,
+          logWitness: false,
+          logInclusionAudit: false,
+          witnessCosigning: false,
+          witnessQuorum: false,
+        },
+        // …and all five ON, so both `=== true` and `=== false` gates are swept.
+        rich: {
+          receiptAudit: true,
+          logWitness: true,
+          logInclusionAudit: true,
+          witnessCosigning: true,
+          witnessQuorum: true,
+        },
+      });
+      expect(postures, 'the CpDashboardFeatures sweep lost a posture').toHaveLength(UNREAD.length + 1);
+      for (const p of postures) {
+        expectViolationsUnmoved(
+          overview(sweepRuns(base), totalsFor(base), p.input),
+          expected,
+          `${p.label} · keyRevocationCheck=${keyRevocationCheck}`,
+        );
+      }
+    }
+    // The `keyRevocationCheck=true, receiptAudit=false` postures above depict a
+    // deployment upstream REFUSES TO BOOT (`app-config.service.ts:573-574`
+    // throws on exactly that pair). They are swept deliberately: nothing
+    // validates this payload on arrival, and `lib/types.ts`'s own docblock says
+    // the all-six requirement is "a claim about UPSTREAM, not a guarantee the
+    // wire makes". The card must render the same whatever arrives.
+    //
+    // Anti-vacuity on the READ side: the one member this card does read has to
+    // change what it renders, or the loop above is two identical sweeps.
+    expect(subtitles.size, 'the check-off arm collapsed onto the not-reported one').toBe(2);
+  });
+
+  it('pins the violations card against the OVERVIEW members it does not read', () => {
+    // ROUND 13's B5, at the level of the hook's whole return value. The card
+    // reads `runs`, `totals` and `features`; `receiptCoverage` and `didMethods`
+    // feed the two bar charts further down the page and were `[]` in every
+    // fixture in this file. Measured, inside the violations CardBody:
+    //
+    //   {receiptCoverage.length === 0 && <p>No key in this deployment has been
+    //    revoked.</p>}
+    //
+    // 42 files / 1050 tests green, and `[]` is what `useTrust` returns whenever
+    // the dashboard overview omits the field — which is every control plane
+    // predating ACDP 0.2.
+    const READ = ['runs', 'totals', 'features'] as const;
+    const UNREAD = ['receiptCoverage', 'didMethods'] as const;
+    const expected = expectedViolations(SWEEP_BASE);
+    const lean = overview(sweepRuns(SWEEP_BASE), totalsFor(SWEEP_BASE), FEATURES_ON);
+    expect(
+      [lean.receiptCoverage.length, lean.didMethods.length],
+      'the lean posture is no longer the empty one',
+    ).toEqual([0, 0]);
+    const postures = unreadMemberPostures<TrustOverview>({
+      source: USE_TRUST_SRC,
+      interfaceName: 'TrustOverview',
+      read: READ,
+      unread: UNREAD,
+      lean,
+      rich: {
+        receiptCoverage: [
+          { registry_authority: 'registry-a.playground.local', publish_count: 12, receipt_count: 4 },
+          { registry_authority: 'registry-b.playground.local', publish_count: 3, receipt_count: 3 },
+        ],
+        didMethods: [
+          { method: 'did:web', publish_count: 7 },
+          { method: 'other', publish_count: 1 },
+        ],
+      },
+    });
+    expect(postures, 'the TrustOverview sweep lost a posture').toHaveLength(UNREAD.length + 1);
+    for (const p of postures) expectViolationsUnmoved(p.input, expected, p.label);
+  });
+
+  it('pins the violations TABLE against the CpRun members it does not read', () => {
+    // ROUND 13's B5, escapes 6 and 7. Every row of this table is rendered from
+    // a `CpRun`, and this file has always built one with a three-field cast —
+    // `{ runId, startedAt, completedAt } as unknown as CpRun` — so nine of the
+    // twelve members arrived `undefined` on every render in the file.
+    // Measured, on the run cell:
+    //
+    //   {runs.some((r) => r.run.status === 'completed') && …}
+    //   {runs.some((r) => (r.run.registries ?? []).length > 0) && …}
+    //
+    // both 42 files / 1050 tests green, and both true of the demo dataset.
+    //
+    // The cast is gone: `lean` below is a COMPLETE `CpRun` at rest, so the
+    // sweep varies real members rather than filling in absent ones.
+    const READ = ['runId', 'startedAt', 'completedAt'] as const;
+    const UNREAD = [
+      'tenantId',
+      'scenarioId',
+      'status',
+      'contextsCount',
+      'registries',
+      'inputs',
+      'result',
+      'updatedAt',
+      'trust',
+    ] as const;
+    const base: ViolationsInput = { ...SWEEP_BASE, runs: 1 };
+    const expected = expectedViolations(base);
+    const lean: CpRun = {
+      runId: 'run-0',
+      tenantId: 'tenant-a',
+      scenarioId: 'scenario-a',
+      status: 'running',
+      startedAt: '2026-09-25T00:00:00.000Z',
+      completedAt: WHEN,
+      contextsCount: 0,
+      registries: [],
+      inputs: null,
+      result: null,
+      updatedAt: undefined,
+      trust: null,
+    };
+    const postures = unreadMemberPostures<CpRun>({
+      source: TYPES_SRC,
+      interfaceName: 'CpRun',
+      read: READ,
+      unread: UNREAD,
+      lean,
+      rich: {
+        tenantId: 'tenant-b',
+        scenarioId: 'scenario-b',
+        status: 'completed',
+        contextsCount: 5,
+        registries: ['registry-a.playground.local', 'registry-b.playground.local'],
+        inputs: { seed: 7 },
+        result: { ok: true },
+        updatedAt: '2026-09-25T00:02:00.000Z',
+        // The run's OWN trust summary, which is a different value from the
+        // `trust` member beside it in `TrustOverview['runs']` — the page reads
+        // the latter, and a row that started reading this one would report a
+        // finding nothing in the totals accounts for.
+        trust: trust({ revoked: [revocation('revoked_time_unverifiable', 'inner')] }),
+      },
+    });
+    expect(postures, 'the CpRun sweep lost a posture').toHaveLength(UNREAD.length + 1);
+    for (const p of postures) {
+      expectViolationsUnmoved(
+        {
+          runs: [{ run: p.input, trust: runTrustFor(base.finding, 0) }],
+          totals: { ...ZERO_TOTALS, ...totalsFor(base) },
+          receiptCoverage: [],
+          didMethods: [],
+          features: FEATURES_ON,
+        },
+        expected,
+        p.label,
+      );
+    }
+  });
+
+  it('GUARDS THE GUARD: the unread-member sweep refuses a gap, a rename and a vacuous posture', () => {
+    // The instrument is now load-bearing at six call sites across two files, so
+    // its refusals are measured rather than assumed. Each case below is a way
+    // the sweep could go green while asserting nothing.
+    const SRC = 'export interface Sample {\n  a: number;\n  b: number;\n  c: number;\n}\n';
+    const sweep = (over: Partial<Parameters<typeof unreadMemberPostures>[0]>) =>
+      unreadMemberPostures({
+        source: SRC,
+        interfaceName: 'Sample',
+        read: ['a'],
+        unread: ['b', 'c'],
+        lean: { a: 1, b: 0, c: 0 },
+        rich: { b: 1, c: 2 },
+        ...over,
+      });
+    // The happy path: two members, one posture each, plus the all-at-once.
+    expect(sweep({}).map((p) => p.label)).toEqual([
+      'Sample.b = 1',
+      'Sample.c = 2',
+      'Sample: all 2 unread members at once',
+    ]);
+    expect(sweep({})[2].input).toEqual({ a: 1, b: 1, c: 2 });
+    // A member in NEITHER list — the shape of every escape round 13 found.
+    expect(() => sweep({ unread: ['b'], rich: { b: 1 } })).toThrow(/nothing here classifies: c/);
+    // A member the interface no longer declares (a rename upstream).
+    expect(() => sweep({ unread: ['b', 'c', 'd'], rich: { b: 1, c: 2, d: 3 } })).toThrow(
+      /no longer declares: d/,
     );
+    // A member on BOTH sides, which would let a read field pose as swept.
+    expect(() => sweep({ read: ['a', 'b'] })).toThrow(/called both read and unread: b/);
+    // A posture that varies a field to the value it already holds.
+    expect(() => sweep({ rich: { b: 0, c: 2 } })).toThrow(/varies to the value it already holds/);
+    // An unread member with no value to vary to.
+    expect(() => sweep({ rich: { b: 1 } })).toThrow(/no varied value for Sample\.c/);
+    // A subject that is not there at all — silence here would be a sweep with
+    // no interface behind it, which is the failure mode of every source parse.
+    expect(() => sweep({ interfaceName: 'Missing' })).toThrow(/no `interface Missing`/);
+    // …and one with no members, which would make the partition trivially true.
+    expect(() =>
+      sweep({ source: 'export interface Sample {\n}\n', read: [], unread: [] }),
+    ).toThrow(/parsed to no members/);
+  });
+
+  it('GUARDS THE GUARD: `suppressorOn` answers for exactly the three suppressing attributes', () => {
+    // `SUPPRESSING_ATTRS` is the closed set both surfaces' reachability walks
+    // are built on, and the claim that it IS closed is argued in its docblock
+    // rather than measured. What can be measured is that the predicate reads
+    // every member of it and nothing else — a fourth attribute added to the
+    // list but not to `suppressorOn` would leave a documented channel unwalked.
+    const el = document.createElement('div');
+    expect(suppressorOn(el), 'a bare element is suppressed').toBeNull();
+    for (const attr of SUPPRESSING_ATTRS) {
+      el.setAttribute(attr, 'true');
+      expect(suppressorOn(el), `\`${attr}\` is not read by suppressorOn`).not.toBeNull();
+      el.removeAttribute(attr);
+    }
+    expect(SUPPRESSING_ATTRS).toHaveLength(3);
+    // `aria-hidden` is the one of the three that is a VALUE, not a presence:
+    // `aria-hidden="false"` is an explicit un-hiding and must not read as a
+    // suppression, while a bare `hidden` must.
+    el.setAttribute('aria-hidden', 'false');
+    expect(suppressorOn(el)).toBeNull();
+    el.removeAttribute('aria-hidden');
+    el.setAttribute('hidden', '');
+    expect(suppressorOn(el)).toBe('hidden');
+    el.removeAttribute('hidden');
+    // …and a plausible near-miss that is NOT suppression: `role="presentation"`
+    // removes semantics, not the subtree, so the text is still announced.
+    el.setAttribute('role', 'presentation');
+    expect(suppressorOn(el)).toBeNull();
   });
 
   it('pins the finding row against the revocation fields the page does NOT render', () => {
@@ -2164,30 +2628,84 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // rules point every colour change at this file. `health-labels.test.tsx`
     // reads `app/globals.css` for exactly this reason and says so; this is the
     // same instrument on the surface #97 is about.
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 13's B3: A TOKEN NAME IS NOT A COLOUR
+    //
+    // This asserted `colourOf('.chip.bad') === 'var(--danger)'` and that the
+    // three token NAMES are distinct, under "which is the property an operator
+    // actually relies on". An operator relies on distinct COLOURS, and three
+    // channels each repainted a live fail-closed verdict success-green with 42
+    // files / 1050 tests green:
+    //
+    //   :root { --danger: #f05d7a }  ->  #22d48f          (identical to
+    //     --success; `new Set(names).size === 3` still passes, and it repaints
+    //     every danger surface in the console in one line)
+    //   .data-table .chip.bad { color: var(--success) }   (appended; `match`
+    //     returns the FIRST rule and the cascade takes the last)
+    //   <span … style={{ color: C.success }}>             (inline; invisible
+    //     to every half, because `style` is licensed as non-announcing)
+    //
+    // So the pin is over the RESOLVED colour, taken from the LAST matching
+    // rule through the `:root` table — plus the inline channel, asserted on
+    // the elements themselves rather than on the stylesheet.
+    // ══════════════════════════════════════════════════════════════════
     const css = readFileSync(join(process.cwd(), 'app/globals.css'), 'utf8');
-    const rule = (selector: string): string => {
-      const m = css.match(new RegExp(`\\${selector}\\s*\\{[^}]*\\}`));
-      expect(m, `${selector} has no rule in app/globals.css`).toBeTruthy();
-      return m![0];
+    const vars = cssCustomProperties(css);
+    // Anti-vacuity on the table itself: a resolver reading an empty map
+    // resolves everything to `null` and every comparison below would be
+    // `null === null`.
+    expect(Object.keys(vars).length, 'the :root custom-property table read as empty').toBeGreaterThan(10);
+    const tone = (selector: string): string => {
+      const c = resolvedColour(css, selector);
+      expect(c, `${selector} resolves to no colour in app/globals.css`).toBeTruthy();
+      return c!;
     };
-    const colourOf = (selector: string): string => {
-      const m = rule(selector).match(/(?:^|[;{])\s*color\s*:\s*([^;}]+)/);
-      expect(m, `${selector} sets no color`).toBeTruthy();
-      return m![1].trim();
-    };
-    expect(colourOf('.chip.bad'), 'a fail-closed finding is no longer painted as one').toBe('var(--danger)');
-    expect(colourOf('.chip.warn'), 'an unverifiable finding lost its warning colour').toBe('var(--warning)');
-    expect(colourOf('.chip.ok'), 'the authorized arm lost its success colour').toBe('var(--success)');
-    // …and the three are DISTINCT, which is the property an operator actually
-    // relies on: three rules all resolving to the same token would satisfy
-    // every line above while telling a fail-closed verdict from an authorized
-    // one not at all.
-    const tones = ['.chip.bad', '.chip.warn', '.chip.ok'].map(colourOf);
-    expect(new Set(tones).size, 'two chip states share a colour').toBe(3);
-    // GUARDS THE GUARD: the reader finds a real rule and a real colour, and
-    // fails loudly rather than vacuously when it does not.
-    expect(rule('.chip.bad')).toContain('background');
-    expect(() => colourOf('.chip.not-a-real-state')).toThrow();
+    expect(tone('.chip.bad'), 'a fail-closed finding is no longer painted as one').toBe(vars['--danger']);
+    expect(tone('.chip.warn'), 'an unverifiable finding lost its warning colour').toBe(vars['--warning']);
+    expect(tone('.chip.ok'), 'the authorized arm lost its success colour').toBe(vars['--success']);
+    // …and the three are distinct AS COLOURS. This is the assertion the token
+    // names were standing in for.
+    const tones = ['.chip.bad', '.chip.warn', '.chip.ok'].map(tone);
+    expect(new Set(tones).size, 'two chip states resolve to the same colour').toBe(3);
+    expect(tones.every((t) => /^#|^rgb/.test(t)), 'a tone did not resolve past its token').toBe(true);
+    // GUARDS THE GUARD, four ways — one per channel the round-13 gate walked
+    // through, plus the vacuity direction.
+    expect(resolvedColour(css, '.chip.not-a-real-state'), 'the reader invents a rule').toBeNull();
+    const repainted = css.replace(/(--danger:\s*)#[0-9a-f]{6}/i, `$1${vars['--success']}`);
+    expect(
+      resolvedColour(repainted, '.chip.bad'),
+      'a :root repaint is invisible to the resolved-colour pin',
+    ).toBe(vars['--success']);
+    expect(
+      resolvedColour(css + '\n.data-table .chip.bad { color: var(--success); }', '.chip.bad'),
+      'a later, more specific rule is invisible — the reader is still taking the first match',
+    ).toBe(vars['--success']);
+    expect(lastRuleFor(css, '.chip.bad')).toContain('background');
+    expect(lastRuleFor(css, '.chip.nope')).toBeNull();
+
+    // ── The INLINE channel, on the elements rather than the stylesheet ──
+    //
+    // `style` is on `NON_ANNOUNCING_ATTRS`, so an inline `color` on the chip
+    // is invisible to `expectNothingAnnounced`, and the stylesheet pin above
+    // cannot see it either. A chip may therefore carry NO inline colour at all
+    // — the class is what decides, which is this repository's own rule — and
+    // that is the closed form: not "no inline colour that is wrong", but "no
+    // inline colour", so there is nothing to keep complete.
+    cleanup();
+    const inlineProbe = renderWith(
+      overview(
+        [{ runId: 'run-inline', trust: trust({ revoked: [revocation('revoked_at_or_after')] }) }],
+        { revokedEvents: 1, revokedRuns: 1, revocationReportedRuns: 1 },
+        FEATURES_ON,
+      ),
+    );
+    const inlineChips = [
+      ...violationsCard(inlineProbe.container).querySelectorAll<HTMLElement>('tbody td span[class^="chip"]'),
+    ];
+    expect(inlineChips.length, 'no chip rendered for the inline-colour pin').toBeGreaterThan(0);
+    for (const c of inlineChips) {
+      expect(c.style.color, 'a chip paints itself inline, where the class pin cannot see it').toBe('');
+    }
   });
 
   it('GUARDS THE GUARD: the TABLE state rejects an all-clear beside the findings', () => {
