@@ -3521,6 +3521,56 @@ describe('every source guard is exercised against a subject it must reject', () 
   // raw form of it is red for a reason that is not the guard. The number above
   // is from the repaired form, where the anchor is updated in the same edit.
   // ══════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════
+  // ROUND 20's MEASUREMENTS
+  //
+  // Round 19 found eight escapes, six of them round 17's six findings
+  // re-opened by a one-token re-spelling. Every one is re-run here from a
+  // clean tree, alone, under `npx tsc --noEmit` and the FULL suite (42 files /
+  // 979 tests green at HEAD). tsc was clean for all fifteen, so none of these
+  // is a type error wearing a test failure.
+  //
+  //   BL-1a `{capabilities?.profiles.map((q, i) => …i > 8 ?
+  //          glossFor(q)?.title…)}` beside the real map           → 7 red
+  //   BL-1b the same with `capabilities!.profiles`                → 7 red
+  //   BL-1c the same with `capabilities['profiles']`              → 17 red
+  //   BL-2  `style={{ opacity: registry.authority.length >= 40
+  //          ? 0 : undefined }}` on the Profiles metric row       → 1 red
+  //   BL-3a `@media (max-width: 640px) { .grid-2 > div > div >
+  //          div { display: none } }`                             → 1 red
+  //   BL-3b `@media (max-width: 640px) { div[class*="metric"]
+  //          { display: none } }`                                 → 1 red
+  //   BL-4  the two-file gloss edit with a FULL STOP separator    → 12 red
+  //   BL-5  `import { createElement as ce }` + `ce('style', …)`
+  //          in app/layout.tsx                                    → 1 red
+  //   BL-6a `.chip::after { \63 ontent: ' (see acdp-consumer)' }`  → 1 red
+  //   BL-6b the same escape on a PAGE selector                    → 1 red
+  //   BL-7  `new CSSStyleSheet()` + `sheet.replaceSync(…)` +
+  //          `document.adoptedStyleSheets = […]` in app-shell     → 1 red
+  //   BL-8  `window.location.hostname.endsWith('.prod')` gating
+  //          ` acdp-consumer: …` inside components/ui/status-dot  → 2 red
+  //   NB-2  `createElement('style', …)` in app/injector.mts       → 1 red
+  //
+  // Controls, so the numbers above are not a guard that fires on everything:
+  //
+  //   CTL-1 the SAME gloss edit with a hyphen                     → 12 red
+  //         (identical to BL-4, which is the point: the separator
+  //          is no longer what decides)
+  //   CTL-2 a plain `content:` on a card class                    → 1 red
+  //
+  // BL-1c is 17 rather than 7 because an element access with a literal key
+  // also breaks the rendered closed world's licensing — the second surface
+  // renders gloss text — where the optional-chain form is caught by the source
+  // guards before the render probes see it. Both are kills; the difference is
+  // which half gets there first.
+  //
+  // WHAT THIS SWEEP DOES NOT SHOW. Round 19's prescriptions were implemented
+  // and its own escapes are closed; a nineteenth round's escapes are not
+  // evidence about a twentieth's. The residual this file names is unchanged:
+  // a supplier returning copy that is NOT id-shaped, an arbitrary id string no
+  // probe samples, and a stylesheet injected from outside the repository.
+  // ══════════════════════════════════════════════════════════════════
   type FailSite = {
     fn: string;
     /**
