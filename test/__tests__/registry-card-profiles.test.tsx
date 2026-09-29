@@ -536,6 +536,131 @@ describe('the dead tooltip copy is gone', () => {
     for (const name of PCT.CONDITION_ALLOW_LIST) {
       expect(name, `\`${name}\` is an expression, not an identifier`).toMatch(/^[A-Za-z_$][\w$]*$/);
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-2: SUPPRESSION HANGS OFF THE PATH, NOT ON IT
+    //
+    // The two lists above bound what may be BETWEEN the return and the map.
+    // A JSX attribute belongs to an element on that chain and is never itself
+    // an ancestor of the map call, so
+    //
+    //   <div className="metric-row"
+    //        style={{ opacity: registry.authority.length >= 40 ? 0 : undefined }}>
+    //
+    // was 977/977 green, typecheck and lint clean, and made every chip, id and
+    // gloss invisible on any registry whose authority is forty characters or
+    // longer. `opacity` is inherited by the whole subtree and no descendant
+    // rule can undo it. That is round 15's B2 verbatim, under a docblock
+    // saying "a conditional anywhere on that path, however spelled, is refused
+    // rather than recognised".
+    //
+    // The path bound answers "is the row RENDERED". Suppression asks "is it
+    // VISIBLE", and those are different questions about different nodes. So
+    // the whole attribute surface of the render path is pinned, the way
+    // `CHIP_ATTRIBUTES` pins the chip's — a new attribute anywhere on the way
+    // down is a reviewable diff whatever it does, and there is no list of
+    // suppressing properties to keep complete.
+    // ══════════════════════════════════════════════════════════════════
+    expect(PCT.pathAttributes(), 'an attribute appeared on the card’s render path').toEqual([
+      "<span style={{display:'flex',gap:4,flexWrap:'wrap',justifyContent:'flex-end'}}>",
+      '<div className="metric-row">',
+      '<div className="card-body">',
+      "<div style={{display:'flex',flexDirection:'column',gap:6}}>",
+      '<div className="card">',
+    ]);
+    // GUARDS THE GUARD: the exact escape appears in the product.
+    expect(
+      PCT.pathAttributes(
+        PCT.componentSource().replace(
+          '<div className="metric-row">\n              <span className="metric-name">Profiles</span>',
+          '<div className="metric-row" style={{ opacity: registry.authority.length >= 40 ? 0 : undefined }}>\n              <span className="metric-name">Profiles</span>',
+        ),
+      ),
+      'a style attribute on the profiles row is invisible to the attribute pin',
+    ).toContain('<div style={{opacity:registry.authority.length>=40?0:undefined}}>');
+    // …and a spread, which carries an unbounded attribute set, is reported as
+    // a spread rather than silently contributing nothing.
+    expect(
+      PCT.pathAttributes(
+        PCT.componentSource().replace('<div className="card">', '<div className="card" {...rest}>'),
+      ),
+    ).toContain('<div {...rest}>');
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-1: `capabilities?.profiles` IS A DIFFERENT STRING
+    //
+    // The one-dereference rule was written as a source-text equality against
+    // `'capabilities.profiles'`. One character walked past it — a second
+    // per-profile surface spelled `capabilities?.profiles.map(…)` was 977/977
+    // green while putting gloss text into visible body copy — under a docblock
+    // saying "there is no second READ of the array to spell it on".
+    //
+    // It bounded one SPELLING of the read. So the read is resolved instead,
+    // and the pin below is over every member the component takes off
+    // `capabilities` — not over the one member somebody remembered to watch.
+    // ══════════════════════════════════════════════════════════════════
+    const caps = PCT.capabilityReads(
+      ts.createSourceFile('c.tsx', PCT.componentSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
+    );
+    expect(caps.map((c) => c.member), 'the card reads a capability nothing here pinned').toEqual([
+      'acdp_version',
+      'supported_signature_algorithms',
+      'profiles',
+      'limits',
+      'anonymous_public_reads',
+      'anonymous_public_reads',
+    ]);
+    // GUARDS THE GUARD: every spelling of the same read resolves to the same
+    // member, so none of them is a second surface the count cannot see.
+    const reads = (src: string) =>
+      PCT.capabilityReads(
+        ts.createSourceFile('p.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
+      ).map((c) => c.member);
+    for (const spelling of [
+      'capabilities?.profiles',
+      'capabilities!.profiles',
+      '(capabilities).profiles',
+      "capabilities['profiles']",
+      '(capabilities as C).profiles',
+      'const { profiles } = capabilities',
+    ]) {
+      expect(reads(`const x = ${spelling};`), `${spelling} is not seen as a read`).toContain(
+        'profiles',
+      );
+    }
+    // …and the resolver is not simply saying yes to everything.
+    expect(reads('const x = other.profiles;')).toEqual([]);
+    expect(reads('const x = capabilities;')).toEqual([]);
+    // …and the guard that counts them REFUSES the optional-chain escape, which
+    // is the assertion the docblock above was making without a test.
+    expect(() =>
+      assertGlossIsPureOfId(
+        PCT.componentSource().replace(
+          '{capabilities.profiles.map((p) => {',
+          '{capabilities?.profiles.map((q) => q)}\n              {capabilities.profiles.map((p) => {',
+        ),
+      ),
+    ).toThrow(/dereferences `capabilities.profiles` 2 times/);
+  });
+
+  it('the anti-vacuity FRACTION is a bound, not a number nobody reads', () => {
+    // ROUND 19's NB-3. `VACUITY_FRACTION` and `literalCensus` are exported and
+    // the round-18 commit said "both are exported and pinned" — `grep` found
+    // one hit in the test file and it was inside a comment. They are load
+    // bearing in EFFECT (0.8 → 0.05 is 3 red, measured), but "load bearing in
+    // effect" is the argument every unpinned licensing list in this file has
+    // been defended with.
+    expect(PCT.VACUITY_FRACTION, 'the vacuity floor was lowered').toBe(0.8);
+    // …and the census it multiplies is a real measurement of this component,
+    // re-taken here by a descent that shares no code with either walk.
+    const census = PCT.literalCensus(
+      ts.createSourceFile('c.tsx', PCT.componentSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
+    );
+    expect(census, 'the component’s literal census moved').toEqual({
+      stringLiterals: 68,
+      templateParts: 0,
+      jsxTexts: 10,
+    });
   });
 
   it('the label allow-list is a list of LABELS, not a place to put a sentence', () => {
@@ -623,9 +748,12 @@ describe('the dead tooltip copy is gone', () => {
     // Anti-vacuity for the walk AND for the scan: an enumeration that returned
     // nothing, or a regex that matched nothing, would satisfy every loop above.
     expect(total, 'the stylesheet scanner found no content declarations at all').toBeGreaterThan(1);
-    // …and the trap itself, stated as a case rather than as a comment.
+    // …and the trap itself, stated as a case rather than as a comment. Values
+    // come back NORMALISED — `lightningcss` prefers double quotes — because
+    // every scanner here now reads the compiler's output rather than the file;
+    // see `normalizeCss`.
     expect(SHEET.contentDeclarations('.a { justify-content: center; }')).toEqual([]);
-    expect(SHEET.contentDeclarations(".a::after { content: 'x'; }")).toEqual(["'x'"]);
+    expect(SHEET.contentDeclarations(".a::after { content: 'x'; }")).toEqual(['"x"']);
 
     // ROUND 15's N1: the emptiness rule above was the ONLY layer on this
     // channel, and gutting it to `expect(typeof value).toBe('string')` was a
@@ -637,12 +765,12 @@ describe('the dead tooltip copy is gone', () => {
       universe.flatMap(({ css }) => SHEET.contentRules(css)),
       'the set of text-generating CSS rules has changed',
     ).toEqual([
-      { selector: '.kpi-card::before', value: "''" },
-      { selector: '.event-row::before', value: "''" },
+      { selector: '.kpi-card:before', value: '""' },
+      { selector: '.event-row:before', value: '""' },
     ]);
     // GUARDS THE GUARD: the selector half is not satisfied by any declaration.
     expect(SHEET.contentRules(".chip::after { content: ' (x)'; }")).toEqual([
-      { selector: '.chip::after', value: "' (x)'" },
+      { selector: '.chip:after', value: '" (x)"' },
     ]);
     expect(SHEET.contentRules('.a { justify-content: center; }')).toEqual([]);
 
@@ -653,15 +781,49 @@ describe('the dead tooltip copy is gone', () => {
     // The two derivations agreeing at `2 === 2` while both missed the rule is
     // what made it invisible, which is why the independent count is now
     // tokenised rather than matched. Stated as cases, both directions:
-    expect(SHEET.contentDeclarations(".a::after { CONTENT: 'x'; }")).toEqual(["'x'"]);
+    expect(SHEET.contentDeclarations(".a::after { CONTENT: 'x'; }")).toEqual(['"x"']);
     expect(SHEET.contentRules(".chip::after { Content: ' (x)'; }")).toEqual([
-      { selector: '.chip::after', value: "' (x)'" },
+      { selector: '.chip:after', value: '" (x)"' },
     ]);
     expect(SHEET.contentOccurrences(".a::after { CONTENT: 'x'; }")).toBe(1);
     expect(SHEET.cssAtImports("@IMPORT url('x.css');")).toHaveLength(1);
     // …and the upper-cased trap is still not a `content` declaration.
     expect(SHEET.contentDeclarations('.a { JUSTIFY-CONTENT: center; }')).toEqual([]);
     expect(SHEET.contentOccurrences('.a { JUSTIFY-CONTENT: center; }')).toBe(0);
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-6: AN IDENT ESCAPE, WHICH CASE-FOLDING CANNOT SEE
+    //
+    // Round 18 answered the case finding with `i` flags plus a tokenising
+    // second count, and wrote that the tokeniser reads "the parser's own model
+    // of what a declaration is". CSS Syntax L3 ident tokens admit ESCAPES, and
+    // `\63 ontent` lower-cases to `\63 ontent`, not to `content`:
+    //
+    //   .grid-2 > div::after { \63 ontent: ' (see acdp-consumer)'; }
+    //
+    // was 977/977 green. `lightningcss` — which is what Next 16 will compile
+    // this sheet with — accepts all three escape forms and normalises every
+    // one of them to `content:`. Two derivations that shared a new blind spot
+    // agreed at `2 === 2` exactly where both were wrong.
+    //
+    // So both scanners read `normalizeCss()` now, and the escape stops being a
+    // case: the compiler resolves it before either derivation looks. Measured
+    // here in all three spellings the round-19 gate tested.
+    // ══════════════════════════════════════════════════════════════════
+    for (const spelling of ['\\63 ontent', 'con\\74 ent', '\\0063ontent']) {
+      const css = `.chip::after { ${spelling}: ' (see acdp-consumer)'; }`;
+      expect(SHEET.contentDeclarations(css), `${spelling} is invisible to the scanner`).toEqual([
+        '" (see acdp-consumer)"',
+      ]);
+      expect(SHEET.contentOccurrences(css), `${spelling} is invisible to the count`).toBe(1);
+    }
+    // …and the escape is resolved without swallowing the trap in the other
+    // direction, which is the failure a looser normalisation would cause.
+    expect(SHEET.contentOccurrences('.a { justify-\\63 ontent: center; }')).toBe(0);
+    // A sheet the compiler cannot parse THROWS. A skipped sheet and a clean
+    // sheet are indistinguishable, and that is the one thing this module may
+    // not do quietly.
+    expect(() => SHEET.normalizeCss('.a { color: ;;; @@@ }')).toThrow(/could not be parsed/);
 
     // ══════════════════════════════════════════════════════════════════
     // ROUND 17's BL-6: the same channel, in the direction nothing bounded.
@@ -681,99 +843,125 @@ describe('the dead tooltip copy is gone', () => {
     // by six times; the set of stylesheet rules that mention a class this card
     // renders is closed, short, and reviewable.
     // ══════════════════════════════════════════════════════════════════
-    // The classes come from the RENDER, not from a list somebody typed: a class
-    // added to the card is then covered without an edit here, which is the half
-    // a hand-written selector list loses. Pinned all the same, because the pin
-    // below is only as closed as this set is.
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-3: MATCHING SELECTOR TEXT IS NOT ASKING WHAT APPLIES
     //
-    // Three fixtures, because one render is not the card's class set: the
-    // `capabilities &&` arm decides six of the rows, and `anonymous_public_reads`
-    // decides between `badge-pub` and `badge-neutral` — so a single render
-    // leaves a class the card genuinely paints out of the union, and out of the
-    // rule pin with it.
-    const classesOf = (caps?: RegistryCapabilities): string[] => {
-      const { container } = render(<RegistryCard registry={REGISTRY_B} capabilities={caps} />);
-      const found = [...container.querySelectorAll<HTMLElement>('*')].flatMap((el) => [...el.classList]);
+    // Round 18's answer was `cardRules(css, classes)`: the classes came from
+    // the render, and a rule counted as "about the card" when its selector
+    // TEXT contained one of those class tokens. Two one-line rules walked past
+    // it, each 977/977 green with typecheck and lint clean:
+    //
+    //   @media (max-width: 640px) { .grid-2 > div > div > div { display: none } }
+    //   @media (max-width: 640px) { div[class*="metric"]      { display: none } }
+    //
+    // The first is `.grid-2 > .card > .card-body > .metric-row`, and `grid-2`
+    // is a class of the PAGE this card ships inside — not one the card paints
+    // — so the rule sat outside a pin keyed on the card's own classes. The
+    // second names no class at all. Both take every metric row off every
+    // registry card at phone width.
+    //
+    // "Rules that mention a class the card renders" is a proper SUBSET of
+    // "rules that apply to the card", and the docblock called it the second.
+    // The list this pin was said to have none of turned out to be the list of
+    // classes the card paints.
+    //
+    // So the question goes to a selector engine. The card is rendered INSIDE
+    // THE PAGE ANCESTRY IT SHIPS IN (`app/registries/page.tsx` renders it in
+    // `.page > .grid-2`), and `Element.matches()` decides. Ancestor selectors,
+    // attribute selectors, `:has()`, `*`, tag selectors and whatever is next
+    // stop being cases, because the matcher is the one the browser uses.
+    // ══════════════════════════════════════════════════════════════════
+    const rulesFor = (caps?: RegistryCapabilities) => {
+      const { container } = render(
+        <div className="page">
+          <div className="grid-2">
+            <RegistryCard registry={REGISTRY_B} capabilities={caps} />
+          </div>
+        </div>,
+      );
+      const out = SHEET.applicableRules(container.firstElementChild!, universe);
       cleanup();
-      return found;
+      return out;
     };
-    const rendered = [
-      ...new Set([
-        ...classesOf(undefined),
-        ...classesOf(MOCK_CAPABILITIES.b),
-        ...classesOf({ ...MOCK_CAPABILITIES.b, anonymous_public_reads: false }),
-      ]),
-    ].sort();
-    expect(rendered, 'the card renders a class the rule pin below does not cover').toEqual([
-      'badge',
-      'badge-complete',
-      'badge-neutral',
-      'badge-pub',
-      'card',
-      'card-body',
-      'card-header',
-      'chip',
-      'did',
-      'dot',
-      'metric-name',
-      'metric-row',
-      'metric-val',
-      'ok',
+    // Three postures, for the reason round 18 found: one render is not the
+    // card's surface. The `capabilities &&` arm decides six rows, and
+    // `anonymous_public_reads` decides between `badge-pub` and `badge-neutral`.
+    const byKey = new Map<string, { sheet: string; selector: string; block: string }>();
+    const unmatchable = new Set<string>();
+    for (const caps of [
+      undefined,
+      MOCK_CAPABILITIES.b,
+      { ...MOCK_CAPABILITIES.b, anonymous_public_reads: false },
+    ]) {
+      const got = rulesFor(caps);
+      for (const r of got.applied) byKey.set(`${r.sheet}|${r.selector}|${r.block}`, r);
+      for (const u of got.unmatchable) unmatchable.add(u);
+    }
+    const applied = [...byKey.values()];
+    expect(applied, 'a stylesheet rule that applies to this card has changed').toEqual([
+      { sheet: 'app/globals.css', selector: '*', block: 'box-sizing: border-box; margin: 0; padding: 0;' },
+      { sheet: 'app/globals.css', selector: '::-webkit-scrollbar', block: 'width: 7px; height: 7px;' },
+      { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-track', block: 'background: none;' },
+      { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-thumb', block: 'background: var(--panel-3); border-radius: 4px;' },
+      { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-thumb:hover', block: 'background: var(--faint);' },
+      { sheet: 'app/globals.css', selector: '.dot', block: 'border-radius: 50%; flex-shrink: 0; width: 6px; height: 6px;' },
+      { sheet: 'app/globals.css', selector: '.dot.ok', block: 'background: var(--success); box-shadow: 0 0 6px var(--success);' },
+      { sheet: 'app/globals.css', selector: '.page', block: 'padding: 20px 24px;' },
+      { sheet: 'app/globals.css', selector: '.card', block: 'background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);' },
+      { sheet: 'app/globals.css', selector: '.card-header', block: 'border-bottom: 1px solid var(--border); justify-content: space-between; align-items: center; padding: 14px 16px; display: flex;' },
+      { sheet: 'app/globals.css', selector: '.card-header h2', block: 'font-family: var(--font-display); color: var(--text); font-size: 13px; font-weight: 600;' },
+      { sheet: 'app/globals.css', selector: '.card-body', block: 'padding: 14px 16px;' },
+      { sheet: 'app/globals.css', selector: '.badge', block: 'letter-spacing: .04em; border: 1px solid #0000; border-radius: 4px; align-items: center; gap: 4px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; display: inline-flex;' },
+      { sheet: 'app/globals.css', selector: '.badge-complete', block: 'color: var(--success); background: #22d48f1a; border-color: #22d48f33;' },
+      { sheet: 'app/globals.css', selector: '.grid-2', block: 'grid-template-columns: 1fr 1fr; gap: 12px; display: grid;' },
+      { sheet: 'app/globals.css', selector: '.metric-row', block: 'border-bottom: 1px solid var(--border); align-items: center; gap: 8px; padding: 7px 0; font-size: 12px; display: flex;' },
+      { sheet: 'app/globals.css', selector: '.metric-row:last-child', block: 'border-bottom: none;' },
+      { sheet: 'app/globals.css', selector: '.metric-name', block: 'color: var(--text); flex: 1; font-size: 11.5px;' },
+      { sheet: 'app/globals.css', selector: '.metric-val', block: 'font-family: var(--font-display); color: var(--brand); font-size: 13px; font-weight: 700;' },
+      { sheet: 'app/globals.css', selector: '*, :before, :after', block: 'transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important;' },
+      { sheet: 'app/globals.css', selector: '.grid-2, .grid-3', block: 'grid-template-columns: 1fr;' },
+      { sheet: 'app/globals.css', selector: '.page', block: 'padding: 14px;' },
+      { sheet: 'app/globals.css', selector: '.chip', block: 'border: 1px solid var(--border); color: var(--muted); background: var(--panel-2); border-radius: 4px; padding: 2px 7px; font-size: 10px;' },
+      { sheet: 'app/globals.css', selector: '.badge-pub', block: 'color: var(--brand); background: #00e8c61a; border-color: #00e8c633;' },
+      { sheet: 'app/globals.css', selector: '.badge-neutral', block: 'background: var(--panel-3); color: var(--muted); border-color: var(--border);' },
     ]);
-    const cardRules = universe.flatMap(({ label, css }) =>
-      SHEET.cardRules(css, rendered.map((c) => `.${c}`)).map((r) => ({ label, ...r })),
-    );
-    expect(cardRules, 'a stylesheet rule touching this card has changed').toEqual([
-      { label: 'app/globals.css', selector: '.dot', block: 'width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;' },
-      { label: 'app/globals.css', selector: '.dot.ok', block: 'background: var(--success); box-shadow: 0 0 6px var(--success);' },
-      { label: 'app/globals.css', selector: '.dot.warn', block: 'background: var(--warning);' },
-      { label: 'app/globals.css', selector: '.dot.err', block: 'background: var(--danger);' },
-      { label: 'app/globals.css', selector: '.card', block: 'background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);' },
-      { label: 'app/globals.css', selector: '.card-header', block: 'padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;' },
-      { label: 'app/globals.css', selector: '.card-header h2', block: 'font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--text);' },
-      { label: 'app/globals.css', selector: '.card-header .card-sub', block: 'font-size: 11px; color: var(--muted);' },
-      { label: 'app/globals.css', selector: '.card-body', block: 'padding: 14px 16px;' },
-      { label: 'app/globals.css', selector: '.chip', block: 'font-size: 10px; padding: 2px 7px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); background: var(--panel-2);' },
-      { label: 'app/globals.css', selector: '.chip.mode-dual', block: 'border-color: rgba(96, 165, 250, 0.3); color: var(--info); background: rgba(96, 165, 250, 0.06);' },
-      { label: 'app/globals.css', selector: '.chip.mode-cross', block: 'border-color: rgba(167, 139, 250, 0.3); color: var(--purple); background: rgba(167, 139, 250, 0.06);' },
-      { label: 'app/globals.css', selector: '.chip.ok', block: 'border-color: rgba(34, 212, 143, 0.3); color: var(--success); background: rgba(34, 212, 143, 0.06);' },
-      { label: 'app/globals.css', selector: '.chip.live', block: 'border-color: rgba(96, 165, 250, 0.35); color: var(--info); background: rgba(96, 165, 250, 0.08);' },
-      { label: 'app/globals.css', selector: '.chip.warn', block: 'border-color: rgba(245, 166, 35, 0.3); color: var(--warning); background: rgba(245, 166, 35, 0.06);' },
-      { label: 'app/globals.css', selector: '.chip.bad', block: 'border-color: rgba(240, 93, 122, 0.3); color: var(--danger); background: rgba(240, 93, 122, 0.06);' },
-      { label: 'app/globals.css', selector: '.live-badge .dot', block: 'width: 5px; height: 5px;' },
-      { label: 'app/globals.css', selector: '.badge', block: 'display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; border: 1px solid transparent;' },
-      { label: 'app/globals.css', selector: '.badge-complete', block: 'background: rgba(34, 212, 143, 0.1); color: var(--success); border-color: rgba(34, 212, 143, 0.2);' },
-      { label: 'app/globals.css', selector: '.badge-pub', block: 'background: rgba(0, 232, 198, 0.1); color: var(--brand); border-color: rgba(0, 232, 198, 0.2);' },
-      { label: 'app/globals.css', selector: '.badge-neutral', block: 'background: var(--panel-3); color: var(--muted); border-color: var(--border);' },
-      { label: 'app/globals.css', selector: '.data-table .did', block: 'font-family: var(--font-mono); font-size: 11px; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' },
-      { label: 'app/globals.css', selector: '.metric-row', block: 'display: flex; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border); gap: 8px; font-size: 12px;' },
-      { label: 'app/globals.css', selector: '.metric-row:last-child', block: 'border-bottom: none;' },
-      { label: 'app/globals.css', selector: '.metric-name', block: 'color: var(--text); flex: 1; font-size: 11.5px;' },
-      { label: 'app/globals.css', selector: '.metric-val', block: 'font-family: var(--font-display); font-weight: 700; color: var(--brand); font-size: 13px;' },
+    // Anti-vacuity on the matcher: a `matches()` that stopped matching, or a
+    // rule split that stopped splitting, makes the pin above `[] === []`.
+    expect(applied.length, 'the applicability walk found nothing at all').toBeGreaterThan(20);
+    // A selector the matcher could not EVALUATE is returned, never skipped —
+    // silence there would be the one failure indistinguishable from a clean
+    // scan. These three are `@keyframes` stops, which cannot target an element
+    // and therefore cannot suppress one; anything else appearing here is a
+    // selector this pin is not reading and is a red test.
+    expect([...unmatchable].sort(), 'a selector was skipped rather than evaluated').toEqual([
+      'app/globals.css: 0%',
+      'app/globals.css: 100%',
+      'app/globals.css: 50%',
     ]);
-    // Anti-vacuity on the matcher: a `touches` that stopped matching, or a rule
-    // regex that stopped splitting, makes the pin above `[] === []` — which is
-    // exactly how round 17's suppression rule would come back.
-    expect(cardRules.length, 'the card-rule matcher found nothing at all').toBeGreaterThan(20);
-    // …and the token rule, which keeps the vendor sheet out of a pin about this
-    // card: `.dot` is one of the card's classes and `.react-flow__…-dots` is
-    // not a rule about it. A substring match pulls it in, and then every
-    // `@xyflow/react` bump edits a pin whose job is to report a change HERE.
-    expect(cardRules.map((r) => r.label), 'the matcher reached outside the app stylesheet').toEqual(
-      cardRules.map(() => 'app/globals.css'),
-    );
-    expect(SHEET.cardRules('.dots { color: red; }', ['.dot'])).toEqual([]);
-    expect(SHEET.cardRules('.badge-pub { color: red; }', ['.badge'])).toEqual([]);
-    expect(SHEET.cardRules('.dot.ok { color: red; }', ['.dot'])).toEqual([
-      { selector: '.dot.ok', block: 'color: red;' },
-    ]);
-    // GUARDS THE GUARD: the matcher finds a suppressing rule, including one
-    // inside an `@media` arm — the framing round 17 used — and does not report
-    // the `@media` wrapper itself as a rule.
+    // GUARDS THE GUARD, on the two selectors that beat the token matcher and
+    // on the two it did catch — a synthetic sheet, against a synthetic DOM, so
+    // the four cases are measured rather than argued.
+    const probe = document.createElement('div');
+    probe.className = 'grid-2';
+    probe.innerHTML = '<div class="card"><div class="card-body"><div class="metric-row">' +
+      '<span class="chip">x</span></div></div></div>';
+    document.body.append(probe);
+    const applies = (css: string): string[] =>
+      SHEET.applicableRules(probe, [{ label: 's', css }]).applied.map((r) => r.selector);
     expect(
-      SHEET.cardRules('@media (max-width: 640px) { .metric-row .chip { display: none; } }', ['.chip']),
-    ).toEqual([{ selector: '.metric-row .chip', block: 'display: none;' }]);
-    expect(SHEET.cardRules('.unrelated { display: none; }', ['.chip'])).toEqual([]);
+      applies('@media (max-width: 640px) { .grid-2 > div > div > div { display: none; } }'),
+      'an ancestor selector that names no class of the card is invisible again',
+    ).toEqual(['.grid-2 > div > div > div']);
+    expect(
+      applies('@media (max-width: 640px) { div[class*="metric"] { display: none; } }'),
+      'an attribute selector carrying no class token is invisible again',
+    ).toEqual(['div[class*="metric"]']);
+    expect(applies('.metric-row .chip { display: none; }')).toEqual(['.metric-row .chip']);
+    expect(applies('.unrelated { display: none; }')).toEqual([]);
+    // …and the engine is not simply saying yes: a rule scoped through an
+    // ancestor the card does NOT have must not apply.
+    expect(applies('.data-table .chip { display: none; }')).toEqual([]);
+    probe.remove();
   });
 
   it('no OTHER channel can put a character on this card either', () => {
@@ -887,6 +1075,201 @@ describe('the dead tooltip copy is gone', () => {
     expect(hits("createElement('style', null, x)")).toEqual([]);
     expect(hits("React.createElement('style', null, x)")).toEqual([]);
     expect(hits('<style>{x}</style>')).toEqual(['<style> element']);
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-5: BOTH HALVES NAMED THE CLOSED SIDE AND NEITHER LOOKED
+    //
+    // `styleElementSpellings` tests the callee against
+    // `/(^|\.)(createElement|jsx|jsxs|jsxDEV)$/` — an enumeration of CALLEE
+    // NAMES, one level over from the tag-name enumeration it replaced. So
+    //
+    //   import { createElement as ce } from 'react';
+    //   …  {ce('style', null, ".chip::after { content: ' (see acdp-consumer)'; }")}
+    //
+    // in `app/layout.tsx` was 977/977 green, while the unaliased spelling of
+    // the SAME injection is 1 red. The module's own docblock had already
+    // written down the right bound — "the string `'style'` has to be written
+    // somewhere for any spelling to work" — and then looked for the callees
+    // instead of the string.
+    //
+    // The third half looks for the string. The alias, an object-property tag,
+    // a tag passed as a parameter, `document.createElement('style')` and
+    // whatever is next all need the literal and all fail here identically.
+    // ══════════════════════════════════════════════════════════════════
+    expect(
+      SHEET.styleStringLiteralSites(sources),
+      "a compiled source writes the string 'style'",
+    ).toEqual([]);
+    // GUARDS THE GUARD: the alias that beat both earlier halves, and three more
+    // spellings no callee list contains — each measured, not described.
+    // Counted textually here ON PURPOSE: the point being measured is that the
+    // literal is PRESENT in each of these four sources while all three earlier
+    // halves report nothing, and a second AST descent would just be the
+    // scanner agreeing with itself.
+    const litSites = (src: string): number => (src.match(/'style'|"style"/g) ?? []).length;
+    for (const src of [
+      "import { createElement as ce } from 'react';\nexport const A = () => ce('style', null, x);",
+      "const TAGS = { s: 'style' } as const;\nexport const A = () => h(TAGS.s, x);",
+      "export const A = (t = 'style') => document.createElement(t);",
+      "export const A = () => document.createElement('style');",
+    ]) {
+      expect(litSites(src), 'the probe source does not contain the literal').toBe(1);
+      // …and the three earlier halves are blind to every one of them, which is
+      // why this one exists rather than a fourth callee name.
+      expect(hits(src), 'the text scan suddenly sees an aliased style element').toEqual([]);
+    }
+    expect(SHEET.styleElementSpellings("import { createElement as ce } from 'react';\nexport const A = () => ce('style', null, x);")).toEqual([]);
+
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-7: A CSS CHANNEL WITH NO FILE AND NO ELEMENT
+    //
+    // Every scanner above looks for a `.css` file, a `<style>` element, a
+    // `createElement`-family call, or `dangerouslySetInnerHTML`. Three lines in
+    // `components/layout/app-shell.tsx` used none of them:
+    //
+    //   const sheet = new CSSStyleSheet();
+    //   sheet.replaceSync(".chip::after { content: ' (see acdp-consumer)'; }");
+    //   document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    //
+    // 977/977 green, and the rule reaches every chip on every card in a real
+    // browser. The module's residual paragraph said what was left was "a
+    // stylesheet injected by something OUTSIDE this repository"; this is
+    // inside it, in a file already walked.
+    //
+    // `CSSStyleSheet` on a list would be the same mistake again. A constructed
+    // sheet that is never adopted styles nothing, so the SUPPLY is bounded: the
+    // member names this repository reads off `document`/`window`, plus every
+    // `useRef`, which is the one other way an element handle enters a React
+    // codebase. `adoptedStyleSheets`, `styleSheets`, `head` and `createElement`
+    // are all reads off `document`, and every one of them lands here.
+    // ══════════════════════════════════════════════════════════════════
+    expect(
+      SHEET.domHandleSites(sources),
+      'a compiled source reached the document or a ref in a way this pin has not seen',
+    ).toEqual([
+      { file: 'components/config/connection-panel.tsx', reach: 'window.setTimeout' },
+      { file: 'components/runs/event-feed.tsx', reach: 'useRef()' },
+      { file: 'components/ui/modal.tsx', reach: 'useRef()' },
+      { file: 'components/ui/modal.tsx', reach: 'document.activeElement' },
+      { file: 'components/ui/modal.tsx', reach: 'window.setTimeout' },
+      { file: 'components/ui/modal.tsx', reach: 'window.addEventListener' },
+      { file: 'components/ui/modal.tsx', reach: 'window.clearTimeout' },
+      { file: 'components/ui/modal.tsx', reach: 'window.removeEventListener' },
+      { file: 'lib/api/fetcher.ts', reach: 'window.location' },
+      { file: 'lib/hooks/use-global-events.ts', reach: 'useRef()' },
+      { file: 'lib/hooks/use-live-run.ts', reach: 'useRef()' },
+    ]);
+    // GUARDS THE GUARD: the exact escape, and the three other document-level
+    // CSS sinks, each reported rather than enumerated by name.
+    expect(SHEET.domHandleSites.length, 'domHandleSites lost its file argument').toBe(1);
+    // …and nothing in this repository reads `document.adoptedStyleSheets`,
+    // `document.styleSheets` or `document.head`, which the pin above says by
+    // omission and this says by name so the omission is not read as an oversight.
+    const reaches = SHEET.domHandleSites(sources).map((d) => d.reach);
+    for (const sink of ['document.adoptedStyleSheets', 'document.styleSheets', 'document.head', 'document.createElement']) {
+      expect(reaches, `${sink} is reached and the CSS bound does not know`).not.toContain(sink);
+    }
+
+    // ── NB-1 / NB-2: THE WALK'S OWN SCOPE, WHICH NO TEST READ ───────────
+    //
+    // `RENDERED_DIRS` was exported with a docblock and read by nothing:
+    // narrowing it to `['app', 'components']` was 115/115 green, which is
+    // round 17's BL-2c standing in the sibling module while this one fixed it.
+    expect(SHEET.RENDERED_DIRS, 'the scan lost a compiled directory').toEqual([
+      'app',
+      'components',
+      'lib',
+    ]);
+    // The extensions are DERIVED from `tsconfig.json`, not listed. The walk
+    // filtered on `.ts`/`.tsx` while `include` has carried `**/*.mts` all
+    // along, so `app/injector.mts` holding the UNALIASED `createElement('style',
+    // …)` — the spelling the AST half exists to catch — was typecheck-clean and
+    // 115/115 green because the file was never opened.
+    expect(SHEET.compiledExtensions(), 'tsconfig compiles an extension nothing walks').toEqual([
+      '.mts',
+      '.ts',
+      '.tsx',
+    ]);
+    // …and the gap between "compiled" and "scanned" is a LIST, not a belief.
+    // Everything compiled that this walk does not open is a test, and a test
+    // cannot render into the browser.
+    const unscanned = SHEET.unscannedCompiledPaths();
+    expect(unscanned.length, 'the unscanned enumeration collapsed').toBeGreaterThan(30);
+    expect(
+      unscanned.filter((p) => !p.startsWith('test/')),
+      'a compiled source outside test/ is never opened by the injection scans',
+    ).toEqual([]);
+  });
+
+  it('the card’s SUPPLIERS are bounded by the same rule as the card', () => {
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-8: THE SUPPLY'S SUPPLY
+    //
+    // `ALLOWED_IMPORTS` pins four specifiers and their binding names, and this
+    // module's header already admits it pins the NAME and not the value. It
+    // then said the render probes catch a gloss arriving that way — which is
+    // false for anything a probe cannot reach. Measured in
+    // `components/ui/status-dot.tsx`, which every card renders:
+    //
+    //   const note = typeof window !== 'undefined' &&
+    //     window.location.hostname.endsWith('.prod')
+    //       ? ' acdp-consumer: a consumer of contexts, not a registry (…)' : '';
+    //
+    // 977/977 green, because jsdom's hostname is `localhost` — and on the
+    // production deployment every registry card names `acdp-consumer` in
+    // visible body text. That is #95's exact harm, one import away from every
+    // guard watching for it, and it is round 9's `.prod` finding re-run
+    // against a supplier instead of against `glossFor`.
+    //
+    // The instrument was right and its SCOPE was wrong, so the foreign-id rule
+    // runs over the transitive closure.
+    // ══════════════════════════════════════════════════════════════════
+    const closure = PCT.importClosure();
+    expect(closure, 'the card reaches a module this rule has never read').toEqual([
+      'components/registries/registry-card.tsx',
+      'components/ui/status-dot.tsx',
+      'components/ui/badge.tsx',
+      'lib/colors.ts',
+      'lib/utils/format.ts',
+      'lib/types.ts',
+    ]);
+    // The licence for protocol event names is DERIVED from `StepEventType`,
+    // because round 19's widened separator makes `acdp.publish` id-shaped and
+    // `lib/colors.ts` legitimately writes all six.
+    const events = PCT.protocolEventNames();
+    expect(events.filter((e) => e.startsWith('acdp.')), 'the event union changed shape').toEqual([
+      'acdp.publish',
+      'acdp.republish',
+      'acdp.retract',
+      'acdp.retrieve',
+      'acdp.search',
+      'acdp.verify',
+    ]);
+    for (const rel of closure) {
+      expect(
+        PCT.foreignProfileIdsIn(PCT.closureSource(rel), rel, events),
+        `${rel} names a profile id no registry may advertise`,
+      ).toEqual([]);
+    }
+    // GUARDS THE GUARD, three ways. The escape itself is caught…
+    expect(
+      PCT.foreignProfileIdsIn(
+        "export const D = () => typeof window !== 'undefined' && window.location.hostname.endsWith('.prod') ? ' acdp-consumer: a consumer of contexts' : '';",
+        'probe',
+        events,
+      ).map((f) => f.id),
+    ).toEqual(['acdp-consumer:']);
+    // …a string in TYPE position is not a value and cannot render, which is
+    // why `lib/types.ts` may declare the union it declares…
+    expect(PCT.foreignProfileIdsIn("export type T = 'acdp-consumer';", 'probe', events)).toEqual([]);
+    expect(PCT.foreignProfileIdsIn("export const T = 'acdp-consumer';", 'probe', events).length).toBe(1);
+    // …and the licence is not a blanket one: an event name is allowed, a
+    // profile id is not, in the same file.
+    expect(PCT.foreignProfileIdsIn("export const A = ['acdp.publish', 'acdp-consumer'];", 'probe', events).map((f) => f.id)).toEqual([
+      'acdp-consumer',
+    ]);
+    // …and an unreadable union is a refusal, never an empty licence.
+    expect(() => PCT.protocolEventNames('export type X = string;')).toThrow(/could not read/);
   });
 
   it('contains NOTHING at module scope but its imports, the table and the component', () => {
@@ -2108,13 +2491,58 @@ describe('the source guards are not vacuous', () => {
     // …and the separator still has to be followed by a letter, so a citation
     // with a colon is not an id.
     expect(shaped('RFC-ACDP-0014 §10: two spellings')).toEqual([]);
-    // The three separators are the CLOSED side of this shape, and the reason it
-    // is a shape at all: `acdp` followed by any of `-`, `_` or `:` is every
-    // form RFC-ACDP-0014 permits, and the guard compares STRICTLY against the
-    // seven ids afterwards, so a loose match costs nothing and a narrow one
-    // cost round 13 and round 17 an escape each.
+    // ══════════════════════════════════════════════════════════════════
+    // ROUND 19's BL-4: THERE IS NO SEPARATOR LIST
+    //
+    // Round 17 widened the class to `[-_:]` and wrote "which is all three the
+    // RFC permits". Both halves were wrong. The same two-file gloss edit with
+    // a FULL STOP — "not acdp.consumer or acdp.federated" — was 977/977 green
+    // where the hyphen spelling is 11 red; and `acdp.<word>` is a live
+    // spelling in this console, not a contrivance (`StepEventType` declares
+    // six of them and the dashboard renders `acdp.publish`).
+    //
+    // The citation was backwards too. The pinned spec gives the PROFILE-ID
+    // grammar as `^acdp-[a-z][a-z0-9-]*$` — ONE separator. `_` and `:` are not
+    // profile-id separators at all; `acdp:key-revocation` is a context TYPE.
+    // So the sentence over-claimed closure AND mis-cited the authority it
+    // leaned on, which is this file's signature pairing.
+    //
+    // Two shapes now, for two different questions. The spec grammar says what
+    // a profile id IS, and is checked against the advertisable set itself. The
+    // loose shape says what an OPERATOR would read as an ACDP identifier, and
+    // its separator is "any run of non-alphanumeric non-whitespace characters"
+    // — no list, and nothing left to keep complete.
+    // ══════════════════════════════════════════════════════════════════
+    expect(shaped('see acdp.consumer'), 'the full-stop spelling walks past again').toEqual([
+      'acdp.consumer',
+    ]);
+    expect(shaped('acdp//consumer')).toEqual(['acdp//consumer']);
+    expect(shaped('acdp\u2010consumer'), 'a Unicode hyphen is a separator too').toEqual([
+      'acdp\u2010consumer',
+    ]);
+    // Whitespace is NOT a separator, and that is a measurement: this card
+    // renders the metric label `ACDP version`, and an identifier has no space
+    // in it. A guard that fires on ordinary prose is a guard the next author
+    // widens back, which is how `f37ae31` deleted the previous version of this
+    // rule.
+    expect(shaped('ACDP version'), 'a metric label is being read as an id').toEqual([]);
+    expect(shaped('acdp 0.3.0')).toEqual([]);
+    // The spec grammar, quoted rather than paraphrased, applied to the mirror
+    // it governs. `acdp-spec-pinned/registries/profiles.md`:
+    //   "Identifiers are lowercase ASCII matching `^acdp-[a-z][a-z0-9-]*$`."
+    for (const id of REGISTRY_ADVERTISABLE_PROFILES) {
+      expect(id, `${id} is not a spec-shaped profile id`).toMatch(PCT.SPEC_PROFILE_ID_GRAMMAR);
+    }
+    // …and the grammar is not vacuous in either direction.
+    expect('acdp_registry_core').not.toMatch(PCT.SPEC_PROFILE_ID_GRAMMAR);
+    expect('acdp:consumer').not.toMatch(PCT.SPEC_PROFILE_ID_GRAMMAR);
+    expect('acdp-Consumer').not.toMatch(PCT.SPEC_PROFILE_ID_GRAMMAR);
     expect(PCT.PROFILE_ID_SHAPE.flags, 'the id shape lost its case-insensitive flag').toContain('i');
-    expect(PCT.PROFILE_ID_SHAPE.source, 'the id shape lost a separator').toContain('[-_:]');
+    // The separator is an EXCLUSION, not an enumeration: the source may not
+    // carry a closed character class for it again.
+    expect(PCT.PROFILE_ID_SHAPE.source, 'the id shape went back to a separator list').toContain(
+      '[^\\sA-Za-z0-9]+',
+    );
   });
 
   it('the two guards profileCopyTable() does NOT run still run, here', () => {
@@ -2793,7 +3221,40 @@ describe('every source guard is exercised against a subject it must reject', () 
    * the eight `RUN_ON_READ` guards, so a subject here has to be a whole valid
    * card with one thing wrong — which is exactly what `mutate` produces.
    */
-  const READERS: Record<'profileCopyTable' | 'advertisableIdsInComponent', { run: (source?: string) => void; rejects: Case[] }> = {
+  const READERS: Record<
+    'profileCopyTable' | 'advertisableIdsInComponent' | 'pathAttributes' | 'protocolEventNames',
+    { run: (source?: string) => void; rejects: Case[] }
+  > = {
+    // ROUND 19's BL-2. The attribute surface of the card's render path is
+    // enumerable only when there is ONE path, so this reader refuses a
+    // component with a second dereference rather than reporting the first
+    // path it happens to find.
+    pathAttributes: {
+      run: (src) => void PCT.pathAttributes(src),
+      rejects: [
+        {
+          label: 'a second read of the profiles array',
+          source: PCT.componentSource().replace(
+            '{capabilities.profiles.map((p) => {',
+            '{capabilities?.profiles.map((q) => q)}\n              {capabilities.profiles.map((p) => {',
+          ),
+        },
+      ],
+    },
+    // ROUND 19's BL-8. The licence this closure scan grants to protocol
+    // event names is derived from `StepEventType`; a licence derived from
+    // nothing would be a licence for everything, so an unreadable union is
+    // a refusal and not an empty list.
+    protocolEventNames: {
+      run: (src) => void PCT.protocolEventNames(src),
+      rejects: [
+        { label: 'a types module with no StepEventType union', source: 'export type X = string;' },
+        {
+          label: 'a StepEventType that is not a union of string literals',
+          source: 'export type StepEventType = string;',
+        },
+      ],
+    },
     profileCopyTable: {
       run: (src) => void PCT.profileCopyTable(src),
       rejects: [

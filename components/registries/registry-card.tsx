@@ -112,22 +112,28 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *   - `assertGlossIsPureOfId()` closes it by construction instead: the map
  *     callback is denied the index parameter and `info` may only ever be
  *     `glossFor(p)`, so the gloss is a function of the profile id at every
- *     index and every field value, with nothing enumerated. It now also
- *     refuses a SECOND `.map(...)` of ANY receiver — it bound only the last
- *     `capabilities.profiles.map` in source order, and an earlier one carrying
- *     `i > 2` was green; then it recognised a second map by comparing receiver
- *     TEXT, and `capabilities.profiles.filter(() => true).map(...)` carrying
- *     `i > 8` was green too (round 15's B3, 975/975). Round 16 inverted the
- *     enumeration — collect every `.map` in the file, require each one's
- *     receiver to be exactly `capabilities.profiles` — and round 17 beat THAT
- *     with `capabilities.profiles.flatMap(…)`, which is not a `.map` at all and
- *     so was collected by nothing.
+ *     index and every field value, with nothing enumerated.
  *
- *     What is bounded now is the SUPPLY rather than the uses: the expression
- *     `capabilities.profiles` may be dereferenced EXACTLY ONCE in this file,
- *     and that one dereference must be the receiver of a `.map` that is called.
- *     There is no second iteration to spell, under any method name, because
- *     there is no second read of the array to spell it on.
+ *     It also bounds how many per-profile surfaces this component may have,
+ *     and that bound has been re-narrowed five times. The last map in source
+ *     order (an earlier one carrying `i > 2` was green); then the receiver's
+ *     TEXT (`…profiles.filter(() => true).map(…)` carrying `i > 8` was green,
+ *     round 15's B3); then every `.map` in the file (round 17 beat it with
+ *     `.flatMap`, which is not a `.map` at all); then the dereference's TEXT
+ *     — and round 19 beat that with ONE CHARACTER: `capabilities?.profiles`
+ *     is a different string, so a second surface rendering gloss text as
+ *     visible body copy was 977/977 green.
+ *
+ *     What is bounded now is the SUPPLY, resolved rather than spelled: the
+ *     READ of `capabilities.profiles` may happen exactly once in this file,
+ *     where a read is a property access, an optional access, an element access
+ *     with a literal key, or a destructure — with `?.`, `!`, parentheses and
+ *     `as` casts unwrapped first. `capabilities!.profiles`,
+ *     `(capabilities).profiles` and `capabilities['profiles']` are one read
+ *     between them and not four spellings to enumerate. The one read must be
+ *     the receiver of a `.map` that is called, and the complete set of
+ *     capability members this component reads is pinned beside it, so a second
+ *     read of ANY field is a reviewable diff.
  *   - `assertGlossIsPureOfId()` also bounds THE PATH FROM THIS COMPONENT'S
  *     RETURN DOWN TO THAT MAP: the only condition allowed to stand between them
  *     is `capabilities`. Round 15's B2 wrapped the whole Profiles row in
@@ -241,17 +247,31 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     set — and round 15's B2 falsified THAT by finding a THIRD: the JSX above
  *     the callback. A row that is never rendered needs no gate inside it.
  *
- *     Counting homes is the error the three rounds have in common, so this no
+ *     Counting homes is the error those rounds have in common, so this no
  *     longer counts them. Suppression is bounded by a PATH: `glossFor`'s two
  *     statements, the callback's two statements, and — since B2 — every
  *     condition on the ancestry from `RegistryCard`'s return down to the map,
- *     which may only be `capabilities`. A conditional anywhere on that path,
- *     however spelled, is refused rather than recognised — and, since round 17,
- *     an early `return` ABOVE that path is refused too, because the body is
- *     required to be one return. What remains outside it is genuinely outside
- *     this file: `glossFor` reading a global, and the CSS channel, which
- *     `test/support/stylesheet-text.ts` bounds separately — in BOTH directions
- *     as of round 17, which it did not before; see the CSS bullet below.
+ *     which may only be `capabilities`. A conditional ON that path is refused
+ *     rather than recognised, and since round 17 an early `return` ABOVE it is
+ *     refused too, because the body is required to be one return.
+ *
+ *     For two rounds this said "a conditional ANYWHERE on that path, however
+ *     spelled". Round 19's BL-2 falsified it with a conditional that is not on
+ *     the path at all: a JSX ATTRIBUTE hangs off the chain rather than lying on
+ *     it, so `<div className="metric-row" style={{ opacity:
+ *     registry.authority.length >= 40 ? 0 : undefined }}>` was 977/977 green
+ *     and made every chip, id and gloss invisible on any forty-character
+ *     authority — round 15's B2 verbatim. The path bound answers whether the
+ *     row is RENDERED; suppression asks whether it is VISIBLE. So the whole
+ *     ATTRIBUTE SURFACE of the render path is pinned as well, the way the
+ *     chip's own attributes already were: a new attribute anywhere between the
+ *     return and the map is a reviewable diff whatever property it sets.
+ *
+ *     What remains outside it: `glossFor` reading a global, a SUPPLIER reading
+ *     one (round 19's BL-8 put `acdp-consumer` on every card in production from
+ *     inside `status-dot.tsx`, so the foreign-id rule now runs over this file's
+ *     transitive import closure), and the CSS channel, which
+ *     `test/support/stylesheet-text.ts` bounds separately — see the CSS bullet.
  *   - COMMENTS are exempt from the source walks — a guard that banned discussing
  *     the problem would be uncomfortable enough to get deleted — and a string
  *     can still be DERIVED at runtime from licensed parts (a `.slice`, a
@@ -300,10 +320,21 @@ type AdvertisableProfileId = (typeof ADVERTISABLE_PROFILE_IDS)[number];
  *     asked how it can take one away, while this bullet said the channel was
  *     "bounded". `@media (max-width: 640px) { .metric-row .chip { display:
  *     none; } }` was 977/977 green and removed every profile id from every card
- *     at phone width. What is bounded now is the PRODUCT — every rule in the
- *     app's stylesheets whose selector names a class this card renders, pinned
- *     selector and declaration block — because a denylist of suppressing
- *     properties is the open set this gate has now been beaten by six times.
+ *     at phone width. What is bounded now is the PRODUCT — every rule that
+ *     APPLIES to this card, pinned selector and declaration block — because a
+ *     denylist of suppressing properties is the open set this gate has now been
+ *     beaten by six times. Round 18 decided "applies" by matching selector text
+ *     against the classes this card paints, and round 19 walked past it through
+ *     a selector naming a class of the PAGE and again through an attribute
+ *     selector naming no class at all; applicability is decided by a selector
+ *     ENGINE now, against this card rendered inside the page ancestry it ships
+ *     in.
+ *
+ *     A THIRD WAY, which four rounds of this bullet did not have: CSS with no
+ *     file and no element. `new CSSStyleSheet()` + `document.adoptedStyleSheets`
+ *     was 977/977 green. The member names this repository reads off `document`
+ *     and `window` are pinned per file, which bounds the handle rather than
+ *     enumerating the sinks.
  */
 const PROFILE_INFO: Record<AdvertisableProfileId, { title: string; accent?: boolean }> = {
   'acdp-registry-core': { title: 'Mandatory registry baseline (RFC-ACDP-0001 §9.1)' },

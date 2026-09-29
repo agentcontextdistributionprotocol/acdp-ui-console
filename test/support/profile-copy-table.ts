@@ -94,9 +94,22 @@
 //   2. Bound the VALUE behind an allow-listed import. `ALLOWED_IMPORTS` pins
 //      the binding NAME; `timeAgo` could be edited to return copy and be called
 //      here legitimately. Narrowing the four names narrowed which suppliers
-//      remain unbounded — it did not close the channel, and the render probes
-//      are what actually catch a gloss arriving that way, for the ids and prop
-//      combinations they cover.
+//      remain unbounded — it did not close the channel.
+//
+//      This used to add "and the render probes are what actually catch a gloss
+//      arriving that way". Round 19's BL-8 falsified it: a supplier gated on a
+//      GLOBAL is not a prop combination, and
+//      `window.location.hostname.endsWith('.prod')` inside
+//      `components/ui/status-dot.tsx` put `acdp-consumer` in visible body text
+//      on every registry card in production with 977/977 green, because jsdom's
+//      hostname is `localhost`. That is round 9's `.prod` finding, defended for
+//      `glossFor` and undefended one import away.
+//
+//      So `foreignProfileIdsIn` runs over `importClosure()` — the card plus the
+//      five modules it transitively reaches — which is the same "bound the
+//      supply" move applied to the supply's supply. What is left unbounded is
+//      what a supplier may return that is NOT id-shaped, which the render
+//      probes do cover for the ids and prop combinations they reach.
 // ══════════════════════════════════════════════════════════════════════
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -276,10 +289,60 @@ export function CHIP_ATTRIBUTES(param: string): Record<string, string> {
  * card label. A pattern that under-matches does not merely miss things; it
  * hands every rule derived from it the same blind spot.
  *
- * `:` in the trailing class as well, since a real id may carry more than one
- * separator (`acdp:key-revocation` has both).
+ * ── ROUND 19's BL-4: THERE IS NO SEPARATOR LIST ──────────────────────
+ *
+ * Round 17 answered the colon by widening the class to `[-_:]` and writing
+ * "the separator set is `[-_:]` now, which is all three the RFC permits".
+ * Both halves of that sentence are wrong, and the gate measured the first: the
+ * same two-file gloss edit with a FULL STOP —
+ *
+ *     'Cross-registry federation (…) — not acdp.consumer or acdp.federated'
+ *
+ * — was 977/977 green where the hyphen spelling is 11 red. And `acdp.<word>`
+ * is not a contrivance here: `lib/types.ts` declares `'acdp.publish' |
+ * 'acdp.retrieve' | 'acdp.search' | 'acdp.verify' | 'acdp.retract' |
+ * 'acdp.republish'`, `lib/data/mock-data.ts` emits them and
+ * `components/dashboard/event-ticker.tsx` renders `acdp.publish` on the
+ * dashboard. An operator reads that dotted form on this console more often
+ * than the colon form.
+ *
+ * The second half was a mis-citation. `acdp-spec-pinned/registries/profiles.md`
+ * gives the profile-id grammar as `^acdp-[a-z][a-z0-9-]*$` — ONE separator,
+ * the hyphen. `_` and `:` are not profile-id separators at all;
+ * `acdp:key-revocation` is a context TYPE (RFC-ACDP-0014 §10), not a profile
+ * id. So the sentence over-claimed closure AND got the authority it leaned on
+ * backwards, which is the pairing this file keeps finding.
+ *
+ * Two shapes, and they are different questions:
+ *
+ *   {@link SPEC_PROFILE_ID_GRAMMAR} — what the spec permits, taken verbatim
+ *   from the pinned spec. Used to check the advertisable set itself.
+ *
+ *   `PROFILE_ID_SHAPE` — what an OPERATOR would read as an ACDP identifier,
+ *   which is the question this guard actually asks, and which has never been
+ *   a spec question. The separator is now "any run of non-alphanumeric
+ *   NON-WHITESPACE characters", so `-`, `_`, `:`, `.`, `/`, `//` and U+2010
+ *   are one rule with no list left to keep complete. `RFC-ACDP-0001` and
+ *   `acdp 0.3.0` are still refused, because both continue with a digit.
+ *
+ * Whitespace is excluded from the separator run, and that is a measurement
+ * rather than a preference: this card renders the metric label `ACDP version`,
+ * and an identifier does not contain a space. Admitting whitespace turned a
+ * label the card has always shown into a forbidden id — a guard that fires on
+ * ordinary prose is a guard that gets widened back by the next author, which
+ * is how `f37ae31` deleted the previous version of this rule.
  */
-export const PROFILE_ID_SHAPE = /acdp[-_:][a-z][a-z0-9_:-]*/gi;
+export const PROFILE_ID_SHAPE = /acdp[^\sA-Za-z0-9]+[a-z][A-Za-z0-9_:.-]*/gi;
+
+/**
+ * The profile-id grammar, quoted from the pinned spec.
+ *
+ * `acdp-spec-pinned/registries/profiles.md`: "Identifiers are lowercase ASCII
+ * matching `^acdp-[a-z][a-z0-9-]*$`." Every advertisable id is checked against
+ * this where the set is pinned, so the mirror cannot drift from the grammar
+ * the registries validate against.
+ */
+export const SPEC_PROFILE_ID_GRAMMAR = /^acdp-[a-z][a-z0-9-]*$/;
 
 /**
  * A FRESH matcher, because `PROFILE_ID_SHAPE` carries `/g`.
@@ -345,6 +408,156 @@ function sourceFile(text?: string): ts.SourceFile {
  */
 export function componentSource(): string {
   return readFileSync(REGISTRY_CARD_PATH, 'utf8');
+}
+
+/**
+ * Every module `registry-card.tsx` reaches, transitively, as repo-relative
+ * paths — the component itself first.
+ *
+ * ── ROUND 19's BL-8: THE SUPPLY'S SUPPLY ─────────────────────────────
+ *
+ * `ALLOWED_IMPORTS` pins the four specifiers and the binding names, and this
+ * file already says in its header that it pins "the binding NAME" and not the
+ * value. It then says the render probes are what catch a gloss arriving that
+ * way — and that is false for anything a probe cannot reach. Measured in
+ * `components/ui/status-dot.tsx`, which the card renders unconditionally:
+ *
+ *   const note =
+ *     typeof window !== 'undefined' && window.location.hostname.endsWith('.prod')
+ *       ? ' acdp-consumer: a consumer of contexts, not a registry (RFC-ACDP-0001 §9.1)'
+ *       : '';
+ *
+ * 977/977 green, typecheck and lint clean, because jsdom's hostname is
+ * `localhost` — and on the production deployment every registry card names
+ * `acdp-consumer` in visible body text. That is #95's exact harm, arriving
+ * one import away from every guard that was watching for it, and it is round
+ * 9's `.prod` finding re-run against a supplier instead of against `glossFor`.
+ *
+ * The instrument was right and its SCOPE was wrong. `assertNoForeignProfileId`
+ * is run over this closure where it is used, so the supply's supply is bounded
+ * by the same rule as the supply.
+ */
+export function importClosure(): string[] {
+  const seen = new Set<string>();
+  const order: string[] = [];
+  const visit = (rel: string): void => {
+    if (seen.has(rel)) return;
+    seen.add(rel);
+    order.push(rel);
+    const src = readFileSync(join(REPO_ROOT, rel), 'utf8');
+    const sf = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    for (const stmt of sf.statements) {
+      if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
+      const spec = stmt.moduleSpecifier.text;
+      // Only first-party modules. A dependency is bounded by the lockfile and
+      // by `ALLOWED_IMPORTS`' specifier pin, not by reading its source, and
+      // this component imports none in the render path today.
+      if (!spec.startsWith('@/')) continue;
+      const base = spec.slice(2);
+      for (const ext of ['.tsx', '.ts']) {
+        try {
+          readFileSync(join(REPO_ROOT, base + ext), 'utf8');
+          visit(base + ext);
+          break;
+        } catch {
+          // Try the next extension; a specifier that resolves to nothing is
+          // reported by the caller rather than swallowed, via the closure's
+          // own membership pin.
+        }
+      }
+    }
+  };
+  visit('components/registries/registry-card.tsx');
+  return order;
+}
+
+/** The source of one module in the closure, for a guard that must read it. */
+export function closureSource(rel: string): string {
+  return readFileSync(join(REPO_ROOT, rel), 'utf8');
+}
+
+/**
+ * The protocol event names, read off `lib/types.ts`'s own `StepEventType`
+ * union.
+ *
+ * Six of them are `acdp.<verb>` — `acdp.publish`, `acdp.retrieve`,
+ * `acdp.search`, `acdp.verify`, `acdp.retract`, `acdp.republish` — and with
+ * round 19's BL-4 widening the separator to include `.`, every one of them is
+ * id-shaped. They are not profile ids, they are the names of protocol
+ * operations, and `lib/colors.ts` — which is in this card's import closure —
+ * legitimately writes all six as `startsWith` arguments.
+ *
+ * So they are licensed for the CLOSURE scan and for nothing else: the
+ * component's own guard still refuses them, because the component has no
+ * reason to name an event type and a sentence about `acdp.retract` on a
+ * registry card would be exactly the defect #95 is about.
+ *
+ * Derived from the union rather than listed, so a seventh operation is
+ * licensed the moment the protocol has one and not before.
+ */
+export function protocolEventNames(source?: string): string[] {
+  const src = source ?? readFileSync(join(REPO_ROOT, 'lib/types.ts'), 'utf8');
+  const sf = ts.createSourceFile('lib/types.ts', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const out: string[] = [];
+  for (const stmt of sf.statements) {
+    if (!ts.isTypeAliasDeclaration(stmt) || stmt.name.text !== 'StepEventType') continue;
+    if (!ts.isUnionTypeNode(stmt.type)) continue;
+    for (const member of stmt.type.types) {
+      if (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal)) {
+        out.push(member.literal.text);
+      }
+    }
+  }
+  if (out.length === 0) {
+    fail(
+      'could not read `StepEventType` out of `lib/types.ts` — the licence this closure scan ' +
+        'grants to protocol event names is derived from that union, and a licence derived from ' +
+        'nothing is a licence for everything',
+    );
+  }
+  return out.sort();
+}
+
+/**
+ * Every id-shaped string in a module that is not one of the seven advertisable
+ * ids, in VALUE position — the foreign-id rule, run over an arbitrary file.
+ *
+ * `assertNoForeignProfileId` is the component's own guard and carries the
+ * component's census and the component's failure prefix. This is the same
+ * RULE with neither, so it can be pointed at the import closure.
+ *
+ * A string literal inside a `LiteralTypeNode` is a TYPE, not a value: it is
+ * erased before anything renders, and `lib/types.ts` legitimately declares
+ * `'acdp.publish' | 'acdp.retrieve' | …` as the protocol's event names. That
+ * exclusion is structural, not a name on a list, and it is asserted as a case
+ * where this is used so it cannot quietly become a hole.
+ */
+export function foreignProfileIdsIn(
+  src: string,
+  label = 'module',
+  extraAllowed: readonly string[] = [],
+): { id: string; where: string }[] {
+  const sf = ts.createSourceFile(label, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const allowed = new Set<string>([...REGISTRY_ADVERTISABLE_PROFILES, ...extraAllowed]);
+  const out: { id: string; where: string }[] = [];
+  const check = (text: string, node: ts.Node): void => {
+    for (const m of text.matchAll(profileIdMatcher())) {
+      if (!allowed.has(m[0])) out.push({ id: m[0], where: node.getText(sf).slice(0, 80) });
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      if (!node.parent || !ts.isLiteralTypeNode(node.parent)) check(node.text, node);
+    } else if (ts.isTemplateExpression(node)) {
+      check(node.head.text, node);
+      for (const span of node.templateSpans) check(span.literal.text, node);
+    } else if (ts.isJsxText(node)) {
+      if (node.text.trim() !== '') check(node.text, node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
 }
 
 /** How many string-bearing nodes of each kind a file holds. */
@@ -1085,6 +1298,163 @@ export function assertComponentBodyIsOneReturn(source?: string): void {
   }
 }
 
+/**
+ * Strip the wrappers that change an expression's TEXT and not its VALUE.
+ *
+ * `(x)`, `x!`, `x as T`, `x satisfies T`. Round 19's BL-1 is the whole reason
+ * this exists: every one of these produces a different source string for the
+ * same read, and a guard that compares source strings is an enumeration of
+ * spellings wearing the word "structural".
+ */
+function unwrapExpression(expr: ts.Expression): ts.Expression {
+  let cur: ts.Expression = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+    else if (ts.isNonNullExpression(cur)) cur = cur.expression;
+    else if (ts.isAsExpression(cur) || ts.isSatisfiesExpression(cur)) cur = cur.expression;
+    else if (ts.isTypeAssertionExpression(cur)) cur = cur.expression;
+    else return cur;
+  }
+}
+
+/** Is this expression, after unwrapping, the identifier `capabilities`? */
+function isCapabilitiesBase(expr: ts.Expression): boolean {
+  const base = unwrapExpression(expr);
+  return ts.isIdentifier(base) && base.text === 'capabilities';
+}
+
+/**
+ * Every READ of `capabilities.<member>` in the file, resolved structurally:
+ * property access, optional access, element access with a literal key, and
+ * object destructuring.
+ */
+export function capabilityReads(sf: ts.SourceFile): { member: string; text: string }[] {
+  const out: { member: string; text: string }[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) && isCapabilitiesBase(node.expression)) {
+      out.push({ member: node.name.text, text: node.getText(sf).replace(/\s+/g, '') });
+    } else if (
+      ts.isElementAccessExpression(node) &&
+      isCapabilitiesBase(node.expression) &&
+      (ts.isStringLiteral(node.argumentExpression) ||
+        ts.isNoSubstitutionTemplateLiteral(node.argumentExpression))
+    ) {
+      out.push({
+        member: node.argumentExpression.text,
+        text: node.getText(sf).replace(/\s+/g, ''),
+      });
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      isCapabilitiesBase(node.initializer)
+    ) {
+      for (const el of node.name.elements) {
+        const key = el.propertyName ?? el.name;
+        out.push({
+          member: ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : key.getText(sf),
+          text: node.getText(sf).replace(/\s+/g, ''),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** The reads of one member of `capabilities`, as nodes, for the count rule. */
+function derefsOfCapabilityMember(sf: ts.SourceFile, member: string): ts.Node[] {
+  const out: ts.Node[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) && isCapabilitiesBase(node.expression)) {
+      if (node.name.text === member) out.push(node);
+    } else if (
+      ts.isElementAccessExpression(node) &&
+      isCapabilitiesBase(node.expression) &&
+      (ts.isStringLiteral(node.argumentExpression) ||
+        ts.isNoSubstitutionTemplateLiteral(node.argumentExpression)) &&
+      node.argumentExpression.text === member
+    ) {
+      out.push(node);
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      isCapabilitiesBase(node.initializer) &&
+      node.name.elements.some((el) => {
+        const key = el.propertyName ?? el.name;
+        return (ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === member;
+      })
+    ) {
+      out.push(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/**
+ * Every JSX attribute on every element between `RegistryCard`'s return and the
+ * profiles map, as `element -> attribute -> spelling`.
+ *
+ * ── ROUND 19's BL-2: A CONDITIONAL OFF THE PATH IS NOT ON IT ─────────
+ *
+ * The path bound below walks `call.parent` upwards and refuses any node kind
+ * that is not JSX structure. A JSX ATTRIBUTE hangs off that path rather than
+ * lying on it — the `style` attribute belongs to the row's
+ * `JsxOpeningElement`, which is never an ancestor of the map call — so
+ *
+ *   <div className="metric-row" style={{ opacity: registry.authority.length >= 40 ? 0 : undefined }}>
+ *
+ * was 977/977 green, typecheck and lint clean, and made every chip, id and
+ * gloss invisible on any registry whose authority is forty characters or
+ * longer. That is round 15's B2 verbatim. `opacity` is inherited by the whole
+ * subtree and no descendant rule can undo it.
+ *
+ * The falsified sentence, in `registry-card.tsx`: "a conditional anywhere on
+ * that path, however spelled, is refused rather than recognised". The path
+ * bound answers "is the row RENDERED"; suppression asks "is it VISIBLE", and
+ * those are different questions asked of different nodes.
+ *
+ * `CHIP_ATTRIBUTES` already proves the shape of the answer: pin the attribute
+ * surface. This is that, applied to the whole ancestry, so a new attribute
+ * anywhere on the card's render path is a reviewable diff whatever it does —
+ * and there is no list of suppressing properties to keep complete.
+ */
+export function pathAttributes(source?: string): string[] {
+  const sf = sourceFile(source);
+  const derefs = derefsOfCapabilityMember(sf, 'profiles');
+  if (derefs.length !== 1) {
+    fail(
+      `dereferences \`capabilities.profiles\` ${derefs.length} times, so the render path to the ` +
+        'profiles map is not a single path and its attribute surface cannot be enumerated',
+    );
+  }
+  const out: string[] = [];
+  for (let n: ts.Node | undefined = derefs[0]; n; n = n.parent) {
+    if (ts.isFunctionDeclaration(n)) break;
+    const opening = ts.isJsxElement(n)
+      ? n.openingElement
+      : ts.isJsxSelfClosingElement(n)
+        ? n
+        : undefined;
+    if (!opening) continue;
+    const tag = opening.tagName.getText(sf);
+    for (const attr of opening.attributes.properties) {
+      if (ts.isJsxSpreadAttribute(attr)) {
+        out.push(`<${tag} {...${attr.expression.getText(sf).replace(/\s+/g, '')}}>`);
+        continue;
+      }
+      const name = attr.name.getText(sf);
+      const value = attr.initializer ? attr.initializer.getText(sf).replace(/\s+/g, '') : '(bare)';
+      out.push(`<${tag} ${name}=${value}>`);
+    }
+  }
+  return out;
+}
+
 export function assertGlossIsPureOfId(source?: string): void {
   const sf = sourceFile(source);
   // EVERY such call, not the last one. This collected into a single variable
@@ -1151,18 +1521,34 @@ export function assertGlossIsPureOfId(source?: string): void {
   // destructure, `Array.prototype.map.call`. None of them survives a rule that
   // counts dereferences, and none of them needed to be anticipated to be
   // refused. There is no list here for the next author to keep complete.
-  const PROFILES_EXPR = 'capabilities.profiles';
-  const derefs: ts.Node[] = [];
-  const findDeref = (node: ts.Node): void => {
-    if (
-      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
-      node.getText(sf).replace(/\s+/g, '') === PROFILES_EXPR
-    ) {
-      derefs.push(node);
-    }
-    ts.forEachChild(node, findDeref);
-  };
-  findDeref(sf);
+  //
+  // ── ROUND 19's BL-1: A SOURCE-TEXT EQUALITY IS AN ENUMERATION OF ONE ─
+  //
+  // Round 18 wrote that bound as `node.getText(sf).replace(/\s+/g,'') ===
+  // 'capabilities.profiles'`, under a docblock saying "there is no second
+  // iteration to spell, under ANY method name, because there is no second
+  // READ of the array to spell it on". One character falsified it:
+  //
+  //   {capabilities?.profiles.map((q, i) => (
+  //     <span key={q} className="did">{i > 8 ? glossFor(q)?.title : null}</span>
+  //   ))}
+  //
+  // `capabilities?.profiles` is a different STRING, so `derefs.length` stayed
+  // 1, every guard was satisfied, and 977 tests stayed green while a card with
+  // eleven profiles put gloss text into visible body copy. `capabilities!.
+  // profiles`, `(capabilities).profiles`, `capabilities['profiles']`,
+  // `capabilities as X).profiles` and `capabilities./*x*/profiles` are the
+  // same hole. That is the FOURTH narrowing of one enumeration in this guard —
+  // last map in source order, then receiver text, then method name, then
+  // dereference TEXT — and the pattern is always the same: the single thing
+  // that must be true gets written down as one SPELLING of that thing.
+  //
+  // So the access is resolved rather than compared. `derefsOfCapabilityMember`
+  // unwraps `?.`, `!`, parentheses and `as`/`satisfies` casts, accepts both
+  // property and element access, and counts destructuring too — a
+  // `const { profiles } = capabilities` is a read of the array by any honest
+  // reading of the sentence above.
+  const derefs = derefsOfCapabilityMember(sf, 'profiles');
   if (derefs.length === 0) {
     fail(
       'never dereferences `capabilities.profiles` — either this guard has lost its subject, or ' +

@@ -72,18 +72,56 @@
  *      `@media (max-width: 640px) { .metric-row .chip { display: none; } }`
  *      appended to `app/globals.css` was 977/977 green and took every profile
  *      id off every registry card at phone width.
- *      → `cardRules()`, whose whole product the caller pins: selector and
- *        declaration block, for every rule that mentions a class the card
- *        renders. A denylist of suppressing PROPERTIES would be the open-set
- *        mistake this file has now made six times — `display`, `visibility`,
- *        `opacity`, `font-size: 0`, `clip-path`, `color: transparent`,
- *        `content-visibility`, `transform: scale(0)` — so the set of rules is
- *        bounded instead of the set of ways to write one.
+ *      → `cssRules()` plus the DOM. A denylist of suppressing PROPERTIES would
+ *        be the open-set mistake this file has now made six times — `display`,
+ *        `visibility`, `opacity`, `font-size: 0`, `clip-path`, `color:
+ *        transparent`, `content-visibility`, `transform: scale(0)` — so the
+ *        set of applicable rules is bounded instead of the set of ways to
+ *        write one. Round 18 bounded that set by matching selector TEXT
+ *        against the classes the card paints, and round 19 walked past it
+ *        twice: `.grid-2 > div > div > div` (a class of the PAGE) and
+ *        `div[class*="metric"]` (no class token at all) each took every metric
+ *        row off every card at phone width, 977/977 green. "Rules that mention
+ *        a class the card renders" is a proper subset of "rules that apply to
+ *        the card". So `applicableRules()` asks a selector ENGINE, against the
+ *        card rendered inside the page ancestry it ships in, and a selector
+ *        the engine cannot evaluate is RETURNED rather than skipped.
  *
- * What is left: a stylesheet or script injected by something outside this
- * repository at runtime — a browser extension, an edge worker, a `<link>` added
- * by the host. Nothing in a test process can see those, and saying so is the
- * honest form of the bound.
+ * ── WHAT ACTUALLY BOUNDS THE CHANNEL ─────────────────────────────────
+ *
+ * The list above is a map of the channels somebody has thought of, and for
+ * four rounds it was read as a closed enumeration under a residual paragraph
+ * saying the only thing left was "outside this repository". Round 19's BL-7
+ * falsified that with three lines in a file this module already walks:
+ * `new CSSStyleSheet()` + `sheet.replaceSync(…)` + `document.adoptedStyleSheets
+ * = […]` was 977/977 green and reaches every chip on every card in a real
+ * browser. So the bound is stated separately from the list, in terms of the
+ * three things a CSS write cannot do without:
+ *
+ *   TEXT — a `.css` file, whether this repository holds it or a dependency
+ *   does. `stylesheetUniverse()` is the union of what the repository HOLDS and
+ *   what the app LOADS, every member parsed and scanned.
+ *
+ *   AN ELEMENT — a `<style>` element, by any spelling. It cannot be created
+ *   without the string `'style'` appearing as a literal or as a JSX tag name
+ *   somewhere in the compiled source. `styleStringLiteralSites()` looks for
+ *   the string, `styleElementSpellings()` resolves the tag, and
+ *   `htmlInjectionSites()` scans the text; all three are pinned, and the first
+ *   is the one with no list in it.
+ *
+ *   A HANDLE ON THE DOCUMENT — `document.adoptedStyleSheets`,
+ *   `document.styleSheets[0].insertRule`, `document.head.appendChild`. A
+ *   `CSSStyleSheet` constructed and never adopted styles nothing.
+ *   `domHandleSites()` pins every member name this repository reads off
+ *   `document`, `window` or `globalThis`, per file.
+ *
+ * The residual, drawn where it can be checked rather than assumed: an element
+ * handle that came from neither `document` nor a tag name — a React `ref`. So
+ * `domHandleSites()` pins `useRef` call sites too, and what is genuinely left
+ * is a handle obtained some third way, of which this codebase has none today.
+ * Outside the repository entirely — a browser extension, an edge worker, a
+ * `<link>` added by the host — remains beyond any test process, and that part
+ * of the old sentence was the only part that was true.
  *
  * ── TEXT SCANS AND AST WALKS, AND WHY BOTH ───────────────────────────
  *
@@ -105,8 +143,15 @@
  *     visit.
  *
  * So both run, over the same files, and the caller pins both results empty.
+ *
  * The closed side underneath them is that the string `'style'` has to be
- * written somewhere for any spelling to work.
+ * written somewhere for any spelling to work — and for two rounds that
+ * sentence stood here as an ARGUMENT while nothing in the file looked for the
+ * string. Round 19's BL-5 walked through the gap between the two:
+ * `import { createElement as ce }` then `ce('style', …)` was 977/977 green,
+ * because the AST half matches an enumeration of CALLEE NAMES. The sentence is
+ * now implemented, by `styleStringLiteralSites()`, and is a third half rather
+ * than a justification for the other two.
  *
  * The cost of a text scan is prose: two files in `components/` name
  * `dangerouslySetInnerHTML` in a comment saying they do not use it, and
@@ -115,23 +160,37 @@
  * rather than a word — which is asserted as a case below rather than trusted as
  * a comment.
  *
- * ── CASE ─────────────────────────────────────────────────────────────
+ * ── PARSING, NOT PATTERN-MATCHING ────────────────────────────────────
  *
- * Every scanner here is case-INSENSITIVE, and round 17's BL-3 is why: CSS
- * Syntax L3 makes property names and at-rule names ASCII case-insensitive, and
- * every regex in this file was case-sensitive. `.chip::after { CONTENT: ' (see
- * acdp-consumer)'; }` was 977/977 green — verified to survive `lightningcss`,
- * the engine Next 16 compiles with, verbatim — and `@IMPORT` was invisible to
- * the at-rule scan for the same reason.
+ * Every CSS scanner here reads `normalizeCss()`'s output, not the file.
+ *
+ * Round 17's BL-3 was case: CSS Syntax L3 makes property and at-rule names
+ * ASCII case-insensitive, every regex here was case-sensitive, and
+ * `.chip::after { CONTENT: ' (see acdp-consumer)'; }` was 977/977 green.
+ * Round 18 answered it with `i` flags plus a tokenising second count, and
+ * wrote that the tokeniser reads "the parser's own model of what a declaration
+ * is". Round 19's BL-6 falsified that in one character: ident tokens admit
+ * ESCAPES, `\63 ontent` lower-cases to itself, `lightningcss` — the engine
+ * Next 16 compiles this app with — accepts all three escape forms and
+ * normalises every one of them to `content:`, and a `;{}` split cannot see any
+ * of them. Two derivations with a NEW shared blind spot agree loudest exactly
+ * where they are both wrong.
+ *
+ * So the compiler runs first, and case, escapes, comments, whitespace,
+ * nesting, `@layer`/`@supports`/`@media` syntax and vendor shorthand all stop
+ * being cases for a scanner to handle. The two `content` derivations still
+ * differ in METHOD — one matches, one tokenises — and they now share one
+ * dependency whose failure mode is a throw rather than a silent miss.
  *
  * `justify-content` is the trap in the other direction: the stylesheet has
  * eight of those and two real `content:` declarations, a scanner that confuses
  * them reports eight failures with values like `center`, and one that
- * over-corrects finds none and passes vacuously. Both directions, and both
- * cases, are asserted where this is used.
+ * over-corrects finds none and passes vacuously. Both directions, both cases
+ * and all three escape spellings are asserted where this is used.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { transform } from 'lightningcss';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -154,8 +213,49 @@ const SKIP_DIRS = new Set([
   'plans',
 ]);
 
-/** Source directories that are compiled into the app. */
+/**
+ * Source directories that are compiled into the app.
+ *
+ * ROUND 19's NB-1. This was exported with a docblock and read by no test, so
+ * narrowing it to `['app', 'components']` was 115/115 green — round 17's BL-2c
+ * verbatim ("a licensing list that no test reads is not a bound, whatever its
+ * docblock says"), left standing in this module while the sibling module fixed
+ * it. It is pinned where this is used, and `assertScanCoversCompiledSources()`
+ * below checks it against `tsconfig.json` rather than against a memory.
+ */
 export const RENDERED_DIRS: readonly string[] = ['app', 'components', 'lib'];
+
+/**
+ * The file extensions the compiler is configured to compile, read off
+ * `tsconfig.json`'s own `include` and `allowJs`.
+ *
+ * ROUND 19's NB-2. The walk filtered on `.ts`/`.tsx` under a docblock claiming
+ * "anywhere in the compiled source", while `tsconfig.json`'s `include` has
+ * listed `**\/*.mts` all along: `app/injector.mts` containing the UNALIASED
+ * `createElement('style', …)` — the exact spelling the AST half exists to
+ * catch — was typecheck-clean and 115/115 green, because the file was never
+ * opened. A `.jsx` variant was red, but by `tsc`'s `allowJs: false`, not by
+ * this gate, so flipping one compiler option would have opened it silently.
+ *
+ * Derived rather than listed, so neither can drift: a new `**\/*.<ext>` in
+ * `include`, or `allowJs` turning on, widens the walk in the same commit.
+ */
+export function compiledExtensions(): string[] {
+  const cfg = JSON.parse(
+    readFileSync(join(REPO_ROOT, 'tsconfig.json'), 'utf8').replace(/^\s*\/\/.*$/gm, ''),
+  ) as { include?: string[]; compilerOptions?: { allowJs?: boolean } };
+  const out = new Set<string>();
+  for (const pattern of cfg.include ?? []) {
+    const m = /\*\*\/\*(\.[A-Za-z]+)$/.exec(pattern);
+    if (m) out.add(m[1]);
+  }
+  // `allowJs` is not an extension in `include`, it is a switch that makes four
+  // more extensions compile under the SAME `**\/*.ts`-shaped patterns. It is
+  // read here rather than assumed because `allowJs: false` is currently doing
+  // work this gate is credited with.
+  if (cfg.compilerOptions?.allowJs) for (const e of ['.js', '.jsx', '.mjs', '.cjs']) out.add(e);
+  return [...out].sort();
+}
 
 function walk(dir: string, out: string[], pick: (name: string) => boolean): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -187,16 +287,117 @@ export function stylesheetPaths(): string[] {
  * is true.
  */
 export function renderedSourcePaths(): string[] {
+  const exts = compiledExtensions();
+  const pick = (n: string): boolean => exts.some((e) => n.endsWith(e));
   const out: string[] = [];
-  for (const dir of RENDERED_DIRS) walk(join(REPO_ROOT, dir), out, (n) => n.endsWith('.tsx') || n.endsWith('.ts'));
+  for (const dir of RENDERED_DIRS) walk(join(REPO_ROOT, dir), out, pick);
   for (const entry of readdirSync(REPO_ROOT, { withFileTypes: true })) {
-    if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))) out.push(entry.name);
+    if (entry.isFile() && pick(entry.name)) out.push(entry.name);
   }
   return out.map((p) => p.split('\\').join('/')).sort();
 }
 
+/**
+ * Every compiled source file that is NOT walked, so the gap is a number rather
+ * than a belief.
+ *
+ * `renderedSourcePaths()` walks three directories plus the repository root.
+ * `tsconfig.json` compiles `**\/*.ts`, `**\/*.tsx` and `**\/*.mts` ANYWHERE,
+ * and a source file that is compiled but not scanned is exactly the shape of
+ * round 19's NB-2. This lists them so the caller can pin the set — `test/`,
+ * `scripts/` and the config files are compiled and cannot render into the
+ * browser, which is a claim worth writing down once and checking, rather than
+ * one worth assuming every round.
+ */
+export function unscannedCompiledPaths(): string[] {
+  const scanned = new Set(renderedSourcePaths());
+  const exts = compiledExtensions();
+  const all: string[] = [];
+  walk(REPO_ROOT, all, (n) => exts.some((e) => n.endsWith(e)));
+  return all
+    .map((p) => p.split('\\').join('/'))
+    .filter((p) => !scanned.has(p))
+    .sort();
+}
+
 export function repoFileSource(path: string): string {
   return readFileSync(join(REPO_ROOT, path), 'utf8');
+}
+
+/**
+ * The stylesheet as the BROWSER sees it, not as the file spells it.
+ *
+ * ── ROUND 19's BL-6: A TOKENISER IS NOT A PARSER ─────────────────────
+ *
+ * Round 17's BL-3 was case — `CONTENT:` was 977/977 green because every regex
+ * here was case-sensitive. Round 18 answered it with `i` flags plus a second
+ * count that split on `;{}` and lower-cased the property name, and wrote that
+ * this reads "the parser's own model of what a declaration is".
+ *
+ * It does not, and round 19 falsified it in one character. CSS Syntax L3 ident
+ * tokens admit escapes: `\63 ontent`, `con\74 ent` and `\0063ontent` are all
+ * `content`, all three are ACCEPTED by `lightningcss` — the engine Next 16
+ * compiles this app with — and all three are normalised by it to `content:`.
+ * `.grid-2 > div::after { \63 ontent: ' (see acdp-consumer)'; }` was 977/977
+ * green. A `;{}` split with `.toLowerCase()` cannot see any of them, and
+ * neither can a regex, because the blind spot is in the tokenizer both share.
+ *
+ * So the compiler runs first. Case, escapes, comments, whitespace, nesting,
+ * `@layer`/`@supports`/`@media` syntax and vendor shorthand all stop being
+ * cases for a scanner to handle, because they have already been resolved by
+ * the thing that will resolve them in production.
+ *
+ * A sheet that does not parse THROWS. An unparseable stylesheet is the one
+ * case where silence would be indistinguishable from a clean scan.
+ */
+export function normalizeCss(css: string, label = 'stylesheet'): string {
+  try {
+    // `errorRecovery` is deliberately OFF: a sheet lightningcss cannot parse
+    // must throw, not be silently half-read. Silence is the one failure mode
+    // indistinguishable from a clean scan.
+    const { code } = transform({ filename: label, code: Buffer.from(css, 'utf8'), minify: false });
+    return Buffer.from(code).toString('utf8');
+  } catch (err) {
+    throw new Error(
+      `the stylesheet \`${label}\` could not be parsed by lightningcss (${String(err)}); ` +
+        'it reaches the browser, so it must be scanned as the browser will read it, not skipped',
+    );
+  }
+}
+
+/**
+ * Every rule in a stylesheet, selector and declaration block, after
+ * normalisation. `@media`/`@supports`/`@layer` wrappers are stepped through:
+ * an inner rule is a rule, and the wrapper is a condition on WHEN, which is
+ * not a reason to stop looking at WHAT.
+ */
+export function cssRules(css: string, label = 'stylesheet'): { selector: string; block: string }[] {
+  const stripped = normalizeCss(css, label);
+  const out: { selector: string; block: string }[] = [];
+  for (const m of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selector = m[1].trim().replace(/\s+/g, ' ');
+    if (selector.startsWith('@')) continue;
+    out.push({ selector, block: m[2].trim().replace(/\s+/g, ' ') });
+  }
+  return out;
+}
+
+/**
+ * A selector reduced to something `Element.matches()` will accept.
+ *
+ * Pseudo-ELEMENTS (`::after`, `:after`, `::first-line`) are not matchable and
+ * are not the point: a rule on `.chip::after` applies to `.chip`, and whether
+ * the generated box exists is the rule's business, not the selector's.
+ * Pseudo-CLASSES that depend on state jsdom does not have (`:hover`,
+ * `:focus-visible`, `:active`) are dropped for the same reason — a hover rule
+ * still applies to the element, and refusing to see it would be the more
+ * dangerous direction.
+ */
+export const UNMATCHABLE_PSEUDOS =
+  /::?(after|before|first-line|first-letter|selection|backdrop|placeholder|marker|hover|focus|focus-visible|focus-within|active|visited|target|-[a-z-]+)\b(\([^)]*\))?/gi;
+
+export function matchableSelector(selector: string): string {
+  return selector.replace(UNMATCHABLE_PSEUDOS, '').trim() || '*';
 }
 
 /**
@@ -205,9 +406,11 @@ export function repoFileSource(path: string): string {
  * The preceding character must not be a letter or `-`, which is what separates
  * `content:` from `justify-content:` and from any future `*-content` property.
  */
-export function contentDeclarations(css: string): string[] {
+export function contentDeclarations(css: string, label = 'stylesheet'): string[] {
   const out: string[] = [];
-  for (const m of css.matchAll(/(^|[^-A-Za-z])content\s*:\s*([^;}]*)/gi)) out.push(m[2].trim());
+  for (const m of normalizeCss(css, label).matchAll(/(^|[^-A-Za-z])content\s*:\s*([^;}]*)/gi)) {
+    out.push(m[2].trim());
+  }
   return out;
 }
 
@@ -230,7 +433,8 @@ export function contentDeclarations(css: string): string[] {
  * standing on the escape round 15 measured (`.chip::after { content: ' (see
  * acdp-consumer)'; }`), which is what "no longer the only layer" means here.
  */
-export function contentRules(css: string): { selector: string; value: string }[] {
+export function contentRules(css: string, label = 'stylesheet'): { selector: string; value: string }[] {
+  css = normalizeCss(css, label);
   const out: { selector: string; value: string }[] = [];
   for (const m of css.matchAll(/(^|[^-A-Za-z])content\s*:\s*([^;}]*)/gi)) {
     // The nearest `{` before the declaration opens the rule; what precedes it
@@ -266,9 +470,11 @@ export function contentRules(css: string): { selector: string; value: string }[]
  * pattern-matching around the token. A case bug in one is not a case bug in
  * the other, and a regex that stops matching does not stop the splitter.
  */
-export function contentOccurrences(css: string): number {
-  // Comments first: `/* content: x */` is not a declaration.
-  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+export function contentOccurrences(css: string, label = 'stylesheet'): number {
+  // Comments are gone already — `normalizeCss` drops them — but the strip is
+  // kept so this function is still correct on a raw sheet, and so that the two
+  // derivations do not become the same function with a different name.
+  const stripped = normalizeCss(css, label).replace(/\/\*[\s\S]*?\*\//g, '');
   let count = 0;
   for (const chunk of stripped.split(/[;{}]/)) {
     const colon = chunk.indexOf(':');
@@ -301,37 +507,54 @@ export function contentOccurrences(css: string): number {
  * A property denylist (`display`, `visibility`, `opacity`, `font-size`,
  * `clip-path`, `content-visibility`, `transform: scale(0)`, `color:
  * transparent`, …) is the open-set mistake this file has now made six times.
- * So the PRODUCT is pinned instead: the set of rules that touch the card at
- * all, selector and block together. Any new rule, any changed declaration, any
- * new `@media` arm targeting the card is a red test whatever property it sets,
- * and there is no list to keep complete — the closed side is "these are the
- * rules that may mention the card", which is short because the card's styling
- * is shared semantic classes.
+ * So the PRODUCT is pinned instead: selector and block together, for every
+ * rule that APPLIES.
+ *
+ * ── ROUND 19's BL-3: "APPLIES" IS NOT "MENTIONS A CLASS" ─────────────
+ *
+ * Round 18 decided applicability by matching selector text against the classes
+ * the card paints, and wrote "there is no list to keep complete". There was:
+ * the list of classes the card paints. `.grid-2 > div > div > div` is
+ * `.grid-2 > .card > .card-body > .metric-row` and `grid-2` belongs to the
+ * PAGE; `div[class*="metric"]` names no class at all. Each was 977/977 green
+ * and each took every metric row off every registry card at phone width.
+ *
+ * `applicableRules()` asks a selector ENGINE instead, against the card
+ * rendered inside the page ancestry it ships in. Ancestor selectors, attribute
+ * selectors, `:has()`, `*` and tag selectors stop being cases because the
+ * matcher is the browser's. A selector the engine cannot evaluate is returned
+ * to the caller to pin, never skipped.
  */
-export function cardRules(css: string, classes: readonly string[]): { selector: string; block: string }[] {
-  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
-  const out: { selector: string; block: string }[] = [];
-  // A class name is matched as a TOKEN, not as a substring. `.dot` is a class
-  // this card renders and `.react-flow__background-pattern.dots` is a vendor
-  // rule that has nothing to do with it; a substring test pulls the second into
-  // the pin, and then every `@xyflow/react` bump rewrites a pin whose job is to
-  // make a change to THIS CARD's styling visible. Trailing `-` is excluded for
-  // the same reason in the other direction: `.badge` must not claim
-  // `.badge-pub`'s rule, because `badge-pub` is a class in its own right and is
-  // in this list on its own merits when the card renders it.
-  const touches = (selector: string, cls: string): boolean =>
-    new RegExp(`${cls.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`).test(selector);
-  // A rule is `<selector> { <declarations> }` where the declarations contain no
-  // nested brace — which is true of every rule here, `@media` blocks included,
-  // because the inner rules are what this matches and the `@media` wrapper is
-  // not a rule with declarations of its own.
-  for (const m of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selector = m[1].trim().replace(/\s+/g, ' ');
-    if (selector.startsWith('@')) continue;
-    if (!classes.some((c) => touches(selector, c))) continue;
-    out.push({ selector, block: m[2].trim().replace(/\s+/g, ' ') });
+export type AppliedRule = { sheet: string; selector: string; block: string };
+
+export function applicableRules(
+  root: Element,
+  sheets: readonly { label: string; css: string }[],
+): { applied: AppliedRule[]; unmatchable: string[] } {
+  const elements: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+  const applied: AppliedRule[] = [];
+  const unmatchable = new Set<string>();
+  for (const { label, css } of sheets) {
+    for (const { selector, block } of cssRules(css, label)) {
+      // A selector list is a list of selectors; any one of them applying is the
+      // rule applying.
+      const hits = selector.split(',').some((part) => {
+        const sel = matchableSelector(part);
+        try {
+          return elements.some((el) => el.matches(sel));
+        } catch {
+          // NOT silently skipped — a selector the matcher cannot evaluate is
+          // returned to the caller to pin. Silence here would be the failure
+          // this whole module exists to refuse: a rule that applies in a
+          // browser and is invisible to the scan.
+          unmatchable.add(`${label}: ${part.trim()}`);
+          return false;
+        }
+      });
+      if (hits) applied.push({ sheet: label, selector, block });
+    }
   }
-  return out;
+  return { applied, unmatchable: [...unmatchable].sort() };
 }
 
 /** A `<style>` element or a `dangerouslySetInnerHTML` prop, with its spelling. */
@@ -438,6 +661,121 @@ export function styleElementAstSites(files?: readonly string[]): InjectionSite[]
   const out: InjectionSite[] = [];
   for (const file of files ?? renderedSourcePaths()) {
     for (const spelling of styleElementSpellings(repoFileSource(file))) out.push({ file, spelling });
+  }
+  return out;
+}
+
+/**
+ * THE CLOSED SIDE THE TWO HALVES ABOVE NAMED AND NEITHER IMPLEMENTED: the
+ * string `'style'`, wherever it is written.
+ *
+ * ── ROUND 19's BL-5 ──────────────────────────────────────────────────
+ *
+ * `styleElementSpellings` tests the callee against
+ * `/(^|\.)(createElement|jsx|jsxs|jsxDEV)$/` — an enumeration of CALLEE NAMES,
+ * one level over from the tag-name enumeration it replaced, and this module's
+ * signature defect. `import { createElement as ce } from 'react'` then
+ * `ce('style', null, "…content:…")` in `app/layout.tsx` was 977/977 green,
+ * typecheck and lint clean; the unaliased spelling of the same injection is
+ * red.
+ *
+ * The docblock above had already identified the right bound — "the string
+ * `'style'` has to be written somewhere for any spelling to work" — and then
+ * did not look for the string. This looks for the string.
+ *
+ * It has no list in it. The alias, the object-property tag (`{tag: 'style'}`),
+ * a tag passed as a function parameter, `document.createElement('style')`, a
+ * `Map` of tag names, and whatever the next spelling is all require the
+ * literal, and all fail here identically. A JSX tag name is covered by
+ * `styleElementSpellings`, which resolves identifiers; between the two there
+ * is no way to name a style element that neither sees.
+ *
+ * Comments are not string literals, which is why `registry-card.tsx` may
+ * discuss this channel in prose while `htmlInjectionSites()`'s text scan may
+ * not. Both facts are asserted where this is used.
+ */
+export function styleStringLiteralSites(files?: readonly string[]): InjectionSite[] {
+  const out: InjectionSite[] = [];
+  for (const file of files ?? renderedSourcePaths()) {
+    const src = repoFileSource(file);
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+        node.text === 'style'
+      ) {
+        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+        out.push({ file, spelling: `the string 'style' at line ${line}` });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/** A read off a browser global, or a handle on an element obtained another way. */
+export type DomHandleSite = { file: string; reach: string };
+
+/**
+ * Every member name this repository reads off `document` or `window`, plus
+ * every `useRef` call site — the two ways a CSS write can get a handle on the
+ * document without naming a stylesheet file or a style element.
+ *
+ * ── ROUND 19's BL-7 ──────────────────────────────────────────────────
+ *
+ * Every other scanner in this module looks for a `.css` FILE, a `<style>`
+ * ELEMENT, a `createElement`-family CALL, or `dangerouslySetInnerHTML`. Three
+ * lines in `components/layout/app-shell.tsx` — a `'use client'` ancestor of
+ * every page — used none of them:
+ *
+ *   const sheet = new CSSStyleSheet();
+ *   sheet.replaceSync(".chip::after { content: ' (see acdp-consumer)'; }");
+ *   document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+ *
+ * 977/977 green, and the rule reaches every chip on every card in every real
+ * browser. `new CSSStyleSheet()` is a `NewExpression` with none of the
+ * enumerated callees; `replaceSync`, `adoptedStyleSheets` and `insertRule`
+ * are named nowhere in this file.
+ *
+ * The module's residual paragraph said what was left was "a stylesheet or
+ * script injected by something OUTSIDE this repository". This one is inside
+ * it, in a file already walked, and trivially visible to a test process. The
+ * circle was drawn one ring too small.
+ *
+ * The answer is not `CSSStyleSheet` added to a list. A constructed sheet that
+ * is never adopted styles nothing, and adopting requires a handle on a
+ * document or a shadow root. So the SUPPLY is bounded: `document.*` and
+ * `window.*` member reads, per file, pinned as a product the way
+ * `applicableRules` pins the stylesheet — and `useRef`, because a ref is the one other
+ * way an element handle enters this codebase. What is genuinely left is a
+ * handle obtained some third way, and there is no third way in this codebase
+ * today, which is a claim the pin makes checkable instead of assumed.
+ */
+export function domHandleSites(files?: readonly string[]): DomHandleSite[] {
+  const out: DomHandleSite[] = [];
+  for (const file of files ?? renderedSourcePaths()) {
+    const src = repoFileSource(file);
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const seen = new Set<string>();
+    const add = (reach: string): void => {
+      if (seen.has(reach)) return;
+      seen.add(reach);
+      out.push({ file, reach });
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+        const base = node.expression.text;
+        if (base === 'document' || base === 'window' || base === 'globalThis') {
+          add(`${base}.${node.name.text}`);
+        }
+      }
+      if (ts.isCallExpression(node) && /(^|\.)useRef$/.test(node.expression.getText(sf))) {
+        add('useRef()');
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
   }
   return out;
 }
