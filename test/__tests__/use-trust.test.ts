@@ -88,8 +88,11 @@ function run(runId: string, t: RunTrustSummary): CpRun {
  * function call that happens to be spelled `use…`. Rendering a component just
  * to reach this closure would add a React tree that tests nothing.
  */
-function captureQueryFn(runs: CpRun[]): () => Promise<unknown> {
-  getCpDashboard.mockResolvedValue({ receiptCoverage: [], didMethods: [] });
+function captureQueryFn(
+  runs: CpRun[],
+  dash: Record<string, unknown> = {},
+): () => Promise<unknown> {
+  getCpDashboard.mockResolvedValue({ receiptCoverage: [], didMethods: [], ...dash });
   listCpRuns.mockResolvedValue({ data: runs.map((r) => ({ runId: r.runId })) });
   getCpRun.mockImplementation(async (id: string) => runs.find((r) => r.runId === id) ?? null);
   // eslint-disable-next-line react-hooks/rules-of-hooks -- see docblock: no React runtime, useQuery is mocked to capture
@@ -98,8 +101,11 @@ function captureQueryFn(runs: CpRun[]): () => Promise<unknown> {
   return capturedQueryFn;
 }
 
-async function overviewFor(runs: CpRun[]): Promise<TrustOverview> {
-  return (await captureQueryFn(runs)()) as TrustOverview;
+async function overviewFor(
+  runs: CpRun[],
+  dash: Record<string, unknown> = {},
+): Promise<TrustOverview> {
+  return (await captureQueryFn(runs, dash)()) as TrustOverview;
 }
 
 beforeEach(() => {
@@ -273,5 +279,57 @@ describe('revocationReportedRuns', () => {
     ]);
     // Both arms reachable in the default mode: one run reports, one does not.
     expect(o.totals.revocationReportedRuns).toBe(1);
+  });
+});
+
+// ── Phase 16: `features` passes through to /trust ──────────────────────
+//
+// The hook has always fetched the overview and kept two fields of it. #97 adds
+// a third, and `app/trust/page.tsx` renders "revocation checking off" off the
+// back of it — so a hook that silently dropped `features` would restore the
+// exact ambiguity the issue is about, with the page's own tests still green
+// (they inject `TrustOverview` directly and never exercise this closure).
+describe('features', () => {
+  const FEATURES = {
+    receiptAudit: true,
+    keyRevocationCheck: false,
+    logWitness: true,
+    logInclusionAudit: true,
+    witnessCosigning: true,
+    witnessQuorum: true,
+  };
+
+  it('surfaces the overview flags verbatim', async () => {
+    const o = await overviewFor([run('r1', trust())], { features: FEATURES });
+    expect(o.features).toEqual(FEATURES);
+    // Verbatim, not rebuilt: a hand-copied subset would drop whichever flag a
+    // future control-plane release adds.
+    expect(o.features).toBe(FEATURES);
+  });
+
+  it('leaves an absent `features` as undefined rather than defaulting it', async () => {
+    // `?? {}` here would be the defect in miniature. Every consumer reads these
+    // flags with `=== true` / `=== false` so that "the control plane did not
+    // say" stays a third answer; an empty object answers neither, but it also
+    // makes `features === undefined` false — which is the test
+    // `dashboardRevocationState` uses to reach `unknown`. Defaulting would
+    // route a pre-#178 backend into the flag arms.
+    const o = await overviewFor([run('r1', trust())]);
+    expect(o.features).toBeUndefined();
+    expect(o.features).not.toEqual({});
+  });
+
+  it('does not let the flags disturb the totals beside them', async () => {
+    // Deployment-scoped next to run-scoped: the reason `/trust` may use only
+    // the `=== false` arm. Asserting they are independent keeps a future
+    // "helpful" default from being wired into the aggregation.
+    const off = await overviewFor([run('r1', trust({ revoked: [revocation('pre_compromise')] }))], {
+      features: FEATURES,
+    });
+    const absent = await overviewFor([
+      run('r1', trust({ revoked: [revocation('pre_compromise')] })),
+    ]);
+    expect(off.totals).toEqual(absent.totals);
+    expect(off.totals.revocationReportedRuns).toBe(1);
   });
 });

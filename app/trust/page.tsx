@@ -61,8 +61,15 @@ export default function TrustPage() {
     );
   }
 
-  const { runs, totals, receiptCoverage, didMethods } = trust.data;
+  const { runs, totals, receiptCoverage, didMethods, features } = trust.data;
   const t: TrustTotals = totals;
+  // `=== false`, never `!features?.keyRevocationCheck`. The falsy form would
+  // fold "no `features` at all" — a control plane predating
+  // acdp-control-plane#178 — into "the operator turned it off", which is a claim
+  // about a deployment decision drawn from an absence of evidence. That is the
+  // whole defect class #97 exists to remove, and it would be a poor way to
+  // remove it.
+  const revocationCheckOff = features?.keyRevocationCheck === false;
   // A run is a violation if it carries a flagged discrepancy OR a fail-closed
   // revocation verdict. Filtering on `flagged.length` alone dropped revoked-only
   // runs into the "No trust violations" empty state while a
@@ -104,11 +111,76 @@ export default function TrustPage() {
           hint={
             t.revocationReportedRuns > 0
               ? `RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable · across the ${t.revocationReportedRuns} of ${runs.length} runs that reported a classification`
-              : // "in this view", not "in this window": `useTrust` fetches runs
+              : // TWO not-reported strings now, and only the `false` arm is new
+                // (#97). `features.keyRevocationCheck === false` is a fact about
+                // the deployment, so this page may state it — where before it
+                // could only describe the absence.
+                //
+                // The `true` arm deliberately does NOT get a "clean" claim; see
+                // the comment on `TrustOverview.features`. `features` is
+                // deployment-scoped while every total here is run-scoped, so a
+                // run audited before the flag was flipped still carries
+                // `key_revocation_status: 'none'` and reads as not-reported.
+                // `true` + zero reporting runs therefore still cannot tell
+                // "clean" from "predates the flag", and the honest wording is
+                // the one that was already here.
+                //
+                // "In this view", not "in this window": `useTrust` fetches runs
                 // via `listCpRuns({ limit })` with NO window parameter — only
                 // receiptCoverage/didMethods are window-scoped. Saying "window"
-                // would describe a scope this page does not actually apply.
-                'Not reported by this deployment — no run in this view carried a revocation classification'
+                // would describe a scope this page does not apply.
+                revocationCheckOff
+                // Split on `runs.length`, and the split is the whole point.
+                //
+                // NOT "no figures are sent while it is off". That is true of the
+                // DASHBOARD overview payload, where `keyRevocation` really is
+                // `null` — it is false here. These figures are run-scoped, from
+                // `summarizeByRun`, which always emits the three counters and
+                // `revoked: []`; with the check off they arrive as zeros. The
+                // suppression is THIS CONSOLE's, not the control plane's, and
+                // `run-trust-panel.tsx` already says so on the identical
+                // predicate ("the control plane emits these counters whether or
+                // not the check ran"). Two surfaces giving contradictory
+                // explanations of one suppression is exactly what
+                // `lib/utils/revocation.ts` exists to prevent.
+                //
+                // But "the counters still arrive" is a POSITIVE existential,
+                // and it is false over the empty set. `useTrust` builds `runs`
+                // as the runs that came back carrying a `trust` member, and
+                // `summarizeByRun` returns `null` outright when a run has no
+                // audit rows — so on a deployment with `RECEIPT_AUDIT_ENABLED`
+                // off (the upstream default, and the only posture in which the
+                // revocation flag is *forced* false) no run carries a summary,
+                // nothing arrives, and the previous single sentence told the
+                // operator counters were flowing while the console held none.
+                // `revocationReportedRuns === 0` is satisfied vacuously by an
+                // empty run set; the sentence beneath it was not.
+                //
+                // The sibling arm below needs no such split: "no run in this
+                // view carried a revocation classification" is a NEGATIVE
+                // existential, and it is true over the empty set. That
+                // asymmetry is the bug in miniature — round 5 replaced a
+                // negative claim with a positive one and inherited its gate.
+                ? runs.length > 0
+                  ? 'Revocation checking is switched off on this deployment — the counters still arrive with every audited run, but a zero from a check that never ran is not a finding'
+                  // Says only what the console can see: nothing audited reached
+                  // this view. Deliberately NOT "the control plane sent no
+                  // audits" — a run also lands outside `runs` when its detail
+                  // fetch failed, so the cause is not ours to name.
+                  : 'Revocation checking is switched off on this deployment, and no audited run reached this view — so there are no counters here at all, zero or otherwise'
+                // The sibling arm splits on the same predicate, for the same
+                // reason one level down. "Not reported by THIS DEPLOYMENT"
+                // names a cause, and over an empty run set the console has no
+                // basis for naming one: nothing audited arrived, which a
+                // disabled receipt audit, a run set with no audits yet, and a
+                // detail fetch that failed all produce identically. The
+                // trailing clause is a true negative existential either way;
+                // it was the opening clause that was doing the over-claiming,
+                // which is easy to miss because the em-dash reads as an
+                // apposition rather than an attribution.
+                : runs.length > 0
+                  ? 'Not reported by this deployment — no run in this view carried a revocation classification'
+                  : 'Not reported in this view — no audited run reached it, and this console cannot tell from here why not'
           }
         />
         <KpiCard label="No receipt" value={t.noReceipt} accent="var(--muted)" icon={<Fingerprint size={28} />} />
@@ -132,7 +204,9 @@ export default function TrustPage() {
             // Gated on the SAME predicate, so the two can never disagree.
             (t.revocationReportedRuns > 0
               ? `${t.revokedEvents} revoked across ${t.revokedRuns} run${t.revokedRuns === 1 ? '' : 's'}`
-              : 'revocation not reported') +
+              : revocationCheckOff
+                ? 'revocation checking off'
+                : 'revocation not reported') +
             (t.preCompromiseEvents > 0
               ? ` · ${t.preCompromiseEvents} pre-compromise (historically authorized, not violations)`
               : '') +
@@ -151,7 +225,31 @@ export default function TrustPage() {
             // empty array is exactly what "checked, clean" also looks like, so
             // the claim would be made without having looked. That
             // indistinguishability is the whole reason this phase exists.
-            <EmptyState title="No trust violations" description="Every audited receipt bound cleanly to its served context." />
+            // …and the SECOND reason, which cost this page a gate round: the
+            // sentence is a universal over `violationRuns`, so over an empty
+            // run set it is vacuously true and reads as an all-clear. `runs`
+            // is empty on the upstream DEFAULT posture — `RECEIPT_AUDIT_
+            // ENABLED=false`, where `summarizeByRun` returns `null` for every
+            // run and `useTrust` keeps only runs carrying a `trust` member —
+            // and it is also empty when every detail fetch failed. The page
+            // was rendering "no audited run reached this view" in the KPI row
+            // and "Every audited receipt bound cleanly to its served context"
+            // four inches below it, in one paint.
+            //
+            // Nothing audited is not nothing wrong. That is the conflation of
+            // UNMONITORED with CLEAN this whole change exists to remove, so it
+            // may not survive on the page the change is about.
+            runs.length === 0 ? (
+              <EmptyState
+                title="No audited run reached this view"
+                description="Nothing here has been checked, so nothing here can be reported clean. A run carries trust figures only once the control plane has audited its receipts."
+              />
+            ) : (
+              <EmptyState
+                title="No trust violations"
+                description={`Every audited receipt bound cleanly to its served context, across the ${runs.length} run${runs.length === 1 ? '' : 's'} in this view.`}
+              />
+            )
           ) : (
             <TableScroll label="Trust findings">
               <table className="data-table">

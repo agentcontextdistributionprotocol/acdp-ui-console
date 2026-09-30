@@ -17,11 +17,14 @@ import {
   hasTrustViolation,
   violationCount,
   runRevocationReported,
-  dashboardRevocationReported,
+  dashboardRevocationState,
+  type DashboardRevocationState,
   isKeyRevocationFacet,
   KEY_REVOCATION_TYPE_ALIASES,
   type RevocationEntry,
 } from '@/lib/utils/revocation';
+import type { CpDashboardFeatures, DashboardRevocation } from '@/lib/types';
+import { ALL_BECAUSE } from '../support/revocation-prose';
 
 function entry(status: string, eventId = status): RevocationEntry {
   return {
@@ -278,18 +281,278 @@ describe('runRevocationReported', () => {
   });
 });
 
-describe('dashboardRevocationReported', () => {
-  it('a pre-Phase-14 backend that omits the field is not-reported', () => {
-    expect(dashboardRevocationReported(undefined)).toBe(false);
+// MIGRATED, not deleted (#97). `dashboardRevocationReported` no longer exists;
+// each of its two tests maps onto a named `kind` of its replacement, and the
+// mapping is the point of the change:
+//
+//   "a backend that omits the field is not-reported"
+//     -> `dashboardRevocationState(undefined, undefined).kind === 'unknown'`
+//        The old name said "not reported", which the dashboard then rendered as
+//        a claim about the deployment. `unknown` is what the evidence supports.
+//
+//   "all-zero is not-reported; any non-zero reports"
+//     -> all-zero now SPLITS on whether the deployment says it ran the check:
+//        `checked-clean` when it did, `disabled` when it says it did not,
+//        `unknown` when it cannot say. Any non-zero is still `reported`, and is
+//        still reported even when the flags disagree, because a count is
+//        self-evidencing.
+//
+// Every one of those four is asserted in the block above, which is why nothing
+// is lost by this removal.
+
+// ══════════════════════════════════════════════════════════════════════
+// The tri-state that replaces the boolean (#97).
+//
+// The boolean above collapses "ran the check, found nothing" and "never looked"
+// into one rendering, so an operator could not tell a clean estate from an
+// unmonitored one. Every arm below is a thing the console could not previously
+// say, or a thing it was saying without warrant.
+// ══════════════════════════════════════════════════════════════════════
+describe('dashboardRevocationState', () => {
+  const ALL_ON: CpDashboardFeatures = {
+    receiptAudit: true,
+    keyRevocationCheck: true,
+    logWitness: true,
+    logInclusionAudit: true,
+    witnessCosigning: true,
+    witnessQuorum: true,
+  };
+  const CLEAN = { preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 };
+  const SOME = { preCompromise: 0, revokedAtOrAfter: 2, revokedTimeUnverifiable: 0 };
+
+  it('counters with something in them are reported, and carry the counts through', () => {
+    const state = dashboardRevocationState(SOME, ALL_ON);
+    expect(state.kind).toBe('reported');
+    // The narrowing that replaces the type predicate: `counts` is reachable
+    // without a `!` because the discriminant guarantees it.
+    if (state.kind === 'reported') expect(state.counts).toBe(SOME);
   });
 
-  it('all-zero is not-reported; any non-zero reports', () => {
-    expect(
-      dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 0 }),
-    ).toBe(false);
-    expect(
-      dashboardRevocationReported({ preCompromise: 0, revokedAtOrAfter: 0, revokedTimeUnverifiable: 1 }),
-    ).toBe(true);
+  it('EVERY counter is self-evidencing on its own, including revokedTimeUnverifiable', () => {
+    // The gate's finding, and a real hole: the migration of
+    // `dashboardRevocationReported` dropped the one probe its predecessor
+    // carried ({0,0,1}), and no fixture in any of the three touched test files
+    // set `revokedTimeUnverifiable` non-zero afterwards. Deleting that disjunct
+    // survived all 980 tests, and under the mutant a payload carrying five
+    // time-unverifiable findings rendered "classified nothing" — a false
+    // all-clear on a trust surface.
+    //
+    // One case per disjunct, each with the other two at zero, so no one of them
+    // can carry another.
+    const only = (k: keyof DashboardRevocation): DashboardRevocation => ({
+      preCompromise: 0,
+      revokedAtOrAfter: 0,
+      revokedTimeUnverifiable: 0,
+      [k]: 1,
+    });
+    for (const k of ['preCompromise', 'revokedAtOrAfter', 'revokedTimeUnverifiable'] as const) {
+      expect(dashboardRevocationState(only(k), ALL_ON).kind, k).toBe('reported');
+      // …and with no flags at all, which is the route the counters have to
+      // stand up on their own.
+      expect(dashboardRevocationState(only(k), undefined).kind, k).toBe('reported');
+    }
+  });
+
+  it('reports non-zero counters even when the flag disagrees', () => {
+    // Self-evidencing: a non-zero count means the check ran and found that,
+    // whatever the deployment claims about itself. Rendering "disabled" over
+    // live figures would be the worse error.
+    expect(dashboardRevocationState(SOME, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('reported');
+    expect(dashboardRevocationState(SOME, undefined).kind).toBe('reported');
+  });
+
+  it('zeros WITH the check enabled is checked-clean — the state #97 exists for', () => {
+    expect(dashboardRevocationState(CLEAN, ALL_ON).kind).toBe('checked-clean');
+  });
+
+  it('checked-clean means all three are ZERO, not "none of them positive"', () => {
+    // ROUND 10's NB5. The `reported` arm tested `> 0`, so the predicate the code
+    // actually applied to reach `checked-clean` was "no member is POSITIVE" —
+    // while `checked-clean`'s copy states "this window's counters are zero" and
+    // its `licensedBy` claimed "a complete counter triple whose three members
+    // are all zero". A negative member satisfied `hasCounters`, failed the
+    // `reported` arm, and landed on the one sentence in this module whose whole
+    // job is to say a number is zero. That is the module's headline defect —
+    // a figure asserted from something that is not that figure — reached by
+    // arithmetic rather than by a missing field.
+    //
+    // A negative count is unreachable from a correct control plane, which is
+    // precisely the argument that was made for `{}`, for `features: null` and
+    // for `features: []`; all three arrived off the network anyway.
+    for (const member of ['preCompromise', 'revokedAtOrAfter', 'revokedTimeUnverifiable'] as const) {
+      const negative = { ...CLEAN, [member]: -1 };
+      const state = dashboardRevocationState(negative, ALL_ON);
+      expect(state.kind, `a negative \`${member}\` was called clean`).toBe('reported');
+      // …and `reported` is the honest destination BECAUSE it makes no claim
+      // beyond "these are the counters that arrived": the value shows up as
+      // itself rather than being laundered into the word "clean". Routing it to
+      // `counters-partial` would print "some of the three came through and some
+      // did not", which is false of a complete triple.
+      expect(state.kind === 'reported' && state.counts).toEqual(negative);
+    }
+    // The boundary, both sides: exactly zero is still clean, and `-0` is zero.
+    expect(dashboardRevocationState(CLEAN, ALL_ON).kind).toBe('checked-clean');
+    expect(dashboardRevocationState({ ...CLEAN, preCompromise: -0 }, ALL_ON).kind).toBe('checked-clean');
+  });
+
+  it('the check explicitly off is disabled, not clean', () => {
+    expect(dashboardRevocationState(CLEAN, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
+    // And `null` counters — what upstream actually sends when it is off.
+    expect(dashboardRevocationState(null, { ...ALL_ON, keyRevocationCheck: false }).kind).toBe('disabled');
+  });
+
+  it('distinguishes WHY it is unknown, because each licenses different copy', () => {
+    // The gate's second finding, then its second round's first finding. The arm
+    // first inherited the pre-#178 hedge ("the check is disabled by default")
+    // on the argument that it IS a pre-#178 backend — true of one route only.
+    // Splitting it in two was not enough either: the merged
+    // flag-says-on/flag-unreadable reason carried copy describing the first,
+    // which is false on the second. A `because` names a fact that holds on
+    // EVERY route carrying it, and each time a route was found carrying copy
+    // that did not hold on all of it, the union grew. The count is therefore
+    // NOT written here — see `ALL_BECAUSE`, and the assertion at the end of
+    // this test that uses it.
+    expect(dashboardRevocationState(CLEAN, undefined)).toEqual({
+      kind: 'unknown',
+      because: 'no-flags',
+    });
+
+    // Flag reads exactly `true`, but no counters arrived at all. Both halves of
+    // this route's copy are checkable facts here and nowhere else.
+    expect(dashboardRevocationState(null, ALL_ON)).toEqual({
+      kind: 'unknown',
+      because: 'flag-on-no-counters',
+    });
+    expect(dashboardRevocationState(undefined, ALL_ON)).toEqual({
+      kind: 'unknown',
+      because: 'flag-on-no-counters',
+    });
+
+    // A features object arrived with an unreadable flag. NOT `no-flags`: we are
+    // demonstrably not talking to a backend that predates the field. And NOT
+    // the route above: the counters here are PRESENT and zero, so copy saying
+    // "sent no counters at all" would be false.
+    const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringy)).toEqual({
+      kind: 'unknown',
+      because: 'flag-unreadable',
+    });
+    // Same reason with the counters ABSENT — the route is about the flag, not
+    // the counters, so it must not fork on them.
+    expect(dashboardRevocationState(null, stringy)).toEqual({
+      kind: 'unknown',
+      because: 'flag-unreadable',
+    });
+
+    // A PARTIAL triple: some counters arrived and some did not. A fact about
+    // the payload, so it is read before any flag — the flag-derived arms all
+    // say something the partial payload falsifies, and this route exists so
+    // none of them has to be stretched to cover it. It had no assertion in
+    // this file at all until round 9; its routing was covered only through the
+    // render tests, which is why the three stale "three"s here went unnoticed.
+    expect(dashboardRevocationState({ revokedAtOrAfter: 3 } as never, ALL_ON)).toEqual({
+      kind: 'unknown',
+      because: 'counters-partial',
+    });
+    // …and it does not fork on the flag, because it is not about the flag.
+    for (const f of [undefined, ALL_ON, { ...ALL_ON, keyRevocationCheck: false }, stringy]) {
+      expect(
+        dashboardRevocationState({ revokedAtOrAfter: 3 } as never, f as CpDashboardFeatures),
+      ).toEqual({ kind: 'unknown', because: 'counters-partial' });
+    }
+
+    // EVERY reason is reachable, so no arm is dead code — and the expected set
+    // is DERIVED from the union rather than counted by hand. This assertion was
+    // `expect(new Set(reasons).size).toBe(3)`, and the 3 went stale in the
+    // commit that added the fourth value: a completeness claim one short of the
+    // union it described, asserted as a hard number, in the test file for the
+    // module whose whole subject is claims that reach past their evidence.
+    //
+    // Read through a narrowing helper rather than asserting on literals, so it
+    // also fails if any two routes ever start returning the same reason.
+    const reasonOf = (x: DashboardRevocationState) => (x.kind === 'unknown' ? x.because : null);
+    const reasons = [
+      reasonOf(dashboardRevocationState(CLEAN, undefined)),
+      reasonOf(dashboardRevocationState(null, ALL_ON)),
+      reasonOf(dashboardRevocationState(CLEAN, stringy)),
+      reasonOf(dashboardRevocationState({ revokedAtOrAfter: 3 } as never, ALL_ON)),
+    ];
+    expect(new Set(reasons)).toEqual(new Set(ALL_BECAUSE));
+    expect(reasons).not.toContain(null);
+  });
+
+  it('a null or non-object `features` is `no-flags`, and does not throw', () => {
+    // Found by round 2 of this change's gate: `features === undefined` is false
+    // for `null`, and the next line dereferenced it — crashing the whole
+    // `/dashboard` route, which calls this inline in its render tree. `/trust`
+    // was already null-safe through `?.`, so the two surfaces disagreed about
+    // the same wire payload.
+    const nully = null as unknown as CpDashboardFeatures;
+    expect(() => dashboardRevocationState(CLEAN, nully)).not.toThrow();
+    expect(dashboardRevocationState(CLEAN, nully)).toEqual({
+      kind: 'unknown',
+      because: 'no-flags',
+    });
+    // Not an object at all. `flag-unreadable` would claim a feature report
+    // arrived; a string is not one, so the honest reason is the same as sending
+    // nothing.
+    for (const junk of ['true', 42, false] as unknown as CpDashboardFeatures[]) {
+      expect(() => dashboardRevocationState(CLEAN, junk)).not.toThrow();
+      expect(dashboardRevocationState(CLEAN, junk)).toEqual({
+        kind: 'unknown',
+        because: 'no-flags',
+      });
+    }
+    // DISCRIMINATING: a real object with an unreadable flag is still the OTHER
+    // reason, so the guard above did not just swallow everything.
+    const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringy)).toEqual({
+      kind: 'unknown',
+      because: 'flag-unreadable',
+    });
+  });
+
+  it('no features at all is unknown — a pre-#178 control plane', () => {
+    // NOT `checked-clean`, and not `disabled`. Zeros from a backend that cannot
+    // tell us whether it looked are exactly the legacy heuristic's blind spot,
+    // and the honest answer is that we do not know.
+    expect(dashboardRevocationState(CLEAN, undefined).kind).toBe('unknown');
+    expect(dashboardRevocationState(undefined, undefined).kind).toBe('unknown');
+    expect(dashboardRevocationState(null, undefined).kind).toBe('unknown');
+  });
+
+  it('null counters WITH the check enabled is unknown — a state upstream cannot produce', () => {
+    // Both derive from one config value (`dashboard.service.ts:39` and `:240`),
+    // so this combination means something is wrong. Asserting `checked-clean`
+    // here would be claiming a clean estate on the strength of a contradiction.
+    expect(dashboardRevocationState(null, ALL_ON).kind).toBe('unknown');
+    expect(dashboardRevocationState(undefined, ALL_ON).kind).toBe('unknown');
+  });
+
+  it('reads the flag as === true / === false, never for truthiness', () => {
+    // A wire payload with the flag missing or non-boolean gets past the type but
+    // not past the function. Truthiness would send `undefined` to `disabled`,
+    // which asserts the operator turned the check off — a claim from an absence.
+    const partial = { ...ALL_ON, keyRevocationCheck: undefined } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, partial).kind).toBe('unknown');
+    const stringy = { ...ALL_ON, keyRevocationCheck: 'true' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringy).kind).toBe('unknown');
+    // The mirror image: a string 'false' must not read as disabled either.
+    const stringyFalse = { ...ALL_ON, keyRevocationCheck: 'false' } as unknown as CpDashboardFeatures;
+    expect(dashboardRevocationState(CLEAN, stringyFalse).kind).toBe('unknown');
+  });
+
+  it('every arm is reachable and they are four distinct kinds', () => {
+    // Without this, three arms could collapse onto one name and the tests above
+    // would each still pass in isolation.
+    const kinds = [
+      dashboardRevocationState(SOME, ALL_ON).kind,
+      dashboardRevocationState(CLEAN, ALL_ON).kind,
+      dashboardRevocationState(CLEAN, { ...ALL_ON, keyRevocationCheck: false }).kind,
+      dashboardRevocationState(CLEAN, undefined).kind,
+    ];
+    expect(new Set(kinds).size).toBe(4);
+    expect(kinds).toEqual(['reported', 'checked-clean', 'disabled', 'unknown']);
   });
 });
 

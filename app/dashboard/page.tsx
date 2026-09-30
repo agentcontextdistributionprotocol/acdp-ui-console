@@ -18,7 +18,8 @@ import { useDashboard } from '@/lib/hooks/use-dashboard';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { useGlobalEvents } from '@/lib/hooks/use-global-events';
 import { formatNumber } from '@/lib/utils/format';
-import { dashboardRevocationReported } from '@/lib/utils/revocation';
+import { dashboardRevocationState } from '@/lib/utils/revocation';
+import type { DashboardRevocationState } from '@/lib/utils/revocation';
 
 // recharts is heavy; keep it out of the initial bundle.
 const BarChartCard = dynamic(
@@ -214,45 +215,231 @@ export default function DashboardPage() {
           right={<ShieldAlert size={18} style={{ color: 'var(--danger)' }} />}
         />
         <CardBody>
-          {/* `dashboardRevocationReported` is a type predicate, so the three
-              KPIs below read `d.keyRevocation.x` with no `!` — the compiler
-              checks the guarantee instead of taking our word for it. */}
-          {dashboardRevocationReported(d.keyRevocation) ? (
-            <div className="kpi-grid">
-              <KpiCard
-                label="Pre-compromise (authorized)"
-                value={formatNumber(d.keyRevocation.preCompromise)}
-                accent="var(--success)"
-                hint="Signed strictly before the compromise boundary — historically authorized"
-              />
-              <KpiCard
-                label="Revoked at/after boundary"
-                value={formatNumber(d.keyRevocation.revokedAtOrAfter)}
-                accent="var(--danger)"
-                hint="Fails closed under the strict profile — not attributable to the producer"
-              />
-              <KpiCard
-                label="Revoked time unverifiable"
-                value={formatNumber(d.keyRevocation.revokedTimeUnverifiable)}
-                accent="var(--warning)"
-                hint="No receipt-attested publish time to compare against the compromise boundary"
-              />
-            </div>
-          ) : (
-            <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
-              <strong style={{ color: 'var(--text)' }}>
-                Nothing in this window carried a revocation classification.
-              </strong>
-              <br />
-              No figures are shown rather than zeros: a zero would claim &ldquo;nothing is
-              revoked&rdquo; when it cannot be told apart from never having looked — the check is
-              disabled by default. This is a statement about the selected window, not about the
-              deployment: a different window may well show figures. They appear as soon as
-              anything is classified.
-            </div>
-          )}
+          <RevocationBody state={dashboardRevocationState(d.keyRevocation, d.features)} />
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+/**
+ * The four things the console can honestly say about key revocation (#97).
+ *
+ * It was a boolean, and the `false` arm asserted "the check is disabled by
+ * default" — which is simply false whenever `features.keyRevocationCheck` is
+ * true, and was the last surviving instance in this file of the class of defect
+ * this plan exists to remove: a sentence that states a cause the console never
+ * established.
+ *
+ * `checked-clean` is the state that did not previously exist. It is a POSITIVE
+ * statement, and it is deliberately WINDOW-scoped: "nothing in this window was
+ * classified", never "nothing is revoked". The window picker can change the
+ * answer, so a deployment-level claim would be unwarranted from the same data.
+ *
+ * `unknown` renders one way per `because`, and only `no-flags` keeps the old
+ * prose with its "disabled by default" hedge. That route is a control plane
+ * predating acdp-control-plane#178, where nothing has told us whether the check
+ * runs — so the hedge is still the honest thing to say there, and confining it
+ * to that route is what lets every other rendering stop saying it.
+ *
+ * The others say only what holds on their own route: `flag-on-no-counters` may
+ * state that the deployment reports the check as on (it does — `=== true`);
+ * `flag-unreadable` may state only that the flag could not be read, since on
+ * that route the counters may be absent or present-and-zero and the flag says
+ * nothing either way; `counters-partial` may state only that the payload is
+ * incomplete, which is a fact about the payload and says nothing about the
+ * flag. Round 2 of this change's gate found a merged version stating the first
+ * arm's cause over the second's, which is the defect this whole file exists to
+ * remove.
+ *
+ * ONE RENDERING PER ARM, and no total is written here.
+ *
+ * `unknown` is one state about one thing we do not know, split only by what may
+ * honestly be said ABOUT not knowing: the `.kpi-grid` for `reported`, one
+ * paragraph each for `checked-clean` and `disabled`, and one for each `because`
+ * value.
+ *
+ * An earlier version of this line DID carry a total, and got it wrong twice —
+ * "five" when there were six (round 3's gate), then "SIX ... three `because`
+ * values" when the fourth `because` had just landed in the same commit (round
+ * 8's). Both times the argument for writing the number down was that a stale
+ * count invites the next reader to conclude an arm is dead and merge it, which
+ * is how the over-claiming `flags-disagree` copy came to be written. The count
+ * was itself the thing going stale, twice, so it is gone: the arms are
+ * enumerated in `lib/utils/revocation.ts`'s union, `DASHBOARD_PROSE` is keyed
+ * off that union so `tsc` refuses a missing one, and
+ * `dashboard-revocation.test.tsx` asserts every key of that table is reached by
+ * a render. Three derived checks and no hand-written total.
+ */
+function RevocationBody({ state }: { state: DashboardRevocationState }) {
+  if (state.kind === 'reported') {
+    // `state.counts` needs no `!`: the discriminant carries the guarantee that
+    // the old type predicate existed to provide.
+    return (
+      <div className="kpi-grid">
+        <KpiCard
+          label="Pre-compromise (authorized)"
+          value={formatNumber(state.counts.preCompromise)}
+          accent="var(--success)"
+          hint="Signed strictly before the compromise boundary — historically authorized"
+        />
+        <KpiCard
+          label="Revoked at/after boundary"
+          value={formatNumber(state.counts.revokedAtOrAfter)}
+          accent="var(--danger)"
+          hint="Fails closed under the strict profile — not attributable to the producer"
+        />
+        <KpiCard
+          label="Revoked time unverifiable"
+          value={formatNumber(state.counts.revokedTimeUnverifiable)}
+          accent="var(--warning)"
+          hint="No receipt-attested publish time to compare against the compromise boundary"
+        />
+      </div>
+    );
+  }
+
+  // `margin: 0` because these render as `<p>` rather than `<div>`. The element
+  // is a paragraph — one block of explanatory prose — and saying so is what
+  // lets a test assert sentence-by-sentence over the PROSE alone. Round 2 of
+  // this change's gate found the window-scoping guard reading the whole card:
+  // the header and subtitle carry no terminal period, so splitting on the
+  // period glued the subtitle onto the first claim, and the subtitle's own
+  // "older than this window" satisfied the scope assertion no matter what the
+  // claim said.
+  const prose = { fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, margin: 0 } as const;
+
+  if (state.kind === 'checked-clean') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          Revocation checking is enabled, and nothing in this window is classified against a revoked
+          key.
+        </strong>
+        <br />
+        Two facts, stated separately because the console holds them separately: the deployment
+        reports the compromise-boundary check as on, and this window&rsquo;s counters are zero. It
+        does not follow that every event in the window was checked — classification happens at audit
+        time, so an event audited before the check was switched on was given its status then. Nor
+        does that status stay fixed: when a revocation fact arrives later, the control plane
+        re-audits and amends already-sealed events in place. An amendment does not update the
+        audit timestamp, so it moves these figures only where the amended event already sits inside
+        this window. A longer window may also show figures.
+      </p>
+    );
+  }
+
+  if (state.kind === 'disabled') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          Revocation checking is switched off on this deployment.
+        </strong>
+        <br />
+        No figures are shown for this window because a zero produced while the check is off is
+        not a finding — which is not the same as having looked and found nothing. It is
+        also not a claim that nothing was classified: classification happens at audit time and is
+        not undone by disabling the check, so anything already recorded stays recorded, in this
+        window as much as an earlier one. What the console cannot tell you from here is whether the
+        check was running earlier in this window. Nothing new will be classified until it is
+        enabled.
+      </p>
+    );
+  }
+
+  // `unknown`, whose `because` values license different explanations. Only
+  // `no-flags` may keep the original hedge — see `dashboardRevocationState`.
+  // No count here either: this line said "three" for the whole commit that
+  // added the fourth.
+  if (state.because === 'flag-on-no-counters') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          This deployment&rsquo;s report about revocation checking does not add up.
+        </strong>
+        <br />
+        {/*
+          Both halves of this sentence are things the console holds directly on
+          this route and nowhere else: the flag was read as exactly `true`, and
+          `keyRevocation` was absent rather than zeroed. Upstream derives both
+          from the same setting, so one of them is wrong.
+        */}
+        It reports the compromise-boundary check as enabled, yet sent no counters at all — not even
+        zeros. Those two come from the same setting upstream, so one of them is wrong and there is
+        no way to tell which from here. No figures are shown, and no cause is offered beyond that:
+        the check is not reported as off, so saying it was would be inventing an explanation.
+      </p>
+    );
+  }
+
+  if (state.because === 'counters-partial') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          This deployment&rsquo;s revocation counters arrived incomplete.
+        </strong>
+        <br />
+        {/*
+          Says nothing about the flag, deliberately: this arm is reached with
+          the check reported on, off, unreadable, or not reported at all, and a
+          sentence naming any of those would be true on one route and false on
+          three. The only fact that holds everywhere here is the shape of the
+          payload.
+        */}
+        Some of the three counters came through and some did not, so the ones that did have no
+        denominator to be read against. No figures are shown, because rendering the members that
+        arrived would print a zero for each member that did not — and a zero this console invented
+        is indistinguishable, on screen, from one the check produced.
+      </p>
+    );
+  }
+
+  if (state.because === 'flag-unreadable') {
+    return (
+      <p style={prose}>
+        <strong style={{ color: 'var(--text)' }}>
+          This deployment did not say whether revocation checking is running.
+        </strong>
+        <br />
+        {/*
+          The ONE fact that holds on every route here. Nothing is said about the
+          counters: on this route they may be absent or present-and-zero, and
+          the previous merged copy claimed the second could not happen. Nothing
+          is said about the deployment being old either — a feature block did
+          arrive; it just could not be read.
+        */}
+        It sent a feature report, but the compromise-boundary setting in it was not a value this
+        console can read as on or off. No figures are shown, because whether anything was measured
+        is exactly what could not be established.
+      </p>
+    );
+  }
+
+  return (
+    <p style={prose}>
+      {/*
+        ROUND 9. This headline read "Nothing in this window carried a
+        revocation classification." — a claim about the COUNTERS, on the one
+        arm licensed by a `features` absence, which establishes nothing about
+        counters. The route is reached with `keyRevocation` as `null`,
+        `undefined` and `{}`: no counters at all. Its sibling
+        `flag-on-no-counters` refuses, on exactly that payload, to say anything
+        about what was classified — two arms applying different standards to
+        the same absence, and the stricter one was right.
+
+        "The check is disabled by default" survives, because withholding
+        FIGURES is all it was ever licensed to justify. What it cannot license
+        is a statement about what the window contains.
+      */}
+      <strong style={{ color: 'var(--text)' }}>
+        This deployment sent no report about revocation checking.
+      </strong>
+      <br />
+      Nothing arrived that says whether the compromise-boundary check is running — a backend that
+      predates the feature report, or a payload that was not one. No figures are shown rather than
+      zeros: a zero would claim &ldquo;nothing is revoked&rdquo; when it cannot be told apart from
+      never having looked, and the check is disabled by default. Whether anything in this window was
+      classified is exactly what could not be established.
+    </p>
   );
 }

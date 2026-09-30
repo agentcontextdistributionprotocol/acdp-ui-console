@@ -677,9 +677,9 @@ describe('which .did elements the dropped cap actually affected', () => {
     expect(ids).toEqual([
       'app/agents/page.tsx:span:112', // NOT in a table — activity list
       'app/security/page.tsx:div:199', // NOT in a table — JWKS card
-      'app/trust/page.tsx:span:194', // flex item — WAS capped
-      'app/trust/page.tsx:span:214', // inline in a <td> — inert (§10.4)
-      'app/trust/page.tsx:span:231', // inline in a <td> — inert (§10.4)
+      'app/trust/page.tsx:span:292', // flex item — WAS capped
+      'app/trust/page.tsx:span:312', // inline in a <td> — inert (§10.4)
+      'app/trust/page.tsx:span:329', // inline in a <td> — inert (§10.4)
       'components/runs/run-trust-panel.tsx:span:138', // flex item — WAS capped
       'components/runs/run-trust-panel.tsx:span:185', // flex item — WAS capped
     ]);

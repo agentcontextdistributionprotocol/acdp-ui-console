@@ -12,7 +12,17 @@ import {
 } from '@/lib/utils/revocation';
 import type { CpDashboardOverview, CpRun, RunTrustSummary } from '@/lib/types';
 
-const MAX_RUNS = 25;
+/**
+ * How many recent runs the trust page audits.
+ *
+ * EXPORTED so a test can bound its sweep by the value this hook uses rather
+ * than by a number parsed out of this file. Round 13's B2: the test read
+ * `/const\s+MAX_RUNS\s*=\s*(\d+)/`, which is unanchored, so rewriting this
+ * to `5 * 5` — same value, same fetch — silently narrowed the sweep's ceiling
+ * from 25 to 5 with the whole suite green. A parser written to stop a number
+ * drifting drifted, and less visibly than the hand-written number it replaced.
+ */
+export const MAX_RUNS = 25;
 
 export interface RunTrust {
   run: CpRun;
@@ -60,6 +70,22 @@ export interface TrustOverview {
   totals: TrustTotals;
   receiptCoverage: NonNullable<CpDashboardOverview['receiptCoverage']>;
   didMethods: NonNullable<CpDashboardOverview['didMethods']>;
+  /**
+   * Which checks the DEPLOYMENT runs (#97). Already on the wire — this hook has
+   * always fetched the overview and discarded everything but the two fields
+   * above — so surfacing it costs one line and no request.
+   *
+   * Deployment-scoped, and that limits what `/trust` may do with it. The
+   * totals beside it are RUN-scoped: a run audited before the flag was flipped
+   * carries `key_revocation_status: 'none'` forever, so
+   * `keyRevocationCheck === true` with `revocationReportedRuns === 0` still
+   * cannot tell "clean" from "predates the flag". Only the `=== false` arm is
+   * safe here, which is why `/trust` gets that arm and not the dashboard's
+   * `checked-clean`.
+   *
+   * `undefined` for a control plane predating acdp-control-plane#178.
+   */
+  features: CpDashboardOverview['features'];
 }
 
 /**
@@ -125,6 +151,10 @@ export function useTrust(window = '24h') {
         totals,
         receiptCoverage: dash.receiptCoverage ?? [],
         didMethods: dash.didMethods ?? [],
+        // NOT defaulted. `?? {}` would be a partial object, and every read of
+        // these flags is `=== true` / `=== false` precisely so that "absent"
+        // stays its own answer rather than collapsing into "off".
+        features: dash.features,
       };
     },
     staleTime: 20_000,

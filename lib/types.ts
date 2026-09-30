@@ -260,12 +260,83 @@ export interface CpDashboardOverview {
   //     ONLY against a control plane that predates the field". That correction
   //     is now itself out of date. The claim was premature, not false.
   //
-  // Both land on absent, so `dashboardRevocationReported()`
-  // (`lib/utils/revocation.ts`) stays correct either way. What it still cannot
-  // do is tell "enabled and clean" from "never checked"; the `features` object
-  // that same upstream release added answers that, and is not modelled here
-  // yet — issue #97.
-  keyRevocation?: { preCompromise: number; revokedAtOrAfter: number; revokedTimeUnverifiable: number };
+  // Both land on absent-or-null, and `dashboardRevocationState()`
+  // (`lib/utils/revocation.ts`) now tells all three apart — "enabled and
+  // clean", "disabled", and "we cannot know" — by reading `features` below
+  // instead of guessing from zeros. That is what #97 asked for.
+  //
+  // `| null` is not decoration: the field is literally `null` on the wire when
+  // the check is off (`dashboard.service.ts:240`), and this type previously
+  // said only `?`, so the runtime shape was untypeable. The helper handled
+  // `null` correctly anyway; the type was the thing that lied.
+  keyRevocation?: DashboardRevocation | null;
+  /**
+   * Which checks this deployment actually runs (`dashboard.service.ts:260-267`).
+   *
+   * OPTIONAL, and the optionality is load-bearing. Upstream builds this
+   * unconditionally, so a live control plane always sends it — but one that
+   * predates acdp-control-plane#178 sends none at all, and that state must stay
+   * distinguishable from "sent, and every flag is false". The first means we do
+   * not know; the second means the operator turned everything off. Collapsing
+   * them is the exact over-claim #97 exists to remove.
+   *
+   * Read every flag as `=== true` / `=== false`, never for truthiness — the
+   * same discipline `components/registries/log-witness-card.tsx` already
+   * encodes for the nullable quorum counts.
+   */
+  // Optional, NOT nullable, and that asymmetry with `keyRevocation` above is
+  // deliberate: `dashboard.service.ts:260` builds this object unconditionally,
+  // so `null` is not a shape upstream can send, whereas an older control plane
+  // omitting the key entirely is. `dashboardRevocationState` still guards
+  // `null` at runtime — a round-2 gate found that a `null` on the wire crashed
+  // `/dashboard` outright — because a type is a claim about the deployments we
+  // know of, not a runtime guarantee about the one in front of us.
+  features?: CpDashboardFeatures;
+  // Upstream's dashboard payload also carries `logWitness`, `totalRetracted`
+  // and `totalContextsLive`. They are deliberately NOT declared here: nothing
+  // in the console reads them, so no test could hold the declared shape to
+  // account, and a wrong shape would sit in the type surface being trusted
+  // until the first consumer arrived. Same standard that removed this module's
+  // `DashboardRevocation` re-export in this change — a declaration nothing
+  // reads is a claim nothing checks. Add them WITH the surface that consumes
+  // them, and a fixture that pins them.
+}
+
+/** The three RFC-ACDP-0014 §7 compromise-boundary counters, window-scoped. */
+export interface DashboardRevocation {
+  preCompromise: number;
+  revokedAtOrAfter: number;
+  revokedTimeUnverifiable: number;
+}
+
+/**
+ * The six feature flags the control plane reports about itself
+ * (`dashboard.service.ts:260-267`, added by acdp-control-plane#178).
+ *
+ * All six are REQUIRED here, deliberately. Upstream emits an object literal
+ * reading six config booleans, so a partial `features` is not a shape it can
+ * produce; making them optional would invent a fourth state for every tile and
+ * put the burden of imagining it on every consumer.
+ *
+ * That requirement is a claim about UPSTREAM, not a guarantee the wire makes —
+ * nothing validates this payload on arrival, so a renamed or dropped flag from
+ * a future release would reach a consumer typed `boolean` and be `undefined`.
+ * Consumers are written for that: every read is `=== true` / `=== false`, never
+ * truthiness, and `revocation.test.ts` exercises the non-boolean case through
+ * an `as unknown as` cast precisely because the type cannot express it.
+ *
+ * `keyRevocationCheck` cannot be true without `receiptAudit` — upstream THROWS
+ * at boot if it is (`app-config.service.ts:573-574`), rather than coercing —
+ * so a fixture setting one without the other depicts a deployment that could
+ * not have started.
+ */
+export interface CpDashboardFeatures {
+  receiptAudit: boolean;
+  keyRevocationCheck: boolean;
+  logWitness: boolean;
+  logInclusionAudit: boolean;
+  witnessCosigning: boolean;
+  witnessQuorum: boolean;
 }
 
 export interface KnownAgent {
