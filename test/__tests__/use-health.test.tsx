@@ -30,7 +30,7 @@ vi.mock('@/lib/stores/preferences-store', () => ({
   usePreferencesStore: (sel: (s: { demoMode: boolean }) => unknown) => sel({ demoMode: false }),
 }));
 
-const { useHealth } = await import('@/lib/hooks/use-health');
+const { useHealth, settledHealthView } = await import('@/lib/hooks/use-health');
 
 afterEach(() => {
   cleanup();
@@ -182,6 +182,39 @@ describe('why the incoherent state is unreachable rather than handled', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('settledHealthView — the extracted settled half, callable without the hook', () => {
+  // `connection-panel.tsx`'s "Test All" already holds a `HealthResult` from an
+  // ad hoc probe outside this hook's query, so it needs the word mapping
+  // without needing a query. These three mirror "the four states" above
+  // (minus `checking`, which this function cannot express) to pin that
+  // extracting it changed nothing about what it returns.
+  it('maps a healthy result', () => {
+    expect(settledHealthView({ ok: true, latencyMs: 7, version: '1.0.0' } satisfies HealthResult)).toEqual({
+      kind: 'healthy',
+      word: 'healthy',
+      latencyMs: 7,
+      version: '1.0.0',
+    });
+  });
+
+  it('maps a degraded result', () => {
+    expect(settledHealthView({ ok: false, detail: 'degraded', latencyMs: 8 } satisfies HealthResult)).toEqual({
+      kind: 'failing',
+      word: 'degraded',
+      latencyMs: 8,
+    });
+  });
+
+  it('maps an unreachable result, including the pre-detail default', () => {
+    expect(settledHealthView({ ok: false, detail: 'unreachable', latencyMs: 30 } satisfies HealthResult)).toEqual({
+      kind: 'failing',
+      word: 'unreachable',
+      latencyMs: 30,
+    });
+    expect(settledHealthView({ ok: false, latencyMs: 12 } satisfies HealthResult).word).toBe('unreachable');
   });
 });
 
