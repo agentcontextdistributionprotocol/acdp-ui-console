@@ -164,6 +164,49 @@ describe('useTrust totals', () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════
+// #115: a per-run `GET /runs/:id` used to be swallowed by `.catch(() => null)`,
+// so a network blip on one run silently excluded it from every figure on
+// `/trust` with no disclosure at all. `Promise.allSettled` replaces that catch;
+// these tests pin the discrimination it exists to make — a REJECTED settlement
+// is a read failure, a RESOLVED `null` (a run with no audit rows) is not.
+// ══════════════════════════════════════════════════════════════════════
+describe('useTrust — per-run read failures (#115)', () => {
+  it('counts a rejected per-run fetch as a read failure; runsRequested is the pre-filter count', async () => {
+    const runs = [run('r1', trust()), run('r2', trust()), run('r3', trust())];
+    const queryFn = captureQueryFn(runs);
+    getCpRun.mockImplementation(async (id: string) => {
+      if (id === 'r2') throw new Error('network blip');
+      return runs.find((r) => r.runId === id) ?? null;
+    });
+
+    // Resolving here at all — rather than the queryFn's promise rejecting — is
+    // itself the proof that `error` stays `null` on the real `UseQueryResult`:
+    // `useQuery` is mocked to merely capture this closure, so the only way
+    // React Query's own error branch could ever fire is if invoking it threw.
+    const overview = (await queryFn()) as TrustOverview;
+
+    expect(overview.readFailures).toBe(1);
+    expect(overview.runsRequested).toBe(3);
+    expect(overview.runs.length).toBe(2);
+  });
+
+  it('a resolved null is NOT counted as a read failure', async () => {
+    const runs = [run('r1', trust())];
+    const queryFn = captureQueryFn(runs);
+    // `listCpRuns` names a second run this fixture never provides a `trust`
+    // for; `getCpRun`'s default mock (`?? null`, set inside `captureQueryFn`)
+    // RESOLVES `null` for it rather than rejecting.
+    listCpRuns.mockResolvedValue({ data: [{ runId: 'r1' }, { runId: 'ghost' }] });
+
+    const overview = (await queryFn()) as TrustOverview;
+
+    expect(overview.readFailures).toBe(0);
+    expect(overview.runsRequested).toBe(2);
+    expect(overview.runs.length).toBe(1);
+  });
+});
+
 describe('useTrust ordering', () => {
   it('a revoked-only run sorts ABOVE a clean run', async () => {
     // The defect: sorting on `flagged.length` alone put a run carrying a live

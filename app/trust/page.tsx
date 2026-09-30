@@ -61,7 +61,7 @@ export default function TrustPage() {
     );
   }
 
-  const { runs, totals, receiptCoverage, didMethods, features } = trust.data;
+  const { runs, totals, receiptCoverage, didMethods, features, readFailures, runsRequested } = trust.data;
   const t: TrustTotals = totals;
   // `=== false`, never `!features?.keyRevocationCheck`. The falsy form would
   // fold "no `features` at all" — a control plane predating
@@ -80,6 +80,20 @@ export default function TrustPage() {
   return (
     <div className="page">
       <SectionTitle icon={BadgeCheck} title="Trust" sub="Receipt-audit verdicts, coverage, and DID adoption · RFC-ACDP-0010" />
+
+      {/* A cause this page COUNTED ITSELF, so it may name it — unlike the
+          revocation copy below, which is forbidden from guessing one (#97's
+          `assertNamesNoCause`). #115: a per-run `GET /runs/:id` rejection
+          (network blip, a run since deleted upstream) used to be silently
+          swallowed by `.catch(() => null)`, so every figure on this page
+          quietly excluded that run with no disclosure at all — an omission
+          this page is otherwise built to refuse. */}
+      {readFailures > 0 && (
+        <div style={{ fontSize: 11, color: C.warning, marginBottom: 10 }}>
+          ⚠ {readFailures} of {runsRequested} runs could not be read — every figure below is a lower
+          bound.
+        </div>
+      )}
 
       <div className="kpi-grid">
         <KpiCard label="Verified" value={t.verified} accent="var(--success)" icon={<BadgeCheck size={28} />} />

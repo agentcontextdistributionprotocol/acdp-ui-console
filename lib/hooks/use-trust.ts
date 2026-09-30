@@ -86,6 +86,27 @@ export interface TrustOverview {
    * `undefined` for a control plane predating acdp-control-plane#178.
    */
   features: CpDashboardOverview['features'];
+  /**
+   * How many of the `runsRequested` per-run fetches (`GET /runs/:id`, for the
+   * `trust` member) rejected, rather than resolving — #115.
+   *
+   * A resolved `null` (a run with no audit rows) is NOT a read failure; only a
+   * REJECTED settlement counts. `error` on this hook's own `UseQueryResult`
+   * stays `null` for this case — only the two outer calls
+   * (`getCpDashboard`/`listCpRuns`) can fail the query outright, and
+   * `Promise.allSettled` cannot reject regardless of how many of its inputs
+   * do. So a partial per-run failure is disclosed on the page as a lower-bound
+   * qualifier, never as `trust.error`.
+   */
+  readFailures: number;
+  /**
+   * The denominator `readFailures` is a fraction of: `requested.length`, i.e.
+   * `min(MAX_RUNS, listCpRuns's result)` — NOT the post-filter `runs.length`
+   * above, which has already dropped both the read failures and any resolved
+   * run with no `trust` member. Using `runs.length` as the denominator would
+   * make every failure silently shrink the fraction's own base.
+   */
+  runsRequested: number;
 }
 
 /**
@@ -103,9 +124,10 @@ export function useTrust(window = '24h') {
         getCpDashboard(window, demoMode),
         listCpRuns({ limit: MAX_RUNS }, demoMode),
       ]);
-      const detailed = await Promise.all(
-        runsRes.data.slice(0, MAX_RUNS).map((r) => getCpRun(r.runId, demoMode).catch(() => null)),
-      );
+      const requested = runsRes.data.slice(0, MAX_RUNS);
+      const settled = await Promise.allSettled(requested.map((r) => getCpRun(r.runId, demoMode)));
+      const readFailures = settled.filter((s) => s.status === 'rejected').length;
+      const detailed = settled.map((s) => (s.status === 'fulfilled' ? s.value : null));
       const runs: RunTrust[] = detailed
         .filter((r): r is CpRun & { trust: RunTrustSummary } => !!r && !!r.trust)
         .map((r) => ({ run: r, trust: r.trust }))
@@ -155,6 +177,8 @@ export function useTrust(window = '24h') {
         // these flags is `=== true` / `=== false` precisely so that "absent"
         // stays its own answer rather than collapsing into "off".
         features: dash.features,
+        readFailures,
+        runsRequested: requested.length,
       };
     },
     staleTime: 20_000,
