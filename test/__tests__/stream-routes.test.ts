@@ -32,7 +32,11 @@ function upstream(
     // have let the redirect-refusal tests below pass before the fix existed.
     ok: init.ok ?? (status >= 200 && status < 300),
     status,
-    headers: init.headers ?? new Headers(),
+    // Defaults to a well-labelled SSE response for the same reason `ok`
+    // derives from `status` above: a fixture that didn't care about
+    // content-type used to get a free pass through the new check by omission,
+    // which is a response no real upstream SSE endpoint sends.
+    headers: init.headers ?? new Headers({ 'content-type': 'text/event-stream' }),
     body: init.body ?? null,
   } as unknown as Response;
 }
@@ -170,6 +174,51 @@ describe('events SSE relay', () => {
     await expect(res.text()).resolves.toBe('data: hello\n\n');
   });
 
+  // #112. A 200 relabelled `text/event-stream` by this relay would otherwise
+  // reach the browser as a healthy live feed no matter what the upstream
+  // actually sent — an HTML error or login page included.
+  it('refuses a 200 whose content-type is not text/event-stream', async () => {
+    vi.stubEnv('CONTROL_PLANE_BASE_URL', 'http://localhost:3001');
+    mockFetch(() =>
+      upstream({
+        headers: new Headers({ 'content-type': 'text/html; charset=utf-8' }),
+        body: sseBody('<html>not a stream</html>'),
+      }),
+    );
+    const res = await eventsGet(new NextRequest('http://localhost/api/stream/events'));
+    expect(res.status).toBe(502);
+    const body = await res.text();
+    expect(body).toContain("content-type 'text/html; charset=utf-8'");
+    expect(body).toContain('only relays text/event-stream');
+    expect(body).toContain('http://localhost:3001/events/stream');
+    // A mislabelled 200 must not be mistaken for the generic not-ok bail,
+    // which would lose the content-type entirely.
+    expect(body).not.toBe('upstream returned 200');
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+  });
+
+  it('refuses a 200 with no content-type at all, naming it (none)', async () => {
+    mockFetch(() => upstream({ headers: new Headers(), body: sseBody('') }));
+    const res = await eventsGet(new NextRequest('http://localhost/api/stream/events'));
+    expect(res.status).toBe(502);
+    await expect(res.text()).resolves.toContain("content-type '(none)'");
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+  });
+
+  it.each([
+    ['text/event-stream-foo', 502],
+    ['application/json', 502],
+    ['text/plain', 502],
+    ['TEXT/EVENT-STREAM', 200],
+    ['text/event-stream ; charset=utf-8', 200],
+  ] as const)('content-type %s is accepted/refused by MIME essence (-> %i)', async (contentType, expectedStatus) => {
+    mockFetch(() =>
+      upstream({ headers: new Headers({ 'content-type': contentType }), body: sseBody('data: x\n\n') }),
+    );
+    const res = await eventsGet(new NextRequest('http://localhost/api/stream/events'));
+    expect(res.status).toBe(expectedStatus);
+  });
+
   it('returns 502 when the upstream is not ok', async () => {
     mockFetch(() => upstream({ ok: false, status: 503, body: sseBody('') }));
     const res = await eventsGet(new NextRequest('http://localhost/api/stream/events'));
@@ -261,6 +310,49 @@ describe('per-run SSE relay', () => {
     expectSseHeaders(res);
     expect(res.headers.get('connection')).toBe('keep-alive');
     await expect(res.text()).resolves.toBe('data: tick\n\n');
+  });
+
+  // #112. Identical to the control-plane relay's case: a 200 relabelled
+  // `text/event-stream` here would reach the browser as a healthy live feed
+  // no matter what the playground actually answered.
+  it('refuses a 200 whose content-type is not text/event-stream', async () => {
+    vi.stubEnv('PLAYGROUND_BASE_URL', 'http://localhost:8000');
+    mockFetch(() =>
+      upstream({
+        headers: new Headers({ 'content-type': 'text/html; charset=utf-8' }),
+        body: sseBody('<html>not a stream</html>'),
+      }),
+    );
+    const res = await runGet(new NextRequest('http://localhost/api/stream/runs/r1'), runCtx('r1'));
+    expect(res.status).toBe(502);
+    const body = await res.text();
+    expect(body).toContain("content-type 'text/html; charset=utf-8'");
+    expect(body).toContain('only relays text/event-stream');
+    expect(body).toContain('http://localhost:8000/runs/r1/events');
+    expect(body).not.toBe('upstream returned 200');
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+  });
+
+  it('refuses a 200 with no content-type at all, naming it (none)', async () => {
+    mockFetch(() => upstream({ headers: new Headers(), body: sseBody('') }));
+    const res = await runGet(new NextRequest('http://localhost/api/stream/runs/r1'), runCtx('r1'));
+    expect(res.status).toBe(502);
+    await expect(res.text()).resolves.toContain("content-type '(none)'");
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+  });
+
+  it.each([
+    ['text/event-stream-foo', 502],
+    ['application/json', 502],
+    ['text/plain', 502],
+    ['TEXT/EVENT-STREAM', 200],
+    ['text/event-stream ; charset=utf-8', 200],
+  ] as const)('content-type %s is accepted/refused by MIME essence (-> %i)', async (contentType, expectedStatus) => {
+    mockFetch(() =>
+      upstream({ headers: new Headers({ 'content-type': contentType }), body: sseBody('data: x\n\n') }),
+    );
+    const res = await runGet(new NextRequest('http://localhost/api/stream/runs/r1'), runCtx('r1'));
+    expect(res.status).toBe(expectedStatus);
   });
 
   it('returns 502 when the upstream is not ok', async () => {

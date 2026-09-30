@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { buildUpstreamUrl } from '@/lib/server/integrations';
+import { relayEventStream } from '@/lib/server/sse-relay';
 
 export const dynamic = 'force-dynamic';
 // Keep the SSE relay alive past Vercel's default function timeout. Only
@@ -31,35 +32,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ run
     // names the fix rather than a bare "upstream returned 302". Kept clause-for
     // -clause identical to the control-plane relay, `opaqueredirect` included —
     // see the longer note there for why that arm exists and why the whole 3xx
-    // range, 304 included, is refused.
-    if (
-      (upstream.status >= 300 && upstream.status < 400) ||
-      upstream.type === 'opaqueredirect'
-    ) {
-      const location = upstream.headers.get('location');
-      const answered =
-        upstream.type === 'opaqueredirect' ? 'an opaque redirect' : `${upstream.status}`;
-      return new Response(
-        `upstream 'playground' answered ${answered} — this relay does not follow 3xx responses. ` +
-          `${upstreamUrl} -> ${location ?? '(no Location header)'}. Point this service's *_BASE_URL at ` +
-          `the final URL (often the https:// form) so no request has to cross a redirect.`,
-        { status: 502 },
-      );
-    }
-
-    if (!upstream.ok || !upstream.body) {
-      return new Response(`upstream returned ${upstream.status}`, { status: 502 });
-    }
-
-    return new Response(upstream.body, {
-      status: 200,
-      headers: {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache, no-transform',
-        connection: 'keep-alive',
-        'x-accel-buffering': 'no',
-      },
-    });
+    // range, 304 included, is refused. `relayEventStream` also refuses a 200
+    // whose content-type is not `text/event-stream` — see its own doc.
+    return relayEventStream('playground', upstreamUrl, upstream);
   } catch (err) {
     return new Response(`stream relay failed: ${String(err)}`, { status: 502 });
   }
