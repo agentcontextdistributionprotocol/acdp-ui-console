@@ -1995,7 +1995,14 @@ export const INLINE_COPY_LITERALS = ['—', 'enabled', 'disabled'] as const;
  * because `acdp-consumer advertised` is two words).
  */
 export const CARD_LABELS = [
-  '● healthy',
+  // #129: the unconditional '● healthy' literal is gone — the header now
+  // renders one of these five words, from a `health` prop value rather than a
+  // claim the card had no evidence for.
+  'not probed',
+  'checking…',
+  'responding',
+  'degraded',
+  'unreachable',
   'Event count',
   'Base URL',
   '—',
