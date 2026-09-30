@@ -20,8 +20,9 @@ export function ConnectionStatus({ label, service }: { label: string; service: P
     // this for a trust surface; the repo's own test file was asserting on the
     // tooltip, which is how it survived.
     <div className={`pill${ok ? ' active-pill' : ''}`}>
-      <span className={`dot ${dot}`} />
+      <span className={`dot ${dot}`} aria-hidden="true" />
       {label}
+      {ok && <span className="sr-only">healthy</span>}
       {/* Only when it is NOT healthy, and this is a measurement rather than a
           preference. The topbar is tight at phone width: `--sidebar-w` drops to
           56px at ≤760px and `.topbar` takes 20px of padding each side plus a

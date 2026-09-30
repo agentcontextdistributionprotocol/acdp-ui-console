@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { C } from '@/lib/colors';
+import { isPublicRoute } from '@/lib/routes';
 import { ConnectionStatus } from './connection-status';
 
 const LABELS: Record<string, string> = {
@@ -52,7 +53,7 @@ export function Topbar() {
   // `redirectToLoginOn401` already no-ops on this route for the same underlying
   // reason (`lib/api/fetcher.ts`), so this is that decision followed through to
   // the surface that renders it.
-  const signedOut = pathname === '/login';
+  const signedOut = isPublicRoute(pathname);
 
   return (
     <header className="topbar">

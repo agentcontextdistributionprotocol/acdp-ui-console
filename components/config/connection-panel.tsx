@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardBody } from '@/components/ui/card';
 import { pingHealth } from '@/lib/api/client';
+import { settledHealthView } from '@/lib/hooks/use-health';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { C } from '@/lib/colors';
-import type { ProxyService } from '@/lib/types';
+import type { HealthResult, ProxyService } from '@/lib/types';
 
 const ROWS: { service: ProxyService; label: string }[] = [
   { service: 'playground', label: 'Playground' },
@@ -17,7 +18,7 @@ const ROWS: { service: ProxyService; label: string }[] = [
 
 export function ConnectionPanel() {
   const { jaegerUrl, setJaegerUrl, demoMode, setDemoMode } = usePreferencesStore();
-  const [results, setResults] = useState<Record<string, boolean | 'pending'>>({});
+  const [results, setResults] = useState<Record<string, HealthResult | 'pending'>>({});
   const [saved, setSaved] = useState(false);
 
   // Jaeger is the only browser-editable value here; Save is an explicit
@@ -28,13 +29,13 @@ export function ConnectionPanel() {
   };
 
   const testAll = async () => {
-    const pending: Record<string, boolean | 'pending'> = {};
+    const pending: Record<string, HealthResult | 'pending'> = {};
     ROWS.forEach((r) => (pending[r.service] = 'pending'));
     setResults(pending);
     await Promise.all(
       ROWS.map(async (r) => {
         const res = await pingHealth(r.service, demoMode);
-        setResults((prev) => ({ ...prev, [r.service]: res.ok }));
+        setResults((prev) => ({ ...prev, [r.service]: res }));
       }),
     );
   };
@@ -57,20 +58,37 @@ export function ConnectionPanel() {
               {demoMode ? 'On — using mock data' : 'Off — live backend'}
             </button>
           </div>
-          {ROWS.map((r) => (
-            <div key={r.service} className="form-row">
-              <span className="form-label">{r.label}</span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontSize: 11, color: C.faint }}>server-configured</span>
-                {results[r.service] !== undefined && (
-                  <span
-                    className={`dot ${results[r.service] === 'pending' ? 'warn' : results[r.service] ? 'ok' : 'err'}`}
-                    style={{ flexShrink: 0 }}
-                  />
-                )}
+          {ROWS.map((r) => {
+            const res = results[r.service];
+            const view = res === undefined || res === 'pending' ? undefined : settledHealthView(res);
+            return (
+              <div key={r.service} className="form-row">
+                <span className="form-label">{r.label}</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: C.faint }}>server-configured</span>
+                  {res !== undefined && (
+                    <>
+                      <span
+                        className={`dot ${res === 'pending' ? 'warn' : view?.kind === 'healthy' ? 'ok' : 'err'}`}
+                        style={{ flexShrink: 0 }}
+                      />
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: res === 'pending' ? 'var(--muted)' : view?.kind === 'healthy' ? 'var(--success)' : 'var(--danger)',
+                        }}
+                      >
+                        {res === 'pending' ? 'checking…' : view?.word}
+                      </span>
+                      {view && view.latencyMs !== undefined && (
+                        <span className="health-latency">{view.latencyMs} ms</span>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div className="form-row">
             <span className="form-label">Jaeger</span>
             <input className="form-input" value={jaegerUrl} onChange={(e) => setJaegerUrl(e.target.value)} />

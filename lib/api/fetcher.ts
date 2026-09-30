@@ -1,4 +1,5 @@
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { LOGIN_ROUTE, isPublicRoute } from '@/lib/routes';
 import type { ProxyService } from '@/lib/types';
 
 // control-plane's GlobalExceptionFilter (src/errors/exception.filter.ts) formats
@@ -198,9 +199,8 @@ function warnOnUnstampedSuccess(response: Response, service: ProxyService, path:
 // call sites today that would each have to remember the guard.
 function redirectToLoginOn401(status: number, fromUpstream: boolean): void {
   if (status !== 401 || fromUpstream || typeof window === 'undefined') return;
-  if (window.location.pathname === '/login') return;
-  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-  window.location.assign('/login');
+  if (isPublicRoute(window.location.pathname)) return;
+  window.location.assign(LOGIN_ROUTE);
 }
 
 export async function fetchJson<T>(service: ProxyService, path: string, init?: RequestInit): Promise<T> {

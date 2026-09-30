@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { pingHealth } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import type { ProxyService } from '@/lib/types';
+import type { HealthResult, ProxyService } from '@/lib/types';
 
 /**
  * What an operator is told about one service, as a discriminated union rather
@@ -108,7 +108,19 @@ export function useHealth(service: ProxyService): HealthView {
   // (`lib/api/client.ts`), so this query has no error arm. That is what makes
   // the incoherent `healthWord(undefined, false)` question unaskable here.
   if (data === undefined) return { kind: 'checking', word: 'checking…' };
+  return settledHealthView(data);
+}
 
+/**
+ * The `healthy`/`failing` half of {@link useHealth}'s mapping, pulled out so a
+ * caller that already holds a `HealthResult` (`connection-panel.tsx`'s "Test
+ * All", which fires ad hoc probes outside this hook's query) can reuse the
+ * same word logic instead of re-deriving it a third time. Deliberately has no
+ * no-data arm — `data === undefined` stays inside the hook, which is the only
+ * caller that can reach it, so this function can't be asked the incoherent
+ * `healthWord(undefined, false)` question the hook's own docblock forbids.
+ */
+export function settledHealthView(data: HealthResult): Extract<HealthView, { kind: 'healthy' | 'failing' }> {
   if (data.ok) {
     return { kind: 'healthy', word: 'healthy', latencyMs: data.latencyMs, version: data.version };
   }

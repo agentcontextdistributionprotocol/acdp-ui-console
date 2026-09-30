@@ -42,6 +42,18 @@ vi.mock('@/lib/stores/preferences-store', () => ({
 let pathnameValue = '/dashboard';
 vi.mock('next/navigation', () => ({ usePathname: () => pathnameValue }));
 
+// Overridable so one test can prove `Topbar` defers to `lib/routes` — not a
+// hardcoded `pathname === '/login'` — without editing topbar.tsx itself.
+let publicRouteOverride: ((pathname: string) => boolean) | null = null;
+vi.mock('@/lib/routes', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/routes')>();
+  return {
+    ...actual,
+    isPublicRoute: (pathname: string) =>
+      publicRouteOverride ? publicRouteOverride(pathname) : actual.isPublicRoute(pathname),
+  };
+});
+
 const { ConnectionStatus } = await import('@/components/layout/connection-status');
 const { HealthChecks } = await import('@/components/observability/health-checks');
 const { Topbar } = await import('@/components/layout/topbar');
@@ -49,6 +61,7 @@ const { Topbar } = await import('@/components/layout/topbar');
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  publicRouteOverride = null;
 });
 
 function mount(ui: React.ReactElement) {
@@ -172,16 +185,22 @@ describe('ConnectionStatus renders the failure kind as text, not as a tooltip', 
     const { container } = mount(<ConnectionStatus label="Registry A" service="registry-a" />);
 
     if (word === 'healthy') {
-      // The healthy pill says the LABEL and nothing else. `active-pill` plus a
-      // pulsing green dot is already unambiguous, and the topbar has no room
-      // for a word on all four services at phone width.
+      // The healthy pill shows the LABEL and nothing else visibly — `active-pill`
+      // plus a pulsing green dot is already unambiguous, and the topbar has no
+      // room for a word on all four services at phone width. But a screen
+      // reader sees no dot and no colour, so the state still needs a word —
+      // just an `sr-only` one that costs no layout.
       await waitFor(() => expect(container.querySelector('.active-pill')).not.toBeNull());
       expect(container.querySelector('.pill-detail')).toBeNull();
-      expect(container.textContent).toBe('Registry A');
+      const srWord = screen.getByText('healthy');
+      expect(srWord.className).toBe('sr-only');
+      expect(container.textContent?.match(/healthy/g)?.length).toBe(1);
     } else {
       await waitFor(() => expect(container.querySelector('.pill-detail')?.textContent).toBe(word));
       expect(container.textContent).toContain('Registry A');
       expect(container.querySelector('.active-pill')).toBeNull();
+      // A failing or still-checking pill must not ALSO claim to be healthy.
+      expect(container.querySelectorAll('.sr-only').length).toBe(0);
     }
   });
 
@@ -201,6 +220,8 @@ describe('ConnectionStatus renders the failure kind as text, not as a tooltip', 
 
     const detail = container.querySelector('.pill-detail');
     expect(detail?.textContent).toBe('checking…');
+    // A pill still waiting for its first answer must not ALSO claim "healthy".
+    expect(container.querySelectorAll('.sr-only').length).toBe(0);
     // `.bad` is what carries `var(--danger)`. A pill still waiting for its
     // first answer must not be painted as a failure — jsdom computes no
     // stylesheet, so the class is the observable.
@@ -302,5 +323,17 @@ describe('the sign-in screen makes no claim about any service', () => {
 
     await waitFor(() => expect(container.querySelectorAll('.pill-detail')).toHaveLength(4));
     expect(pingHealth).toHaveBeenCalled();
+  });
+
+  it('defers to lib/routes, not a hardcoded /login check', async () => {
+    // Proves the component reads `isPublicRoute` rather than re-inlining
+    // `pathname === '/login'` — a route `lib/routes` calls public, that isn't
+    // literally /login, must still suppress the pills with no topbar.tsx edit.
+    publicRouteOverride = (pathname) => pathname === '/kiosk';
+    pingHealth.mockResolvedValue({ ok: false, detail: 'unreachable', latencyMs: 2 } satisfies HealthResult);
+    const { container } = mountTopbar('/kiosk');
+
+    expect(container.querySelectorAll('.pill-detail')).toHaveLength(0);
+    expect(pingHealth).not.toHaveBeenCalled();
   });
 });
