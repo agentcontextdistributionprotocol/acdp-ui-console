@@ -25,6 +25,14 @@ updates:
       # Remove once the runtime itself moves off Node 24.
       - dependency-name: "@types/node"
         versions: ['>=25']
+      # acdp-wasm is the verification core and is on 0.x, where a MINOR is a
+      # semantics change (bump-consume.yml@v1 counts it as breaking and holds
+      # the dispatch-driven PR for a human). Without this, the monthly sweep
+      # put the same bump in `minor-and-patch`, which auto-merge.yml@v1 arms on
+      # a green check alone. Patches still flow; minors arrive via
+      # bump-acdp.yml and wait. Issue #108; decision DECISIONS.md 2026-09-25.
+      - dependency-name: "@agentcontextdistributionprotocol/acdp-wasm"
+        update-types: ["version-update:semver-minor"]
 
   - package-ecosystem: github-actions
     directory: /

@@ -26,15 +26,16 @@ name: bump acdp
 # acdp-wasm bump) is what backs an unattended patch merge.
 #
 # That is NOT a repo-wide guarantee, and this file does not make it one.
-# Dependabot's monthly sweep is a second, independent lane: acdp-wasm falls
+# Dependabot's monthly sweep is a second, independent lane, and it used to be
+# where the guarantee this file makes quietly stopped applying: acdp-wasm fell
 # into `.github/dependabot.yml`'s unrestricted `minor-and-patch` group, and
 # `auto-merge.yml`'s reusable callee arms on semver-patch OR semver-minor —
 # which is how Dependabot classifies 0.14.x -> 0.15.0. So a 0.x minor that
-# this workflow deliberately holds for a human can still merge unattended a
-# month later on green CI alone. That predates this workflow and is unchanged
-# by it, but do not read the paragraph above as covering it; closing the
-# asymmetry means an acdp-wasm carve-out in dependabot.yml, which is its own
-# decision (see issue #70's thread for the risk framing).
+# this workflow deliberately holds for a human could still merge unattended a
+# month later on green CI alone. That asymmetry is CLOSED, in
+# `.github/dependabot.yml`'s `ignore` list: acdp-wasm's `semver-minor` updates
+# are excluded from the sweep entirely, so a 0.x minor now waits for a human on
+# both lanes alike. Issue #108; decision DECISIONS.md 2026-09-25.
 #
 # Prerequisite: the acdp-deps-bot org secrets ACDP_BOT_APP_ID /
 # ACDP_BOT_PRIVATE_KEY must be reachable from this repo.
