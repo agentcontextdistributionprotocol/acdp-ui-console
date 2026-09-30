@@ -659,9 +659,11 @@ describe('the dead tooltip copy is gone', () => {
       ts.createSourceFile('c.tsx', PCT.componentSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
     );
     expect(census, 'the component’s literal census moved').toEqual({
-      stringLiterals: 66,
+      // #124: +1 string literal (`className="did"` on the new <dt>) and +1
+      // JSX text (`Profile glossary`, the <summary>).
+      stringLiterals: 67,
       templateParts: 0,
-      jsxTexts: 9,
+      jsxTexts: 10,
     });
   });
 
@@ -690,6 +692,7 @@ describe('the dead tooltip copy is gone', () => {
       'Anon reads',
       'enabled',
       'disabled',
+      'Profile glossary',
     ]);
     // …and bounded in SHAPE, which is the half that survives someone editing
     // the list above. A label is at most two words; prose is not.
@@ -1991,6 +1994,63 @@ describe('the dead tooltip copy is gone', () => {
   });
 });
 
+describe('the profile glossary is reachable without a mouse (#124)', () => {
+  it('is a <details> listing all seven ids, each paired with the table’s own gloss', () => {
+    const { container } = render(
+      <RegistryCard registry={REGISTRY_B} capabilities={MOCK_CAPABILITIES.b} />,
+    );
+    const details = container.querySelector('details');
+    expect(details, 'no <details> rendered with capabilities present').toBeTruthy();
+    const summary = details!.querySelector('summary');
+    expect(summary?.textContent).toBe('Profile glossary');
+    // Native <summary> is keyboard-focusable with no ARIA/tabindex needed.
+    expect(summary?.tabIndex).toBe(0);
+
+    const { entries } = profileCopyTable();
+    const pairs = [...details!.querySelectorAll('dl > div')];
+    expect(pairs).toHaveLength(REGISTRY_ADVERTISABLE_PROFILES.length);
+    // Every advertisable id appears exactly once, each with the table's gloss —
+    // not just A gloss, and not the subset THIS registry happens to advertise
+    // (`MOCK_CAPABILITIES.b` has 2 of the 7): the legend is the vocabulary.
+    const seen = new Set<string>();
+    for (const pair of pairs) {
+      const dt = pair.querySelector('dt')?.textContent;
+      const dd = pair.querySelector('dd')?.textContent;
+      expect(dt, 'pair missing a <dt>').toBeTruthy();
+      expect(entries.has(dt!), `${dt} is not one of the seven advertisable ids`).toBe(true);
+      expect(dd, `<dd> for ${dt} does not match profileCopyTable()`).toBe(entries.get(dt!));
+      seen.add(dt!);
+    }
+    expect(seen).toEqual(new Set(REGISTRY_ADVERTISABLE_PROFILES));
+    cleanup();
+  });
+
+  it('toggles open on click, like any native <details>', () => {
+    const { container } = render(
+      <RegistryCard registry={REGISTRY_B} capabilities={MOCK_CAPABILITIES.b} />,
+    );
+    const details = container.querySelector('details') as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    details.querySelector('summary')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(details.open).toBe(true);
+    cleanup();
+  });
+
+  it('renders no <details> at all without capabilities', () => {
+    const { container } = render(<RegistryCard registry={REGISTRY_B} capabilities={undefined} />);
+    expect(container.querySelector('details')).toBeNull();
+    cleanup();
+  });
+
+  it('adds no alternate disclosure channel — no aria-describedby, no data-gloss', () => {
+    const { container } = render(
+      <RegistryCard registry={REGISTRY_B} capabilities={MOCK_CAPABILITIES.b} />,
+    );
+    expect(container.querySelectorAll('[aria-describedby], [data-gloss]')).toHaveLength(0);
+    cleanup();
+  });
+});
+
 describe('every profile the demo advertises has copy for it', () => {
   it.each(Object.keys(MOCK_CAPABILITIES))('%s', (authority) => {
     // The join between the two files, asserted through the RENDER rather than
@@ -2275,6 +2335,14 @@ describe('the rendered card is a closed world over its fixture', () => {
       ...c.supported_signature_algorithms,
       ...c.profiles,
       String(Math.round(c.limits.max_payload_bytes / 1024)),
+      // #124: the profile-glossary <details> renders ALL seven advertisable
+      // ids and glosses unconditionally — the vocabulary, not a claim about
+      // what THIS registry advertises — so they are licensed regardless of
+      // `c.profiles`. Sourced from the hand copy (`PROFILE_GLOSS_TEXT`), not
+      // `profileCopyTable()` — that parses `registry-card.tsx` itself, so a
+      // guard built on it could never reject its own subject.
+      ...REGISTRY_ADVERTISABLE_PROFILES,
+      ...Object.values(PROFILE_GLOSS_TEXT),
     ]);
   }
 

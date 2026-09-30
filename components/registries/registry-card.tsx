@@ -484,6 +484,14 @@ export function RegistryCard({
                 {capabilities.anonymous_public_reads ? 'enabled' : 'disabled'}
               </Badge>
             </div>
+            <details style={{ marginTop: 6 }}>
+              <summary>Profile glossary</summary>
+              <dl>
+                {ADVERTISABLE_PROFILE_IDS.map((p) => (
+                  <div key={p}><dt className="did">{p}</dt><dd>{glossFor(p)?.title}</dd></div>
+                ))}
+              </dl>
+            </details>
           </>
         )}
       </div>
