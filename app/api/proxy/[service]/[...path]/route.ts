@@ -304,7 +304,14 @@ async function forward(
     // `/.well-known/jwks.json` defeats key rotation, and a stale
     // `/.well-known/acdp.json` misreports what a registry supports. If a route
     // ever is genuinely cacheable, add a carve-out here — do not delete the line.
-    responseHeaders.set('cache-control', 'no-store');
+    // `no-transform` is the other half: `content-encoding` is deleted below
+    // because the body travels decoded and therefore recompressible, and an
+    // intermediary doing that recompression would rewrite the exact bytes
+    // `/.well-known/jwks.json`, `/.well-known/acdp.json` and
+    // `/contexts/{ctx_id}` hand to `lib/verify/verify.ts`'s wasm verifier to
+    // hash — a transform between here and the browser is as much a threat to
+    // that hash as a cache replaying a stale response is to the stamp above.
+    responseHeaders.set('cache-control', 'no-store, no-transform');
     // The body is re-streamed decoded, so length/encoding framing no longer applies.
     responseHeaders.delete('content-encoding');
     responseHeaders.delete('content-length');
