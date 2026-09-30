@@ -19,7 +19,7 @@ import {
   undetailedFailClosedCount,
 } from '@/lib/utils/revocation';
 import { formatCtxId } from '@/lib/utils/acdp';
-import { timeAgo } from '@/lib/utils/format';
+import { timeAgo, formatPgTimestamp } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
 import type { TrustTotals } from '@/lib/hooks/use-trust';
 
@@ -341,14 +341,7 @@ export default function TrustPage() {
                           </td>
                           <td>
                             <span className="did" style={{ fontSize: 10.5, color: C.danger }}>
-                              {/* `boundary` is a Postgres textual timestamp
-                                  ("2026-08-01 00:00:00+00"). `new Date(...)`
-                                  parses it directly; do NOT normalise it to
-                                  ISO-8601 first — the result is stricter about
-                                  the offset and rejects the short "+00" form,
-                                  yielding Invalid Date. Same trap documented at
-                                  length in components/runs/run-trust-panel.tsx. */}
-                              key revoked · boundary {new Date(r.boundary).toLocaleString()} · {r.trustClass}
+                              key revoked · boundary {formatPgTimestamp(r.boundary)} · {r.trustClass}
                             </span>
                           </td>
                           <td style={{ color: C.muted }}>{when}</td>
