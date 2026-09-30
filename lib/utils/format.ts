@@ -40,6 +40,26 @@ export function clockTime(input: string | number | Date | null | undefined): str
   return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+/**
+ * Format a control-plane revocation `boundary` — Postgres's own textual
+ * timestamp shape ("2026-08-01 00:00:00+00": space-separated, a short two-
+ * digit offset, no minutes, no colon, no ms) — for display.
+ *
+ * `new Date(...)` parses that shape directly, and also accepts a full
+ * ISO-8601 offset ("+00:00" or "Z") — but it REJECTS an already-T-separated
+ * string that still carries the short two-digit offset (Invalid Date). The
+ * normalisation that actually matters is therefore completing a short offset
+ * to `HH:00`, never swapping the separator: a `.replace(' ', 'T')` on the
+ * space-separated form leaves the short offset in place and turns an
+ * already-valid timestamp into an Invalid Date.
+ */
+export function formatPgTimestamp(value: string): string {
+  const normalized = value.replace(/([+-]\d{2})$/, '$1:00');
+  const d = new Date(normalized);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString();
+}
+
 /** Format an integer with thousands separators. */
 export function formatNumber(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return '0';

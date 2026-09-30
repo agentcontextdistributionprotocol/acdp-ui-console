@@ -256,9 +256,13 @@ describe('RunTrustPanel — was revocation checked at all?', () => {
     expect(statValue('Revoked')).toBe('1');
   });
 
-  it('a run carrying actual revocation entries always reports, whatever the counters say', () => {
+  it('a run carrying array entries reports even with no counters present at all', () => {
     // The counters are a control-plane aggregate and the array is the detail;
-    // if either says something was classified, something was.
+    // if either says something was classified, something was. This fixture
+    // omits the counters entirely (an older control plane sending only the
+    // array) — it does not vary their VALUE, so it cannot stand for "whatever
+    // the counters say"; a counters-disagree case is covered separately, by
+    // `RunTrustPanel — fail-closed verdicts counted without per-event detail`.
     render(<RunTrustPanel trust={summary({ revoked: [revocation('pre_compromise')] })} />);
     expect(statValue('Revoked')).toBe('0');
     expect(statValue('Pre-compromise')).toBe('1');

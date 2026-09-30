@@ -265,12 +265,21 @@ describe('/trust — the violations list', () => {
 
 describe('/trust — the revocation KPI', () => {
   it('its hint describes the SUM it actually renders, not one of the two statuses', () => {
-    renderWith(overview([], { revokedEvents: 3 }));
+    // `revocationReportedRuns` (the `overview()` default is 1) can never
+    // exceed `runs.length` — it counts a subset of the runs in the view.
+    // The original fixture paired it with `runs: []`, so the hint this test
+    // exists to pin ("across the N of M runs…") rendered the nonsensical
+    // "across the 1 of 0 runs that reported a classification" — a bug the
+    // old partial-regex assertion below could not have caught, since it
+    // never looked at the coverage clause at all.
+    renderWith(overview([{ runId: 'r1', trust: trust() }], { revokedEvents: 3 }));
     // Asserted verbatim: the old copy said only "signed at/after a compromise
     // boundary", which describes one of the two fail-closed statuses summed
     // into the number beside it.
     expect(
-      screen.getByText(/signed at\/after a compromise boundary, or signing time unverifiable/),
+      screen.getByText(
+        'RFC-ACDP-0014 · signed at/after a compromise boundary, or signing time unverifiable · across the 1 of 1 runs that reported a classification',
+      ),
     ).toBeInTheDocument();
   });
 

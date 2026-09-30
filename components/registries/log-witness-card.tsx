@@ -123,7 +123,7 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
  */
 export function LogWitnessCard({ authority }: { authority: string }) {
   const witness = useLogWitness(authority);
-  const notFound = witness.error instanceof ApiError && witness.error.status === 404;
+  const notFound = witness.error instanceof ApiError && witness.error.isNotFound;
   if (notFound) return null;
 
   const state = witness.data;

@@ -15,6 +15,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { SearchResponse } from '@/lib/types';
+import type { ContextVerdicts } from '@/lib/verify/use-verdicts';
 
 const searchContexts = vi.fn();
 const getContext = vi.fn();
@@ -32,7 +33,7 @@ vi.mock('@/lib/api/client', async (orig) => ({
 // `context-error-parity.test.tsx`); the mock is here so it cannot cost one
 // again the next time this file grows a success case.
 vi.mock('@/lib/verify/use-verdicts', () => ({
-  useContextVerdicts: () => ({ verdicts: {}, didDocs: {}, error: null, ready: true }),
+  useContextVerdicts: () => ({ ready: true }) satisfies ContextVerdicts,
 }));
 
 import ContextsPage from '@/app/contexts/page';
@@ -131,11 +132,21 @@ describe('/contexts — a MERGED response is exempt from the flat empty state', 
   it('covers the federated search too, not just the revocation facet', async () => {
     // `authority === 'all'` has always merged and always suppressed its cursor,
     // so it had the identical defect. Keying the exemption on the facet name
-    // would have left it there.
-    searchContexts.mockResolvedValue(empty({ merged: true }));
+    // would have left it there — drive it through the actual registry
+    // selector rather than just asserting a `merged: true` response shape in
+    // isolation, since that alone would pass even if the page never sent
+    // `authority: 'all'` at all.
+    searchContexts.mockResolvedValue(empty());
     renderPage();
+    await screen.findByText('No contexts found');
+
+    searchContexts.mockResolvedValue(empty({ merged: true }));
+    fireEvent.change(screen.getByLabelText('Search registry'), { target: { value: 'all' } });
+    fireEvent.click(screen.getByText('Search'));
+
     expect(await screen.findByText('No matches in this view')).toBeInTheDocument();
     expect(screen.queryByText('No contexts found')).toBeNull();
+    expect(searchContexts).toHaveBeenLastCalledWith('all', expect.anything(), expect.anything());
   });
 
   it('DISCRIMINATES: an unmerged query restores the flat empty state', async () => {

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { timeAgo, elapsed, clockTime, formatNumber, formatBytes, shortId } from '@/lib/utils/format';
+import {
+  timeAgo,
+  elapsed,
+  clockTime,
+  formatNumber,
+  formatBytes,
+  shortId,
+  formatPgTimestamp,
+} from '@/lib/utils/format';
 
 describe('timeAgo', () => {
   it('handles null and undefined', () => {
@@ -113,5 +121,32 @@ describe('shortId', () => {
   });
   it('uses the documented default head/tail', () => {
     expect(shortId('0123456789abcdef0123')).toBe('01234567…0123');
+  });
+});
+
+describe('formatPgTimestamp', () => {
+  // Locale-independent on purpose: `.toLocaleString()`'s exact text depends on
+  // the runtime's ICU data, which CI and a developer's machine need not share.
+  // "did this parse at all" is the falsifiable, portable claim.
+  it('parses both the raw Postgres shape and an already-T-separated short offset', () => {
+    expect(formatPgTimestamp('2026-08-01 00:00:00+00')).not.toBe('—');
+    expect(formatPgTimestamp('2026-08-01T00:00:00+00')).not.toBe('—');
+  });
+
+  it('does not need a swapped separator: the space form parses as-is', () => {
+    // The mutation this guards against: replacing the separator (`.replace('
+    // ', 'T')`) rather than completing the offset. That mutant leaves this
+    // exact, already-valid input turned into an Invalid Date.
+    expect(new Date('2026-08-01T00:00:00+00').toString()).toBe('Invalid Date');
+    expect(formatPgTimestamp('2026-08-01 00:00:00+00')).not.toBe('—');
+  });
+
+  it('also accepts a full ISO-8601 offset or Z, unmodified', () => {
+    expect(formatPgTimestamp('2026-08-01T00:00:00+00:00')).not.toBe('—');
+    expect(formatPgTimestamp('2026-08-01T00:00:00Z')).not.toBe('—');
+  });
+
+  it('returns the em dash for an unparseable input', () => {
+    expect(formatPgTimestamp('not-a-timestamp')).toBe('—');
   });
 });

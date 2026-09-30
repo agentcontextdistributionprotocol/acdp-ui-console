@@ -464,6 +464,54 @@ describe('proxy route — route allow-list', () => {
       expect(fetchMock, `${method} ${path.join('/')} — ${why}`).not.toHaveBeenCalled();
     }
   });
+
+  // The other three middle-variable patterns (`/lineages/[^/]+/current`,
+  // `/runs/[^/]+/lineage`, `/runs/[^/]+/events`) had no over-reach coverage at
+  // all — only their legitimate shape, in `ALLOWED_CASES` above. Each gets the
+  // same two adjacent-shape cases the log-witness patterns already have: the
+  // variable segment spanning a slash (one extra path segment), and a tail
+  // after the trailing literal (the `$` anchor admitting no more).
+  it('the three run/lineage middle-variable patterns admit exactly their shape and nothing adjacent', async () => {
+    const cases: Array<{ service: string; path: string[]; why: string }> = [
+      {
+        service: 'registry-a',
+        path: ['lineages', 'l1', 'l2', 'current'],
+        why: 'a lineage id is one segment; [^/]+ must not span a slash',
+      },
+      {
+        service: 'registry-a',
+        path: ['lineages', 'l1', 'current', 'extra'],
+        why: 'the $ anchor must admit no tail',
+      },
+      {
+        service: 'control-plane',
+        path: ['runs', 'r1', 'r2', 'lineage'],
+        why: 'a run id is one segment; [^/]+ must not span a slash',
+      },
+      {
+        service: 'control-plane',
+        path: ['runs', 'r1', 'lineage', 'extra'],
+        why: 'the $ anchor must admit no tail',
+      },
+      {
+        service: 'control-plane',
+        path: ['runs', 'r1', 'r2', 'events'],
+        why: 'a run id is one segment; [^/]+ must not span a slash',
+      },
+      {
+        service: 'control-plane',
+        path: ['runs', 'r1', 'events', 'extra'],
+        why: 'the $ anchor must admit no tail',
+      },
+    ];
+    for (const { service, path, why } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/${service}/${path.join('/')}`;
+      const res = await GET(new NextRequest(url), ctx(service, path));
+      expect(res.status, `GET ${service}/${path.join('/')} — ${why}`).toBe(403);
+      expect(fetchMock, `GET ${service}/${path.join('/')} — ${why}`).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe('proxy route — request header hygiene', () => {

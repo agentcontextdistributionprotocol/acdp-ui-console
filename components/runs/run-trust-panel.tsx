@@ -3,6 +3,7 @@
 import { BadgeCheck, ShieldAlert } from 'lucide-react';
 import { TableScroll } from '@/components/ui/table-scroll';
 import { formatCtxId } from '@/lib/utils/acdp';
+import { formatPgTimestamp } from '@/lib/utils/format';
 import {
   failClosedCount,
   hasTrustViolation,
@@ -168,16 +169,7 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
                     <td>
                       <span className={revocationChipClass(r.status)}>{r.status}</span>
                     </td>
-                    <td className="did" style={{ fontSize: 10.5 }}>
-                      {/* control-plane's `boundary` is a Postgres textual timestamp
-                          ("2026-08-01 00:00:00+00" — space-separated, short "+00"
-                          offset, no ms). `new Date(...)` parses this directly; do
-                          NOT `.replace(' ', 'T')` first — the resulting ISO-8601-
-                          shaped string is stricter about the timezone offset and
-                          rejects the short "+00" form (Invalid Date), silently
-                          breaking this exact case. */}
-                      {new Date(r.boundary).toLocaleString()}
-                    </td>
+                    <td className="did" style={{ fontSize: 10.5 }}>{formatPgTimestamp(r.boundary)}</td>
                     <td>{r.trustClass}</td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

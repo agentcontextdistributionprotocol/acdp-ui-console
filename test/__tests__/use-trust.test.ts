@@ -34,7 +34,7 @@ vi.mock('@/lib/stores/preferences-store', () => ({
 }));
 
 import { useTrust, type TrustOverview } from '@/lib/hooks/use-trust';
-import { hasTrustViolation, violationCount } from '@/lib/utils/revocation';
+import { hasTrustViolation } from '@/lib/utils/revocation';
 
 type Revoked = NonNullable<RunTrustSummary['revoked']>;
 
@@ -113,22 +113,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('violationCount', () => {
-  it('sums flagged discrepancies and fail-closed revocations, ignoring pre_compromise', () => {
-    expect(violationCount(trust())).toBe(0);
-    expect(violationCount(trust({ revoked: [revocation('pre_compromise')] }))).toBe(0);
-    expect(violationCount(trust({ revoked: [revocation('revoked_at_or_after')] }))).toBe(1);
-    expect(
-      violationCount(
-        trust({
-          flagged: [{ eventId: 'f', ctxId: null, status: 'discrepancy', discrepancies: ['x'] }],
-          revoked: [revocation('revoked_time_unverifiable'), revocation('pre_compromise')],
-        }),
-      ),
-    ).toBe(2);
-  });
-});
-
+// `violationCount`'s own tests moved to `revocation.test.ts` (#101) — this
+// file's own concern is `useTrust ordering` below, which exercises the hook
+// sorting BY the count `useTrust` computes internally, not the count function
+// itself.
 describe('useTrust totals', () => {
   it('revokedEvents counts fail-closed verdicts only; pre_compromise gets its own total', async () => {
     const o = await overviewFor([

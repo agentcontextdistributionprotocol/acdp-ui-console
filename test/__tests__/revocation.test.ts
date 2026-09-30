@@ -185,6 +185,25 @@ describe('failClosedCount — neither source is trusted to be complete', () => {
   });
 });
 
+// Moved from `use-trust.test.ts` (#101): `violationCount` is this module's
+// export, not `use-trust`'s, and every other direct test of it already lives
+// here (`failClosedCount — neither source is trusted to be complete`, above).
+describe('violationCount', () => {
+  it('sums flagged discrepancies and fail-closed revocations, ignoring pre_compromise', () => {
+    expect(violationCount(summary())).toBe(0);
+    expect(violationCount(summary({ revoked: [entry('pre_compromise')] }))).toBe(0);
+    expect(violationCount(summary({ revoked: [entry('revoked_at_or_after')] }))).toBe(1);
+    expect(
+      violationCount(
+        summary({
+          flagged: [{ eventId: 'f', ctxId: null, status: 'discrepancy', discrepancies: ['x'] }],
+          revoked: [entry('revoked_time_unverifiable'), entry('pre_compromise')],
+        }),
+      ),
+    ).toBe(2);
+  });
+});
+
 describe('revocationChipClass', () => {
   it('styles the three known statuses by severity', () => {
     expect(revocationChipClass('pre_compromise')).toBe('chip ok');
@@ -251,9 +270,11 @@ describe('runRevocationReported', () => {
     ).toBe(false);
   });
 
-  it('any single non-zero counter makes the whole payload trustworthy', () => {
+  it('any single non-zero counter alone is enough to report a classification', () => {
     // Including the zeros beside it: something was classified, so the zeros
-    // are a measurement rather than an unexamined default.
+    // are a measurement rather than an unexamined default. This only asserts
+    // the `reported` boolean, not "trustworthy" — this module does not model
+    // trust in the payload as a whole.
     for (const k of [
       'keyRevocationPreCompromise',
       'keyRevocationRevokedAtOrAfter',
