@@ -1,7 +1,12 @@
 /**
  * Single source of truth for design tokens consumed by inline-styled
- * components. Values are CSS variables defined in app/globals.css — the only
- * place where raw hex colours live.
+ * components. Values are CSS variables defined in app/globals.css, the
+ * primary place raw hex colours live — not the only one. The two accent
+ * colours below (`policy`, `llm`) have no existing token, and a handful of
+ * places outside this module (global-error.tsx, sidebar.tsx's inline logo,
+ * both chart cards, which style a recharts tree that doesn't take CSS
+ * variables) carry their own raw hex for the same reason. See CLAUDE.md's
+ * Naming rules.
  */
 export const C = {
   bg: 'var(--bg)',
