@@ -153,7 +153,7 @@ const T = {
   asOf: '2026-07-06T12:34:00.000Z',
   checkpoint: '2026-07-06T12:34:00.000Z',
   witnessedAlpha: '2026-07-06T12:35:00.000Z',
-  witnessedBeta: '2026-07-06T12:33:00.000Z',
+  witnessedBeta: '2026-07-06T12:36:00.000Z',
 };
 
 // ── ctx identity strings (excluded from content_hash; reused from mock) ─

@@ -740,12 +740,13 @@ function afterReceipt(base: string, seconds: number): string {
 // The hold must begin AFTER every signed instant on this context's own crypto
 // fixture, not merely after the publish. `MOCK_CRYPTO.attested` carries four
 // more frozen timestamps that render on the SAME detail card as the lifecycle
-// strip, the latest at receipt+2280 s:
+// strip, the latest at receipt+2340 s:
 //
-//   receipt+2160  witness_signatures[1].witnessed_at
 //   receipt+2220  lineage_head_receipt.as_of  <- with head_status: 'active'
 //   receipt+2220  log_checkpoint.timestamp (and witness[0]'s copy of it)
 //   receipt+2280  witness_signatures[0].witnessed_at
+//   receipt+2340  witness_signatures[1].witnessed_at  <- must cosign AFTER the
+//                 checkpoint it embeds (#125 item 3); was +2160, BEFORE it
 //
 // The first version of this phase used 1800/5400, which put all four INSIDE
 // the retraction window - so `context-detail.tsx` rendered "head status:

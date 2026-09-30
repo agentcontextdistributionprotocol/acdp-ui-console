@@ -1673,6 +1673,42 @@ describe('no signed instant falls inside a retraction window for the same contex
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════
+// A witness cannot cosign a transparency-log checkpoint before that
+// checkpoint exists. `witness_signatures[1].witnessed_at` was 12:33, BEFORE
+// `log_checkpoint.timestamp` at 12:34 — the checkpoint the cosignature is
+// FOR — because the frozen signed value and the offset comment describing it
+// had drifted apart. Fixed by moving `witnessedBeta` forward in
+// `scripts/gen-mock-crypto.mjs` and regenerating (the value is SIGNED, so
+// only the generator can move it). Guarded here so a future regeneration
+// cannot silently reintroduce the same ordering defect.
+// ══════════════════════════════════════════════════════════════════════
+describe('a witness cosignature never precedes the checkpoint it witnesses', () => {
+  const inclusion = (MockCrypto.MOCK_CRYPTO.attested as Record<string, unknown>).log_inclusion as {
+    log_checkpoint: { timestamp: string; root_hash: string };
+    witness_signatures: Array<{
+      witnessed_at: string;
+      witnessed_checkpoint: { timestamp: string; root_hash: string };
+    }>;
+  };
+
+  it('covers at least two witnesses, so the check below is not vacuous', () => {
+    expect(inclusion.witness_signatures.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it.each(inclusion.witness_signatures.map((w, i) => [i, w] as const))(
+    'witness_signatures[%i]: witnessed_at is at or after the checkpoint it cosigns, and its copy of the checkpoint matches',
+    (_i, w) => {
+      const checkpointTs = Date.parse(inclusion.log_checkpoint.timestamp);
+      expect(
+        Date.parse(w.witnessed_at),
+        'witnessed_at precedes the log_checkpoint.timestamp it cosigns',
+      ).toBeGreaterThanOrEqual(checkpointTs);
+      expect(w.witnessed_checkpoint.timestamp).toBe(inclusion.log_checkpoint.timestamp);
+      expect(w.witnessed_checkpoint.root_hash).toBe(inclusion.log_checkpoint.root_hash);
+    },
+  );
+});
 
 // ══════════════════════════════════════════════════════════════════════
 // The transparency-log alert worklist fixture (#84).
