@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'url';
 
@@ -8,6 +8,15 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./test/setup.ts'],
+    // #101: no test-file include/exclude was declared here, and `temp/`
+    // (`.gitignore:13`) is a real, gitignored scratch directory in this repo.
+    // Nothing under it is a test today, so this is preventive rather than a
+    // fix for a live leak. `configDefaults.exclude` (Vitest 4.1.11) is a FLAT
+    // `string[]` — not nested under a `.test` key — and spreading it first is
+    // mandatory: a bare `exclude: ['temp/**']` would REPLACE Vitest's own
+    // default list (`**/node_modules/**`, `**/.git/**`, …), not add to it,
+    // and the runner would start collecting tests out of `node_modules`.
+    exclude: [...configDefaults.exclude, 'temp/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

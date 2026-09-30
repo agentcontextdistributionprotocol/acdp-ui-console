@@ -25,6 +25,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
 import { contextErrorMessage } from '@/lib/utils/api-error-messages';
+import type { ContextVerdicts } from '@/lib/verify/use-verdicts';
 
 const searchContexts = vi.fn();
 const getContext = vi.fn();
@@ -42,7 +43,7 @@ vi.mock('@/lib/api/client', async (orig) => ({
 // same way `context-detail-verdicts.test.tsx` does it; nothing here is about
 // verification verdicts.
 vi.mock('@/lib/verify/use-verdicts', () => ({
-  useContextVerdicts: () => ({ verdicts: {}, didDocs: {}, error: null, ready: true }),
+  useContextVerdicts: () => ({ ready: true }) satisfies ContextVerdicts,
 }));
 
 import ContextsPage from '@/app/contexts/page';
