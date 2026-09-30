@@ -21,6 +21,7 @@ import type { LucideIcon } from 'lucide-react';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { useMounted } from '@/lib/hooks/use-mounted';
 import { SCENARIO_COUNT } from '@/lib/data/mock-data';
+import { LOGIN_ROUTE } from '@/lib/routes';
 
 interface NavItem {
   href: string;
@@ -82,7 +83,7 @@ export function Sidebar() {
   // middleware fail-open/closed behavior in middleware.ts is unaffected.
   const signOut = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
-    router.push('/login');
+    router.push(LOGIN_ROUTE);
     router.refresh();
   };
 
