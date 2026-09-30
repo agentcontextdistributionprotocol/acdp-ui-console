@@ -42,6 +42,10 @@ All requests are proxied through `/api/proxy/[service]/[...path]`; SSE streams a
 - **Contexts** — registry search with full context-body inspection.
 - **Lineage** — cross-run lineage explorer.
 - **Agents / Registries** — known DIDs and registry health + capabilities.
+- **Trust** — deployment-wide receipt coverage, DID-method breakdown, and the fail-closed
+  revocation-violations table.
+- **Security** — the control-plane revocation feed, per-registry JWKS, transparency-log witness
+  state, and the alert worklist with acknowledgement.
 - **Observability** — service health, Prometheus metrics, Jaeger trace links.
 - **Config** — service connections, webhooks, SDK matrix.
 
@@ -65,7 +69,9 @@ npm run test:watch     # watch mode
 npm run test:coverage  # v8 coverage (text + html report under coverage/)
 ```
 
-Coverage spans `lib/**` and the `app/api/**` route handlers. What's covered:
+Coverage spans `lib/**`, `app/api/**`, `components/**` and the page files under `app/**` — not just
+pure logic and route handlers, so the surfaces that render a verdict to an operator are measured too.
+What's covered:
 
 - **Pure logic** — `lib/utils/*` (format, ctx_id/DID parsing, `cn`), `lib/server/integrations.ts`.
 - **API client** — both demo and real (proxy-path) branches of `lib/api/client.ts`, plus `fetcher.ts`.
@@ -73,12 +79,19 @@ Coverage spans `lib/**` and the `app/api/**` route handlers. What's covered:
   (`app/api/stream/*`): header allow-listing, server-side bearer injection, response scrubbing, and
   502 fallbacks. Because these import `next/server`, their test files opt into the Node environment
   with a `// @vitest-environment node` docblock.
+- **The trust-verdict core** — `lib/verify/*` (the acdp-wasm checks, DID-document/key resolution, and
+  the hook every trust surface renders from) and `lib/utils/revocation.ts` (the fail-closed
+  revocation model every trust surface derives from).
 - **The real wasm verifier** — `wasm-fixtures.test.ts` loads the actual `acdp_wasm_bg.wasm` instead
   of mocking it, and drives it over the committed demo fixtures; it is the gate for acdp-wasm bumps.
 - **Auth gate** — the root `middleware.ts` (session validation, fail-open/closed env-var behavior,
   CSRF/Origin check) and `app/api/auth/{login,logout}` (`middleware.test.ts`, `auth-route.test.ts`).
-- **Store & hooks** — the preferences store (incl. localStorage persistence) and `useDebounced` /
-  `useMounted`.
+- **Store & hooks** — the preferences store (incl. localStorage persistence), the React Query hooks,
+  and `useDebounced` / `useMounted` / `useNow`.
+- **Component & page render tests** — the trust-relevant surfaces (context verdicts, the trust page,
+  dashboard revocation state, registry cards and their capabilities/profile disclosure, the SDK
+  matrix, transparency-log witness state and alert acknowledgement) and cross-cutting a11y/render
+  checks (focus management, table scroll behavior, error-boundary panels).
 - **Mock-data invariants** — structural checks over `lib/data/mock-data.ts`.
 
 House style: mock upstreams with `vi.stubGlobal('fetch', …)` and env with `vi.stubEnv`, cleaned up in
