@@ -412,18 +412,27 @@ function glossFor(p: string): { title: string; accent?: boolean } | undefined {
 export function RegistryCard({
   registry,
   capabilities,
+  health,
 }: {
   registry: KnownRegistry;
   capabilities?: RegistryCapabilities;
+  /**
+   * The capabilities-probe verdict, computed by `registryProbeView`
+   * (`lib/hooks/use-registries.ts`) — #129. Optional because a caller that
+   * measured nothing should render no health claim at all, rather than this
+   * card guessing one; every existing render site that omits it gets exactly
+   * that: no dot, no word, nothing implied.
+   */
+  health?: Parameters<typeof StatusDot>[0] & { variant: string; label: string };
 }) {
   return (
     <div className="card">
       <div className="card-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <StatusDot tone="ok" />
+          {health && <StatusDot tone={health.tone} />}
           <h2>{registry.authority}</h2>
         </div>
-        <Badge variant="complete">● healthy</Badge>
+        {health && <Badge variant={health.variant}>{health.label}</Badge>}
       </div>
       <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div className="metric-row">

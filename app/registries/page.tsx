@@ -8,7 +8,7 @@ import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-mes
 import { EmptyState } from '@/components/ui/empty-state';
 import { RegistryCard } from '@/components/registries/registry-card';
 import { Enrollments } from '@/components/registries/enrollments';
-import { useRegistries, useRegistryCapabilities } from '@/lib/hooks/use-registries';
+import { useRegistries, useRegistryCapabilities, registryProbeView } from '@/lib/hooks/use-registries';
 import { shortAuthority } from '@/lib/utils/acdp';
 
 export default function RegistriesPage() {
@@ -20,6 +20,13 @@ export default function RegistriesPage() {
   const capsByHost: Record<string, ReturnType<typeof useRegistryCapabilities>['data']> = {
     'registry-a': capsA.data,
     'registry-b': capsB.data,
+  };
+  // The QUERY objects, not just their `.data` — #129: `registryProbeView` needs
+  // `error`/`isPending` too, to tell "never probed" from "probed and failed"
+  // from "probed and answered", none of which `.data` alone can distinguish.
+  const probesByHost: Record<string, ReturnType<typeof useRegistryCapabilities>> = {
+    'registry-a': capsA,
+    'registry-b': capsB,
   };
 
   return (
@@ -41,6 +48,7 @@ export default function RegistriesPage() {
               key={reg.authority}
               registry={reg}
               capabilities={capsByHost[shortAuthority(reg.authority)]}
+              health={registryProbeView(probesByHost[shortAuthority(reg.authority)])}
             />
           ))}
         </div>

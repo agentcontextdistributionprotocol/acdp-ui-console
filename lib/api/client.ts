@@ -231,7 +231,7 @@ function failureVersion(err: unknown): string | undefined {
  * upstream 404 from a build with no `/healthz`. It does NOT claim the service
  * diagnosed itself; only that the bytes came from out there.
  */
-function failureKind(err: unknown): 'degraded' | 'unreachable' {
+export function failureKind(err: unknown): 'degraded' | 'unreachable' {
   if (!(err instanceof ApiError)) return 'unreachable';
   return err.fromUpstream ? 'degraded' : 'unreachable';
 }

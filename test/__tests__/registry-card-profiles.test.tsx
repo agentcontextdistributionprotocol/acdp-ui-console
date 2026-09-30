@@ -659,9 +659,9 @@ describe('the dead tooltip copy is gone', () => {
       ts.createSourceFile('c.tsx', PCT.componentSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX),
     );
     expect(census, 'the component’s literal census moved').toEqual({
-      stringLiterals: 68,
+      stringLiterals: 66,
       templateParts: 0,
-      jsxTexts: 10,
+      jsxTexts: 9,
     });
   });
 
@@ -672,7 +672,11 @@ describe('the dead tooltip copy is gone', () => {
     // cosignatures are recorded here."). Pinned exactly, so an addition is a
     // visible diff…
     expect([...CARD_LABELS]).toEqual([
-      '● healthy',
+      'not probed',
+      'checking…',
+      'responding',
+      'degraded',
+      'unreachable',
       'Event count',
       'Base URL',
       '—',
@@ -1001,6 +1005,13 @@ describe('the dead tooltip copy is gone', () => {
       for (const u of got.unmatchable) unmatchable.add(u);
     }
     const applied = [...byKey.values()];
+    // #129: this probe never passes `health`, so `.dot`/`.dot.ok`/`.badge-complete`
+    // — the unconditional "healthy" claim this issue removed — no longer apply to
+    // any of the three postures rendered here. Their absence from this pin is the
+    // guard suite correctly noticing the removal, not a hole in the probe: the new
+    // `health`-driven states are covered by their own render test
+    // (`registry-card-health.test.tsx`), which this closed-world guard does not need
+    // to re-derive.
     expect(applied, 'a stylesheet rule that applies to this card has changed').toEqual([
       { sheet: 'app/globals.css', selector: ':root', block: '--bg: #0d0e14; --panel: #14151f; --panel-2: #1a1b28; --panel-3: #21223a; --border: #ffffff12; --border-2: #ffffff1f; --text: #e2e4ef; --muted: #8b90a8; --faint: #4a4e6a; --brand: #00e8c6; --brand-dim: #00e8c61a; --brand-glow: 0 0 24px #00e8c626; --success: #22d48f; --warning: #f5a623; --danger: #f05d7a; --info: #60a5fa; --purple: #a78bfa; --space-xs: 4px; --space-sm: 8px; --space-md: 12px; --space-lg: 16px; --space-xl: 24px; --space-2xl: 32px; --radius-sm: 5px; --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --font-display: var(--font-syne), "Syne", sans-serif; --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", monospace; --sidebar-w: 210px; --topbar-h: 48px;' },
       { sheet: 'app/globals.css', selector: '*', block: 'box-sizing: border-box; margin: 0; padding: 0;' },
@@ -1011,8 +1022,6 @@ describe('the dead tooltip copy is gone', () => {
       { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-thumb', block: 'background: var(--panel-3); border-radius: 4px;' },
       { sheet: 'app/globals.css', selector: '::-webkit-scrollbar-thumb:hover', block: 'background: var(--faint);' },
       { sheet: 'app/globals.css', selector: '.shell', block: 'grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: minmax(var(--topbar-h), auto) 1fr; grid-template-areas: "sidebar topbar" "sidebar content"; height: 100vh; display: grid;' },
-      { sheet: 'app/globals.css', selector: '.dot', block: 'border-radius: 50%; flex-shrink: 0; width: 6px; height: 6px;' },
-      { sheet: 'app/globals.css', selector: '.dot.ok', block: 'background: var(--success); box-shadow: 0 0 6px var(--success);' },
       { sheet: 'app/globals.css', selector: '.content', block: 'background: var(--bg); grid-area: content; overflow-y: auto;' },
       { sheet: 'app/globals.css', selector: '.page', block: 'padding: 20px 24px;' },
       { sheet: 'app/globals.css', selector: '.card', block: 'background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg);' },
@@ -1021,7 +1030,6 @@ describe('the dead tooltip copy is gone', () => {
       { sheet: 'app/globals.css', selector: '.card-body', block: 'padding: 14px 16px;' },
       { sheet: 'app/globals.css', selector: '.chip', block: 'border: 1px solid var(--border); color: var(--muted); background: var(--panel-2); border-radius: 4px; padding: 2px 7px; font-size: 10px;' },
       { sheet: 'app/globals.css', selector: '.badge', block: 'letter-spacing: .04em; border: 1px solid #0000; border-radius: 4px; align-items: center; gap: 4px; padding: 2px 8px; font-size: 10.5px; font-weight: 600; display: inline-flex;' },
-      { sheet: 'app/globals.css', selector: '.badge-complete', block: 'color: var(--success); background: #22d48f1a; border-color: #22d48f33;' },
       { sheet: 'app/globals.css', selector: '.badge-pub', block: 'color: var(--brand); background: #00e8c61a; border-color: #00e8c633;' },
       { sheet: 'app/globals.css', selector: '.badge-neutral', block: 'background: var(--panel-3); color: var(--muted); border-color: var(--border);' },
       { sheet: 'app/globals.css', selector: '.grid-2', block: 'grid-template-columns: 1fr 1fr; gap: 12px; display: grid;' },

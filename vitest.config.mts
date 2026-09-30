@@ -31,7 +31,6 @@ export default defineConfig({
         'lib/colors.ts',
         // React Query wrappers — covered by integration, not unit.
         'lib/hooks/use-dashboard.ts',
-        'lib/hooks/use-registries.ts',
         'lib/hooks/use-runs.ts',
         'lib/hooks/use-scenarios.ts',
         'lib/hooks/use-security.ts',
@@ -41,6 +40,10 @@ export default defineConfig({
         // revocation aggregation and the violation sort — real logic, unit
         // tested, and exactly the code whose unmeasured state let a
         // revoked-only run sort to the bottom of the trust page.
+        //
+        // `use-registries.ts` was removed from this list for the same reason
+        // (#129): it now holds `registryProbeView`, the capabilities-probe
+        // verdict `RegistryCard`'s header renders — real logic, not a wrapper.
       ],
     },
   },
