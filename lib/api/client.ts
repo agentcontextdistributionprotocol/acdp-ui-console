@@ -16,6 +16,7 @@ import {
   MOCK_LINEAGE,
   MOCK_LINEAGE_CHAINS,
   MOCK_LOG_WITNESS,
+  MOCK_LOG_WITNESS_ALERTS,
   MOCK_METRICS,
   MOCK_METRICS_TEXT,
   MOCK_ENROLLMENTS,
@@ -46,6 +47,9 @@ import type {
   LineageGraph,
   ListRunsQuery,
   LogWitnessState,
+  LogWitnessAlertsResponse,
+  LogWitnessAlertRow,
+  LogWitnessAckResult,
   PlaygroundRunResponse,
   PlaygroundRunStatus,
   PrometheusMetric,
@@ -798,8 +802,10 @@ export async function getRegistryJwks(authority: RegistryAuthority, demoMode: bo
 
 /**
  * Transparency-log witness state for one registry, by DNS authority
- * (RFC-ACDP-0012). Read-only: the sibling admin `POST .../log-witness/ack` is
- * deliberately neither called nor proxied.
+ * (RFC-ACDP-0012). Read-only itself; the sibling admin
+ * `POST .../log-witness/ack` IS now called and proxied, by
+ * `acknowledgeLogWitnessAlert` below (#84). It was neither when this docblock
+ * was written.
  *
  * A **404** is the ordinary "no witness state recorded for this authority"
  * answer — the control plane raises REGISTRY_NOT_FOUND when there is neither a
@@ -827,6 +833,150 @@ export async function getLogWitness(authority: string, demoMode: boolean): Promi
     return delay(state);
   }
   return fetchJson<LogWitnessState>('control-plane', path);
+}
+
+/**
+ * The durable transparency-log alert worklist, across every authority the
+ * control plane witnesses (#84) — not just the two this console proxies.
+ *
+ * Read-only. The sibling admin `POST /registries/:authority/log-witness/ack`
+ * IS now called and proxied — `acknowledgeLogWitnessAlert` below, allow-listed
+ * in the proxy route. This paragraph said the opposite for two commits after
+ * that landed, and it had written its own instruction ("the docblock on
+ * `getLogWitness` has to be corrected when it lands"), which was carried out 36
+ * lines above while this copy was left. It matters more than an ordinary stale
+ * comment: this is the FIRST of two consecutive docblocks on the same function,
+ * so editors surface only the second — the API contract below was invisible in
+ * tooling while the half visible in source was false.
+ *
+ * `includeAcknowledged` appends a query string ONLY when true. Upstream takes
+ * the literal strings `'true'` and `'1'` as true, so an explicit
+ * `?includeAcknowledged=false` and omitting the parameter are the same request
+ * to it — we send the shorter one, which is one fewer spelling to get wrong.
+ *
+ * There is **no pagination on this endpoint** — no limit, offset or cursor. A
+ * caller must not invent one, and the envelope's `total` is whatever upstream
+ * put there rather than a page count.
+ *
+ * ── BOTH parameters are REQUIRED, with no defaults ──────────────────
+ *
+ * Unlike the shape this function shipped with, and deliberately so.
+ *
+ * (These were two consecutive JSDoc blocks. Editors and TypeScript surface
+ * only the SECOND, so everything above this line — the route, the read-only
+ * note, the query-string semantics — was invisible at every call site while
+ * remaining the half a reader sees in the file. Merged into one block for that
+ * reason, not for tidiness.)
+ *
+ * `demoMode` matches every other function in this file, which take it
+ * required; defaulting it to `false` means a caller who forgets it fires a real
+ * network request while the console is in demo mode, which is the one hazard
+ * `CLAUDE.md`'s "works with zero backends" rule exists to prevent.
+ *
+ * `includeAcknowledged` had a default of `false`, which quietly reinstated one
+ * layer down exactly the defect the hook above was changed to remove:
+ * acknowledging an alert does not resolve it upstream, so the filtered listing
+ * hides outstanding detections, and which listing a caller wants is a judgement
+ * about what it then claims from an empty result. A caller must say.
+ */
+export async function listLogWitnessAlerts(
+  { includeAcknowledged }: { includeAcknowledged: boolean },
+  demoMode: boolean,
+): Promise<LogWitnessAlertsResponse> {
+  const path = `/registries/log-witness/alerts${includeAcknowledged ? '?includeAcknowledged=true' : ''}`;
+  if (demoMode) {
+    const all = demoAlertStore();
+    // COPIED on read, like `listEnrollments`. The filtered branch already hands
+    // back a fresh array, but the unfiltered one used to hand the store itself
+    // into React Query's cache — so a consumer that mutated a row would edit
+    // the demo fixture for every later read. No consumer does today; the whole
+    // point of a demo store is that a future one might, and the sibling
+    // function this one claims parity with has always copied.
+    const rows = all.map((r) => ({ ...r }));
+    const data = includeAcknowledged ? rows : rows.filter((r) => r.acknowledgedAt === null);
+    // `total` tracks the rows actually returned, which is what upstream does:
+    // it counts the filtered result, not the table.
+    return delay({ data, total: data.length });
+  }
+  return fetchJson<LogWitnessAlertsResponse>('control-plane', path);
+}
+
+/**
+ * A mutable copy of the alert worklist for demo mode, so an acknowledgement is
+ * visible instead of being a no-op that leaves the row exactly as it was.
+ * Same shape as `demoEnrollmentStore` above.
+ */
+let demoAlerts: LogWitnessAlertRow[] | null = null;
+function demoAlertStore(): LogWitnessAlertRow[] {
+  if (!demoAlerts) demoAlerts = MOCK_LOG_WITNESS_ALERTS.map((r) => ({ ...r }));
+  return demoAlerts;
+}
+
+/**
+ * Record that an operator saw one authority's transparency-log alert (#84).
+ *
+ * **No request body, deliberately.** Upstream takes no `@Body()` and derives
+ * the acknowledger server-side from the caller's own token — `acknowledgedBy`
+ * is `req.actorId ?? 'admin'`, where `actorId` is a truncated key fingerprint.
+ * There is nothing for a caller to send and nothing a caller could usefully
+ * claim about who they are, so this takes no input beyond the authority and
+ * builds no form for one.
+ *
+ * **Acknowledging does NOT clear the alert.** Upstream stamps `acknowledgedAt`
+ * and leaves `alerted` true; the row drops out of the default listing only
+ * because the default filters on `acknowledgedAt IS NULL`. A subsequent
+ * detection with a DIFFERENT reason resets the stamp and the row resurfaces; a
+ * repeat of the same reason does not. The confirm copy in
+ * `log-witness-alerts.tsx` says all three of those out loud, because an
+ * operator who reads "acknowledge" as "resolve" will stop looking.
+ *
+ * Admin-only, and the console **cannot know that in advance**: no control-plane
+ * endpoint reports the caller's own scope, and `features` carries deployment
+ * flags rather than caller permissions. So the 403 is a designed path, not an
+ * edge case, and the caller handles it after the fact rather than pre-disabling
+ * the control. That 403 is a bare `ForbiddenException` with **no `errorCode`**,
+ * so only the status is usable — `api-error-messages.ts` has nothing to key on.
+ *
+ * The authority is percent-encoded for the same reason `getLogWitness` encodes
+ * it: it arrives from control-plane data, and an unencoded `/` would splice a
+ * new path segment and walk off the allow-listed route.
+ */
+export async function acknowledgeLogWitnessAlert(
+  authority: string,
+  demoMode: boolean,
+): Promise<LogWitnessAckResult> {
+  const path = `/registries/${encodeURIComponent(authority)}/log-witness/ack`;
+  if (demoMode) {
+    const row = demoAlertStore().find((r) => r.authority === authority);
+    if (!row) {
+      // The alert resolved between render and click. Upstream answers 404
+      // REGISTRY_NOT_FOUND, and the UI reads that as "already resolved" rather
+      // than as a failure — so demo has to be able to produce it too.
+      throw new ApiError(
+        404,
+        JSON.stringify({
+          errorCode: 'REGISTRY_NOT_FOUND',
+          message: `no transparency-log alert for '${authority}'`,
+        }),
+        'control-plane',
+        path,
+      );
+    }
+    row.acknowledgedAt = new Date().toISOString();
+    // A truncated key fingerprint, matching the shape upstream derives. NOT a
+    // person's name — the UI labels it "key" for that reason.
+    row.acknowledgedBy = 'demo1234...';
+    return delay({
+      authority: row.authority,
+      // `alerted` stays TRUE. Demo must not teach that ack clears the alert,
+      // because upstream does not.
+      alerted: true,
+      reason: row.reason,
+      acknowledgedAt: row.acknowledgedAt,
+      acknowledgedBy: row.acknowledgedBy,
+    });
+  }
+  return fetchJson<LogWitnessAckResult>('control-plane', path, { method: 'POST' });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

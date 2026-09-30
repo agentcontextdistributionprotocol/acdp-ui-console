@@ -18,6 +18,8 @@ import {
   MOCK_ENROLLMENTS,
   MOCK_CAPABILITIES,
   MOCK_SDK_MATRIX,
+  MOCK_LOG_WITNESS,
+  MOCK_LOG_WITNESS_ALERTS,
   MOCK_AGENTS,
   SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
@@ -1562,5 +1564,145 @@ describe('no signed instant falls inside a retraction window for the same contex
     const windows = retractionWindows(ATTESTED_CTX);
     expect(windows.length).toBeGreaterThanOrEqual(1);
     for (const w of windows) expect(asOf < w.from || asOf >= w.to).toBe(true);
+  });
+});
+
+
+// ══════════════════════════════════════════════════════════════════════
+// The transparency-log alert worklist fixture (#84).
+//
+// `/security` renders this worklist on the same screen as the per-registry
+// witness card, so the two must agree about any authority that appears in
+// both. The AUTH_B row is derived from `MOCK_LOG_WITNESS[AUTH_B]` in the
+// fixture itself rather than retyped; the assertions here guard that
+// derivation against being replaced by hand-copied literals later, which is
+// how the same pair of surfaces drifted apart in #85.
+// ══════════════════════════════════════════════════════════════════════
+describe('the log-witness alert worklist fixture', () => {
+  // The six reasons `checkpoint-witness.service.ts` can raise. Mirrored here
+  // rather than imported because `WitnessAlertReason` carries a `(string & {})`
+  // tail and so cannot be enumerated at runtime. The mirror makes NO claim
+  // about upstream: ADDING a reason here makes this stricter (a loud false
+  // red), REMOVING one leaves it permissive, so it can only fail safe.
+  const REASONS = [
+    'checkpoint_invalid',
+    'checkpoint_signature_invalid',
+    'tree_size_regression',
+    'root_mismatch',
+    'consistency_failed',
+    'log_id_changed',
+  ];
+
+  it('exercises each of the six reasons exactly once', () => {
+    const seen = MOCK_LOG_WITNESS_ALERTS.map((r) => r.reason);
+    expect([...seen].sort()).toEqual([...REASONS].sort());
+  });
+
+  it('is one row per authority, because that is what the primary key allows', () => {
+    // PK `(tenantId, registryAuthority)`: an authority holds at most one alert
+    // at a time. A fixture with two rows for one authority would teach a state
+    // the table cannot hold.
+    const authorities = MOCK_LOG_WITNESS_ALERTS.map((r) => r.authority);
+    expect(new Set(authorities).size).toBe(authorities.length);
+    expect(authorities.length).toBe(REASONS.length);
+  });
+
+  it('every row carries a string detail.error', () => {
+    // `detail` is jsonb, so the human-readable message has to be read out of
+    // `detail.error` — stringifying the object yields `[object Object]`.
+    for (const row of MOCK_LOG_WITNESS_ALERTS) {
+      expect(row.detail, row.authority).not.toBeNull();
+      expect(typeof row.detail?.error, row.authority).toBe('string');
+      expect((row.detail?.error as string).length, row.authority).toBeGreaterThan(0);
+    }
+  });
+
+  it('ships exactly one acknowledged row, so includeAcknowledged is observable', () => {
+    const acked = MOCK_LOG_WITNESS_ALERTS.filter((r) => r.acknowledgedAt !== null);
+    expect(acked).toHaveLength(1);
+    // An acknowledgement without an acknowledger would render a blank "by".
+    expect(typeof acked[0].acknowledgedBy).toBe('string');
+    // …and it must look like a KEY FINGERPRINT, not a person. The component
+    // renders this value as "key <value>", so an address here reads as
+    // "key ops@playground.local" — the exact identity claim the control plane
+    // never made, and the one `AcknowledgedCell`'s docblock exists to prevent.
+    // `acknowledgedBy` is `req.actorId ?? 'admin'`, and on the API-key path
+    // `actorId` is `token.slice(0, 8) + '...'`. Asserted because putting the
+    // email back left the entire suite green.
+    expect(acked[0].acknowledgedBy).not.toMatch(/@/);
+    expect(acked[0].acknowledgedBy).toMatch(/^(admin|[A-Za-z0-9_]+\.\.\.)$/);
+    // …and the unacknowledged rows must carry neither half, or the UI cannot
+    // tell them apart.
+    for (const row of MOCK_LOG_WITNESS_ALERTS.filter((r) => r.acknowledgedAt === null)) {
+      expect(row.acknowledgedBy, row.authority).toBeNull();
+    }
+  });
+
+  it('ships exactly one row with a null `at`, and it sorts FIRST', () => {
+    // Upstream orders `desc(lastAlertAt)`, and Postgres puts NULLs FIRST on a
+    // DESCENDING sort (on ASC it puts them last — the reverse of what an
+    // earlier version of this comment claimed). So the newest-first listing
+    // leads with the row that has no timestamp at all. The UI must not read
+    // position 0 as "most recent"; a fixture where that happened to be true
+    // would let the bug through unnoticed.
+    const nullAt = MOCK_LOG_WITNESS_ALERTS.filter((r) => r.at === null);
+    expect(nullAt).toHaveLength(1);
+    expect(MOCK_LOG_WITNESS_ALERTS[0].at).toBeNull();
+  });
+
+  it('the dated rows are in newest-first order', () => {
+    const dated = MOCK_LOG_WITNESS_ALERTS.filter((r) => r.at !== null);
+    expect(dated.length).toBeGreaterThanOrEqual(2);
+    const times = dated.map((r) => Date.parse(r.at as string));
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+
+  it('agrees with the per-registry witness card about the authority they share', () => {
+    // The cross-fixture guard. Both surfaces render on `/security`; if they
+    // disagree about reason, detail or timestamp, one screen contradicts
+    // itself about one registry.
+    const shared = MOCK_LOG_WITNESS_ALERTS.filter((r) => r.authority in MOCK_LOG_WITNESS);
+    // Non-vacuity: if no row's authority is in the witness fixture, the loop
+    // below asserts nothing at all.
+    expect(shared.length).toBeGreaterThanOrEqual(1);
+
+    for (const row of shared) {
+      const state = MOCK_LOG_WITNESS[row.authority];
+      expect(state.alert.alerted, `${row.authority} is on the worklist`).toBe(true);
+      expect(row.reason, row.authority).toBe(state.alert.reason);
+      expect(row.detail, row.authority).toEqual(state.alert.detail);
+      expect(row.at, row.authority).toBe(state.alert.at);
+      // The cursor-level fields come from the same row upstream, so they have
+      // to match too — these are what the worklist shows as context.
+      expect(row.logId, row.authority).toBe(state.logId);
+      expect(row.lastWitnessedSize, row.authority).toBe(state.lastWitnessedSize);
+      expect(row.lastRootHash, row.authority).toBe(state.lastRootHash);
+      expect(row.consecutiveFailures, row.authority).toBe(state.consecutiveFailures);
+    }
+  });
+
+  it('never lists an authority whose witness card says it is NOT alerting', () => {
+    // The inverse of the check above, and the one that catches a stale row: an
+    // authority that recovered must leave the worklist, not sit on it
+    // contradicting its own card.
+    const notAlerting = Object.values(MOCK_LOG_WITNESS)
+      .filter((s) => !s.alert.alerted)
+      .map((s) => s.authority);
+    expect(notAlerting.length).toBeGreaterThanOrEqual(1);
+    for (const authority of notAlerting) {
+      expect(
+        MOCK_LOG_WITNESS_ALERTS.some((r) => r.authority === authority),
+        `${authority} reports no alert, so it must not be on the worklist`,
+      ).toBe(false);
+    }
+  });
+
+  it('covers more authorities than the console proxies, which is the normal case', () => {
+    // The control plane witnesses every authority it has ever seen a
+    // checkpoint from; the console proxies two. A worklist that only ever
+    // contained the proxied pair would teach the wrong mental model, and would
+    // not exercise a row whose authority has no registry card to open.
+    const beyond = MOCK_LOG_WITNESS_ALERTS.filter((r) => !(r.authority in MOCK_LOG_WITNESS));
+    expect(beyond.length).toBeGreaterThanOrEqual(2);
   });
 });

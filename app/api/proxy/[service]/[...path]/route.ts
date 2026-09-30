@@ -63,17 +63,64 @@ const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
     { method: 'GET', pattern: /^\/registries$/ },
     { method: 'GET', pattern: /^\/registries\/enrollments$/ },
     { method: 'POST', pattern: /^\/registries\/enroll$/ },
-    // Transparency-log witness state, read-only. `[^/]+` IS right here: the
-    // parameter is a DNS authority, which contains dots but never slashes —
-    // the opposite of the ctx_id case below. The trailing `$` is what keeps
-    // the sibling admin route `:authority/log-witness/ack` out, and the fixed
-    // two-segment shape is what keeps the collection route
-    // `/registries/log-witness/alerts` out. The route test asserts five
-    // adjacent shapes are rejected: those two, a POST to this same path, a
-    // multi-segment authority, and an arbitrary tail under a valid authority.
+    // Transparency-log witness state, read-only, in two shapes that look
+    // alike and are not: per-authority state, and the collection-level alert
+    // worklist. Neither pattern can admit the other's shape, because they
+    // differ in the segment that is fixed:
+    //
+    //   /registries/:authority/log-witness   — `log-witness` is segment THREE
+    //   /registries/log-witness/alerts       — `log-witness` is segment TWO
+    //
+    // so the per-authority pattern only matches a path ENDING in
+    // `/log-witness`, which `.../alerts` does not, and the collection pattern
+    // is a fixed three-segment literal with no variable part at all.
+    //
+    // `[^/]+` IS right for the authority: it is a DNS name, which contains
+    // dots but never slashes — the opposite of the ctx_id case below. Both
+    // patterns are `$`-anchored, which is what stops either from growing a
+    // tail — including growing into the admin `:authority/log-witness/ack`
+    // sibling, which is allow-listed separately below as a POST and must not
+    // become reachable by GET.
+    //
+    // Upstream declares `log-witness/alerts` BEFORE `:authority/log-witness`
+    // (`registries.controller.ts:51` and `:117`). ROUND 7's N11: an earlier
+    // version of this comment said that ordering "is why Nest does not swallow
+    // `log-witness` as an `:authority` there", and that causal claim is wrong.
+    // The two routes are DISJOINT whatever order they are declared in:
+    // `:authority/log-witness` requires the segment after the authority to be
+    // the literal `log-witness`, and in `/registries/log-witness/alerts` that
+    // segment is `alerts`. Declaration order decides nothing here, so an
+    // upstream refactor that reorders them changes nothing — which is a
+    // stronger statement than the one it replaces, and it is the one this file
+    // should have been making. (Order-dependence between those two WOULD
+    // matter for a hypothetical `GET :authority/log-witness/alerts`; upstream
+    // serves no such route, which is the next paragraph's point.)
+    // Our own matching is order-independent regardless (`some` at
+    // `isAllowedRoute`) — but do not "simplify" these two into one pattern on
+    // the strength of any of that. There is no per-authority `alerts` route upstream, so
+    // widening the collection pattern's middle segment to `[^/]+` would admit
+    // a shape the control plane does not serve; the route test asserts that
+    // case by name, alongside three other widenings, and four adjacent shapes
+    // around the per-authority pattern.
     // (`/registries/enrollments` needs no such guard — it is allow-listed on
-    // its own line above, so this pattern can neither admit nor deny it.)
+    // its own line above, so neither pattern can admit or deny it.)
     { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },
+    { method: 'GET', pattern: /^\/registries\/log-witness\/alerts$/ },
+    // Acknowledging one authority's alert (#84). One of five patterns in this
+    // file with a variable segment in the MIDDLE (`/lineages/[^/]+/current`,
+    // `/runs/[^/]+/lineage`, `/runs/[^/]+/events`, the per-authority read
+    // above, and this), so it carries the same over-reach risk and gets the
+    // same treatment: `[^/]+` for a DNS authority, `$`-anchored, and the route
+    // test asserts the adjacent shapes out — a multi-segment authority, a
+    // tail, GET on this path, and each of the two literal segments widened to
+    // `[^/]+` in turn.
+    //
+    // POST, and the ONLY write this console issues under `/registries/` other
+    // than `enroll`. It carries no body: upstream takes no `@Body()` and
+    // derives the acknowledger server-side from the caller's own token, so
+    // there is nothing for a client to send and nothing for this route to
+    // forward beyond the path itself.
+    { method: 'POST', pattern: /^\/registries\/[^/]+\/log-witness\/ack$/ },
     { method: 'GET', pattern: /^\/metrics$/ },
     { method: 'GET', pattern: /^\/webhooks$/ },
     { method: 'POST', pattern: /^\/webhooks$/ },

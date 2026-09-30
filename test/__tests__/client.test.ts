@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getRegistryCapabilities,
@@ -10,11 +12,14 @@ import {
   listRevocations,
   getRegistryJwks,
   getLogWitness,
+  listLogWitnessAlerts,
+  acknowledgeLogWitnessAlert,
   listEnrollments,
   enrollRegistry,
   getLineage,
   pingHealth,
 } from '@/lib/api/client';
+import { MOCK_LOG_WITNESS_ALERTS } from '@/lib/data/mock-data';
 import { buildSdkMatrixRows } from '@/lib/utils/sdk-matrix';
 import type { HealthResult, ProxyService } from '@/lib/types';
 
@@ -169,6 +174,161 @@ describe('real-mode proxy paths', () => {
     // anything reassuring or self-diagnosing.
     mockFetch(() => upstreamResponse({ message: 'nope' }, 403));
     await expect(getLogWitness('registry-a.example.com', false)).rejects.toMatchObject({ status: 403 });
+  });
+
+  // ── The alert worklist (#84) ────────────────────────────────────────
+  //
+  // The endpoint has NO pagination — no limit, offset or cursor — so the only
+  // thing the client varies is one optional flag. Both spellings are asserted
+  // because the default must send no query string at all: upstream reads only
+  // the literal 'true'/'1', so a client that always appended the parameter
+  // would still work today and would quietly encode an assumption about how
+  // upstream parses 'false'.
+  it('listLogWitnessAlerts → /registries/log-witness/alerts with NO query string by default', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
+    await listLogWitnessAlerts({ includeAcknowledged: false }, false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toBe('/api/proxy/control-plane/registries/log-witness/alerts');
+    expect(url).not.toContain('?');
+  });
+
+  it('listLogWitnessAlerts sends ?includeAcknowledged=true only when asked', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ data: [], total: 0 }));
+    await listLogWitnessAlerts({ includeAcknowledged: true }, false);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/proxy/control-plane/registries/log-witness/alerts?includeAcknowledged=true',
+    );
+  });
+
+  it('listLogWitnessAlerts requires BOTH arguments, so neither listing is inherited', async () => {
+    // This test used to assert the opposite — that calling it with no
+    // arguments defaults to the filtered listing. That default quietly
+    // reinstated, one layer below the hook, the defect the hook was changed to
+    // remove: acknowledging an alert does not resolve it upstream, so the
+    // filtered listing hides outstanding detections. `demoMode` defaulting to
+    // `false` was the other half, and it is the one hazard "works with zero
+    // backends" exists to prevent — every other function in `client.ts` takes
+    // it required.
+    //
+    // Asserted through the COMPILER, which is the only thing that can enforce
+    // it at a call site that does not exist yet.
+    const src = readFileSync(join(process.cwd(), 'lib/api/client.ts'), 'utf8');
+    const sig = /export async function listLogWitnessAlerts\(([\s\S]*?)\): Promise/.exec(src)?.[1];
+    expect(sig, 'signature not found').toBeDefined();
+    expect(sig).toContain('includeAcknowledged: boolean');
+    expect(sig).toContain('demoMode: boolean');
+    expect(sig, 'no parameter may carry a default').not.toContain('=');
+  });
+
+  it('the demo ack writes through a COPY, never into the shared fixture', async () => {
+    // This slot held a duplicate of the "NO query string by default" test four
+    // lines above — same call, same assertions, one fewer of them. It is spent
+    // here on the gap that test was standing next to instead.
+    //
+    // `demoAlertStore()` seeds itself from `MOCK_LOG_WITNESS_ALERTS`. Seeding by
+    // reference instead of `.map((r) => ({ ...r }))` makes the demo ack mutate
+    // the module-level fixture that `lib/data/mock-data.ts` exports to every
+    // other consumer, for the life of the process — a demo session would leave
+    // `acknowledgedAt` stamped on a row every later reader believes is pristine.
+    // The READ-side copy is pinned by its own test; this is the write side, and
+    // it was the one the mutation sweep walked through green.
+    const target = MOCK_LOG_WITNESS_ALERTS[0];
+    expect(target.acknowledgedAt, 'fixture row 0 must start unacknowledged').toBeNull();
+    const res = await acknowledgeLogWitnessAlert(target.authority, true);
+    // The ack really happened — otherwise this passes by doing nothing.
+    expect(res.acknowledgedAt).toEqual(expect.any(String));
+    // …and the fixture did not move.
+    expect(MOCK_LOG_WITNESS_ALERTS[0].acknowledgedAt).toBeNull();
+  });
+
+  it('listLogWitnessAlerts reads the envelope rather than assuming total === data.length', async () => {
+    // With no pagination the two are always equal on the wire, but the client
+    // must relay what upstream sent: deriving `total` here would invent a
+    // guarantee the endpoint has not made.
+    mockFetch(() => jsonResponse({ data: [{ authority: 'r-c' }], total: 7 }));
+    const res = await listLogWitnessAlerts({ includeAcknowledged: false }, false);
+    expect(res.total).toBe(7);
+    expect(res.data).toHaveLength(1);
+  });
+
+  it('listLogWitnessAlerts surfaces a 403 as an ApiError', async () => {
+    mockFetch(() => upstreamResponse({ errorCode: 'FORBIDDEN', message: 'nope' }, 403));
+    await expect(listLogWitnessAlerts({ includeAcknowledged: false }, false)).rejects.toMatchObject({
+      status: 403,
+      errorCode: 'FORBIDDEN',
+    });
+  });
+
+  it('listLogWitnessAlerts surfaces a 404 as an ApiError rather than an empty worklist', async () => {
+    // An empty worklist means "witnessed everything, nothing wrong" — the
+    // strongest all-clear this feature can give. A 404 means the endpoint is
+    // not there at all. Collapsing one into the other would render the
+    // all-clear off the back of a missing route.
+    mockFetch(() => upstreamResponse({ errorCode: 'NOT_FOUND' }, 404));
+    await expect(listLogWitnessAlerts({ includeAcknowledged: false }, false)).rejects.toMatchObject({ status: 404 });
+  });
+
+  // ── Acknowledging one alert (#84) ───────────────────────────────────
+  it('acknowledgeLogWitnessAlert POSTs to the ack path with NO body', async () => {
+    // Upstream takes no `@Body()` and derives the acknowledger from the
+    // caller's own token, so a body would be both ignored and a lie about who
+    // is acking. Asserted on the init, not just the URL.
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'r-a', alerted: true }));
+    await acknowledgeLogWitnessAlert('registry-a.example.com', false);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      '/api/proxy/control-plane/registries/registry-a.example.com/log-witness/ack',
+    );
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+  });
+
+  it('acknowledgeLogWitnessAlert percent-encodes the authority so it cannot add a path segment', async () => {
+    // Same reasoning as `getLogWitness` above, and it matters more here: this
+    // is a WRITE, so walking off the allow-listed route would issue a POST at
+    // an unintended upstream path with the injected credential attached.
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'x', alerted: true }));
+    await acknowledgeLogWitnessAlert('registry-a.example.com/../enroll', false);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toBe(
+      '/api/proxy/control-plane/registries/registry-a.example.com%2F..%2Fenroll/log-witness/ack',
+    );
+    expect(url).not.toContain('/../');
+  });
+
+  it('acknowledgeLogWitnessAlert surfaces a 403 as an ApiError with no errorCode to key on', async () => {
+    // Upstream throws a bare Nest ForbiddenException here — no structured
+    // code — so the UI has only the status. Pinned so a future "improvement"
+    // that invents a code in the client is caught.
+    mockFetch(() => upstreamResponse({ message: 'Forbidden' }, 403));
+    await expect(acknowledgeLogWitnessAlert('registry-a.example.com', false)).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(
+      acknowledgeLogWitnessAlert('registry-a.example.com', false).catch((e) => e.errorCode),
+    ).resolves.toBeUndefined();
+  });
+
+  it('acknowledgeLogWitnessAlert surfaces a 404 as REGISTRY_NOT_FOUND', async () => {
+    // The alert resolved between render and click. The UI renders that as
+    // "already resolved" rather than as a failure, so the code has to survive.
+    mockFetch(() => upstreamResponse({ errorCode: 'REGISTRY_NOT_FOUND' }, 404));
+    await expect(acknowledgeLogWitnessAlert('gone.example.com', false)).rejects.toMatchObject({
+      status: 404,
+      errorCode: 'REGISTRY_NOT_FOUND',
+    });
+  });
+
+  it('acknowledgeLogWitnessAlert relays `alerted` rather than assuming the ack cleared it', async () => {
+    // Upstream stamps `acknowledgedAt` and leaves `alerted` TRUE. A client that
+    // normalised this to false would teach the UI that ack resolves the alert.
+    mockFetch(() =>
+      jsonResponse({ authority: 'r-a', alerted: true, reason: 'root_mismatch', acknowledgedAt: 'T', acknowledgedBy: 'ab12...' }),
+    );
+    const res = await acknowledgeLogWitnessAlert('r-a', false);
+    expect(res.alerted).toBe(true);
+    expect(res.acknowledgedAt).toBe('T');
+    expect(res.acknowledgedBy).toBe('ab12...');
   });
 
   it('listEnrollments → reads { data } from /registries/enrollments', async () => {

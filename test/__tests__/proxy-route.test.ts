@@ -180,8 +180,16 @@ describe('proxy route — route allow-list', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('allows every route lib/api/client.ts actually issues', async () => {
-    const cases: Array<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; service: string; path: string[] }> = [
+  // Hoisted out of the test below so the `^`-anchor sweep after it can run over
+  // the SAME list. Two hand-maintained copies of "every route we issue" is one
+  // copy too many: the sweep is only a whole-file guard if it cannot fall
+  // behind the allow-list, and sharing the table is what makes adding a route
+  // automatically add its anchor case.
+  const ALLOWED_CASES: Array<{
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+    service: string;
+    path: string[];
+  }> = [
       { method: 'GET', service: 'playground', path: ['healthz'] },
       { method: 'GET', service: 'playground', path: ['scenarios'] },
       { method: 'POST', service: 'playground', path: ['runs'] },
@@ -212,6 +220,13 @@ describe('proxy route — route allow-list', () => {
       // A DNS authority: dots, no slashes — so the `[^/]+` in the pattern is
       // the right shape here, unlike the ctx_id case above.
       { method: 'GET', service: 'control-plane', path: ['registries', 'registry-a.example.com', 'log-witness'] },
+      // The collection-level alert worklist (#84). A fixed three-segment
+      // literal, NOT a variable authority — `log-witness` sits in segment two
+      // here and in segment three above.
+      { method: 'GET', service: 'control-plane', path: ['registries', 'log-witness', 'alerts'] },
+      // The admin acknowledgement (#84). POST only — the GET on this same path
+      // stays rejected below, so the verb is doing real work here.
+      { method: 'POST', service: 'control-plane', path: ['registries', 'registry-a.example.com', 'log-witness', 'ack'] },
       { method: 'GET', service: 'registry-a', path: ['healthz'] },
       { method: 'GET', service: 'registry-a', path: ['contexts', 'search'] },
       { method: 'GET', service: 'registry-a', path: ['lineages', 'l1'] },
@@ -219,8 +234,10 @@ describe('proxy route — route allow-list', () => {
       { method: 'GET', service: 'registry-a', path: ['.well-known', 'acdp.json'] },
       { method: 'GET', service: 'registry-a', path: ['.well-known', 'jwks.json'] },
       { method: 'GET', service: 'registry-b', path: ['contexts', 'search'] },
-    ];
-    for (const { method, service, path } of cases) {
+  ];
+
+  it('allows every route lib/api/client.ts actually issues', async () => {
+    for (const { method, service, path } of ALLOWED_CASES) {
       const fetchMock = mockFetch(() => upstream());
       const url = `http://localhost/api/proxy/${service}/${path.join('/')}`;
       const handler = method === 'GET' ? GET : method === 'POST' ? POST : method === 'PATCH' ? PATCH : DELETE;
@@ -230,12 +247,80 @@ describe('proxy route — route allow-list', () => {
     }
   });
 
-  // The `:authority/log-witness` entry is the only pattern in the file with a
-  // variable segment in the MIDDLE, so it is the one most able to over-reach.
+  // ── The `^` anchor, which nothing in this file pinned until #84's gate ──
+  //
+  // Every over-reach case in this file — all four blocks of them — tests the
+  // `$` end of the pattern: a tail, a widened literal, an extra segment. Not
+  // one tested the START. Dropping the `^` from
+  // `/^\/registries\/[^/]+\/log-witness\/ack$/` leaves `RegExp#test` matching
+  // the pattern ANYWHERE in the path, so
+  //
+  //   POST /api/proxy/control-plane/anything/registries/registry-a.example.com/log-witness/ack
+  //
+  // is allow-listed, forwarded to `${CONTROL_PLANE_BASE_URL}/anything/...`
+  // WITH the injected deployment bearer attached — an arbitrary control-plane
+  // path reachable from the browser under this console's credential. Measured:
+  // 200, upstream called once, and `proxy-route.test.ts` still 36/36 with the
+  // whole suite green.
+  //
+  // It is a whole-FILE property, not an ack-specific one — every pattern here
+  // has the same exposure — so it is asserted as one, over the same table the
+  // allow test uses. Enumerating a case per pattern is what left the gap in the
+  // first place: the enumeration is of an open set, and the defect lands on
+  // whichever member nobody wrote down.
+  //
+  // Two prefixes, because they fail differently. A plain segment is the
+  // traversal-free shape that only the anchor rejects; `..` would be caught by
+  // the dot-segment guard even with the anchor gone, so it is deliberately NOT
+  // the case being made here.
+  const ANCHOR_PREFIXES = ['anything', 'v1'];
+
+  it('anchors every allow-list pattern at the START of the path', async () => {
+    expect(ALLOWED_CASES.length, 'the allow table emptied out').toBeGreaterThan(20);
+    // ANTI-VACUITY on the probe itself, and it is not hypothetical: changing
+    // these two to `['..', '.']` makes every case below pass with the anchors
+    // GONE, because the dot-segment guard refuses the path before the allow
+    // list is ever consulted. The sweep then proves nothing and says so in its
+    // title. The comment above anticipated exactly that; this is the line that
+    // enforces it.
+    for (const prefix of ANCHOR_PREFIXES) {
+      expect(
+        prefix,
+        'a dot-segment or empty prefix is rejected by the path guard before the allow list ' +
+          'is consulted, so this sweep would pass with every pattern unanchored',
+      ).toMatch(/^[a-z][a-z0-9-]*$/);
+    }
+    for (const { method, service, path } of ALLOWED_CASES) {
+      for (const prefix of ANCHOR_PREFIXES) {
+        const prefixed = [prefix, ...path];
+        const fetchMock = mockFetch(() => upstream());
+        const url = `http://localhost/api/proxy/${service}/${prefixed.join('/')}`;
+        const handler =
+          method === 'GET' ? GET : method === 'POST' ? POST : method === 'PATCH' ? PATCH : DELETE;
+        const res = await handler(new NextRequest(url, { method }), ctx(service, prefixed));
+        const label = `${method} ${service}/${prefixed.join('/')} — the ^ anchor must admit no prefix`;
+        expect(res.status, label).toBe(403);
+        expect(fetchMock, label).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  // The `:authority/log-witness` entry is one of five patterns in the file with
+  // a variable segment in the MIDDLE — the others are `/lineages/[^/]+/current`,
+  // `/runs/[^/]+/lineage`, `/runs/[^/]+/events` and the `ack` sibling below —
+  // and a middle variable is the shape most able to over-reach, because the
+  // segments on BOTH sides of it have to be pinned for the pattern to mean what
+  // it says. (This comment claimed to be about "the only" such pattern for
+  // several revisions. It was never true; the miscount is recorded here rather
+  // than quietly corrected, because a guard's comment overstating its own
+  // uniqueness is what persuades the next reader that the other four need no
+  // equivalent cases.)
   // Each case below is a route that sits one character away from it and must
-  // stay out: the admin acknowledgement sibling, the collection-level alerts
-  // route, a multi-segment authority, the wrong method, and an arbitrary
-  // second tail under a legitimate authority.
+  // stay out: the admin acknowledgement sibling, a multi-segment authority,
+  // the wrong method, and an arbitrary second tail under a legitimate
+  // authority. The collection route `/registries/log-witness/alerts` used to
+  // be a fifth case here; #84 allow-lists it, so it moved to the allowed list
+  // above and its own over-reach cases are the test after this one.
   it('the log-witness pattern admits exactly one shape and nothing adjacent to it', async () => {
     const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
       {
@@ -246,12 +331,11 @@ describe('proxy route — route allow-list', () => {
       {
         method: 'GET',
         path: ['registries', 'registry-a.example.com', 'log-witness', 'ack'],
-        why: 'the admin acknowledgement sibling is deliberately not proxied',
-      },
-      {
-        method: 'GET',
-        path: ['registries', 'log-witness', 'alerts'],
-        why: 'the collection-level alerts route is a different, unproxied feature',
+        // Was "deliberately not proxied", which stopped being true when #84's
+        // ack landed: the path IS allow-listed, as a POST. The case is still
+        // exactly right — it is the GET-on-a-write-path guard — but the reason
+        // read as a claim about the route table that the route table refutes.
+        why: 'the acknowledgement sibling is a POST; allow-listing it must not make it readable',
       },
       {
         method: 'GET',
@@ -262,6 +346,113 @@ describe('proxy route — route allow-list', () => {
         method: 'GET',
         path: ['registries', 'registry-a.example.com', 'enrollments'],
         why: 'the variable segment must not admit an arbitrary tail',
+      },
+    ];
+    for (const { method, path, why } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/control-plane/${path.join('/')}`;
+      const handler = method === 'GET' ? GET : POST;
+      const res = await handler(new NextRequest(url, { method }), ctx('control-plane', path));
+      expect(res.status, `${method} ${path.join('/')} — ${why}`).toBe(403);
+      expect(fetchMock, `${method} ${path.join('/')} — ${why}`).not.toHaveBeenCalled();
+    }
+  });
+
+  // The new collection pattern is a fixed three-segment literal, so it has no
+  // variable part to over-reach — but it can still be WIDENED by a careless
+  // edit. Each case below is a shape some plausible widening would admit:
+  //
+  //   dropping the `$`                      -> a tail
+  //   adding a write verb                   -> POST
+  //   `log-witness` -> `[^/]+` ("merge the  -> /registries/:authority/alerts
+  //     two log-witness patterns into one")
+  //   loosening the segment count           -> the two-segment near-miss
+  //
+  // The third of those is not hypothetical: it survived the first mutation
+  // sweep of this phase, because the other three cases all still 403 under it.
+  it('the log-witness ALERTS pattern admits exactly one shape and nothing adjacent to it', async () => {
+    const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
+      {
+        method: 'POST',
+        path: ['registries', 'log-witness', 'alerts'],
+        why: 'read-only worklist: acknowledgement is a different route, not proxied here',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'log-witness', 'alerts', 'x'],
+        why: 'the $ anchor must admit no tail',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'log-witness'],
+        why: 'the two-segment near-miss is not a shorter form of this route',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'registry-a.example.com', 'alerts'],
+        why: 'the middle segment is the LITERAL log-witness; there is no per-authority alerts route',
+      },
+      {
+        method: 'GET',
+        path: ['registries', 'enrollments', 'alerts'],
+        why: 'and it must not compose with another allow-listed collection name either',
+      },
+    ];
+    for (const { method, path, why } of cases) {
+      const fetchMock = mockFetch(() => upstream());
+      const url = `http://localhost/api/proxy/control-plane/${path.join('/')}`;
+      const handler = method === 'GET' ? GET : POST;
+      const res = await handler(new NextRequest(url, { method }), ctx('control-plane', path));
+      expect(res.status, `${method} ${path.join('/')} — ${why}`).toBe(403);
+      expect(fetchMock, `${method} ${path.join('/')} — ${why}`).not.toHaveBeenCalled();
+    }
+  });
+
+  // The ack pattern is the file's second middle-variable pattern, so it can
+  // over-reach the same way the read above can — and it is a WRITE, which makes
+  // it the more valuable of the two to get wrong. The GET-on-this-path case is
+  // asserted in the block above rather than repeated here.
+  it('the log-witness ACK pattern admits exactly one shape and nothing adjacent to it', async () => {
+    const cases: Array<{ method: 'GET' | 'POST'; path: string[]; why: string }> = [
+      {
+        method: 'POST',
+        path: ['registries', 'a', 'b', 'log-witness', 'ack'],
+        why: 'a DNS authority is one segment; [^/]+ must not span a slash',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness', 'ack', 'extra'],
+        why: 'the $ anchor must admit no tail',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness'],
+        why: 'the read path must not become writable because its ack sibling is',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'log-witness', 'ack'],
+        why: 'the collection level has no ack; this is the alerts route mis-spelled',
+      },
+      // The two LITERAL segments. Round 1 of this PR's gate measured the four
+      // cases above and found that neither literal was pinned by any of them:
+      // loosening `ack` to `[^/]+`, and loosening `log-witness` to `[^/]+`,
+      // each left the whole suite green. The second is the worse of the two —
+      // it allow-lists `POST /registries/<anything>/<anything>/ack` through the
+      // perimeter WITH the injected control-plane bearer attached. The ALERTS
+      // block above names exactly this mutation class for its own middle
+      // segment and adds a case for it; this pattern shipped without the
+      // equivalent, which is the "fixed on one arm, not its neighbour" shape
+      // this worklist keeps producing.
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'log-witness', 'advance-cursor'],
+        why: 'the last segment is the LITERAL ack; no other verb under log-witness is proxied',
+      },
+      {
+        method: 'POST',
+        path: ['registries', 'registry-a.example.com', 'enrollments', 'ack'],
+        why: 'the third segment is the LITERAL log-witness; ack is not a generic sub-resource verb',
       },
     ];
     for (const { method, path, why } of cases) {

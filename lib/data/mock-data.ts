@@ -14,6 +14,7 @@ import type {
   KnownRegistry,
   LineageGraph,
   LogWitnessState,
+  LogWitnessAlertRow,
   PrometheusMetric,
   RegistryAuthority,
   RegistryCapabilities,
@@ -1475,6 +1476,144 @@ export const MOCK_LOG_WITNESS: Record<string, LogWitnessState> = {
     total: 1,
   },
 };
+
+// ── Transparency-log alert worklist (#84) ─────────────────────────────
+//
+// `GET control-plane /registries/log-witness/alerts`. One row per ALERTED
+// AUTHORITY — the table's PK is `(tenantId, registryAuthority)`, so six rows
+// means six registries, not six alerts against one. That is why this needs
+// four authorities the rest of the demo dataset never mentions: the console
+// proxies exactly two registries, but the control plane witnesses every
+// authority it has ever seen a checkpoint from, so a worklist longer than the
+// proxy's registry list is the normal case, not a contrived one.
+//
+// Ordering is upstream's: newest first by `at`, with a NULL `at` sorting
+// FIRST. The mechanism is `log-witness.repository.ts`'s `orderBy(desc(
+// lastAlertAt))` plus Postgres's rule that **DESC implies NULLS FIRST** (ASC
+// implies NULLS LAST — the opposite of what an earlier version of this comment
+// said). Getting the mechanism right matters here: an editor who "corrected"
+// this ordering to ASC on the strength of the old wording would have inverted
+// the entire listing. `registry-f` is the null-`at` row, so it leads — the UI
+// must therefore not assume the first row is the most recent.
+//
+// The AUTH_B row is DERIVED from `MOCK_LOG_WITNESS[AUTH_B]` rather than
+// retyped. `/security` renders the worklist and the per-registry witness card
+// on one screen, so a hand-copied duplicate would be free to drift and the two
+// sections would contradict each other about the same authority — the exact
+// failure #85 spent three gate rounds on. `mock-data.test.ts` asserts the
+// agreement anyway, which guards the derivation against being replaced by
+// literals later.
+const WITNESS_B_ALERT = MOCK_LOG_WITNESS[AUTH_B];
+
+export const MOCK_LOG_WITNESS_ALERTS: LogWitnessAlertRow[] = [
+  {
+    // NULL `at`. **No current control-plane path produces this**: `markAlert`
+    // is the only writer of `alerted = true` and it always sets `lastAlertAt`,
+    // and the two columns were added in the same migration so there are no
+    // legacy rows either. The row is here because the COLUMN IS NULLABLE and
+    // the UI must hold to that contract rather than to today's writer — a
+    // fixture that only ever carried timestamps would let a `timeAgo(null)`
+    // regression through, and this is also the row that proves the list is not
+    // sorted the way a reader assumes. It depicts a schema-permitted state, not
+    // an observed one; do not cite it as evidence the control plane emits this.
+    authority: 'registry-f.playground.local',
+    logId: null,
+    lastWitnessedSize: null,
+    lastRootHash: null,
+    reason: 'log_id_changed',
+    detail: {
+      error: 'log_id changed from registry-f.playground.local/log/v1 to registry-f.playground.local/log/v2',
+      previous_log_id: 'registry-f.playground.local/log/v1',
+    },
+    at: null,
+    acknowledgedAt: null,
+    acknowledgedBy: null,
+    consecutiveFailures: 1,
+  },
+  {
+    authority: 'registry-c.playground.local',
+    logId: 'registry-c.playground.local/log/v1',
+    lastWitnessedSize: 8140,
+    lastRootHash: 'sha256:c41f0a8b2e6d9375c0b48f1e7a2d63c9805b7e14f3a6c2d09b5e8f741a0c36d2',
+    reason: 'root_mismatch',
+    detail: {
+      error: 'two distinct roots witnessed at tree_size 8140 — split view',
+      tree_size: 8140,
+    },
+    at: iso(900),
+    acknowledgedAt: null,
+    acknowledgedBy: null,
+    consecutiveFailures: 2,
+  },
+  {
+    authority: AUTH_B,
+    logId: WITNESS_B_ALERT.logId ?? null,
+    lastWitnessedSize: WITNESS_B_ALERT.lastWitnessedSize ?? null,
+    lastRootHash: WITNESS_B_ALERT.lastRootHash ?? null,
+    reason: WITNESS_B_ALERT.alert.reason ?? null,
+    detail: WITNESS_B_ALERT.alert.detail ?? null,
+    at: WITNESS_B_ALERT.alert.at ?? null,
+    acknowledgedAt: null,
+    acknowledgedBy: null,
+    consecutiveFailures: WITNESS_B_ALERT.consecutiveFailures,
+  },
+  {
+    authority: 'registry-d.playground.local',
+    logId: 'registry-d.playground.local/log/v1',
+    lastWitnessedSize: 612,
+    lastRootHash: 'sha256:7a0e35c9d18b4f62e0a93d75c18b06f4a2e95d73c0b18a46f927e03d5c6b81a9',
+    reason: 'tree_size_regression',
+    detail: {
+      error: 'tree_size went backwards: 640 -> 612',
+      previous_tree_size: 640,
+      tree_size: 612,
+    },
+    at: iso(5400),
+    acknowledgedAt: null,
+    acknowledgedBy: null,
+    consecutiveFailures: 5,
+  },
+  {
+    // The acknowledged row — still ALERTED. Acknowledgement is a "someone has
+    // seen this" marker; upstream's `acknowledgeAlert` leaves `alerted = true`
+    // and only `advanceCursor` clears the condition. The worklist therefore
+    // renders this row, and its `State` cell is the one that reads
+    // "Acknowledged".
+    //
+    // `acknowledgedBy` is a TRUNCATED KEY FINGERPRINT, not an email. The value
+    // is `req.actorId ?? 'admin'`, and on the API-key path `actorId` is
+    // `token.slice(0, 8) + '...'`. An address here would render as
+    // "key ops@playground.local" — an identity claim the control plane never
+    // made, and exactly what the component's docblock exists to prevent.
+    authority: 'registry-e.playground.local',
+    logId: 'registry-e.playground.local/log/v1',
+    lastWitnessedSize: 27310,
+    lastRootHash: 'sha256:e93b7c04a5f18d62b0c4e7a39f15d802c6b3a8e04d7f259c1b60a3e8d472f915',
+    reason: 'checkpoint_signature_invalid',
+    detail: {
+      error: 'checkpoint signature did not verify under any key in the registry JWKS',
+      key_id: 'reg-e-2026-03',
+    },
+    at: iso(12000),
+    acknowledgedAt: iso(9000),
+    acknowledgedBy: 'ak_7f3c1...',
+    consecutiveFailures: 0,
+  },
+  {
+    authority: 'registry-g.playground.local',
+    logId: 'registry-g.playground.local/log/v1',
+    lastWitnessedSize: 155,
+    lastRootHash: 'sha256:1d6f92b7e3c0a845d29b7f0c3e6a18d54b0c7e29a3f68d10b5c2e947a06f3d81',
+    reason: 'checkpoint_invalid',
+    detail: {
+      error: 'checkpoint body failed schema validation: missing tree_size',
+    },
+    at: iso(30000),
+    acknowledgedAt: null,
+    acknowledgedBy: null,
+    consecutiveFailures: 9,
+  },
+];
 
 export const MOCK_SEARCH_HITS: SearchHit[] = [
   ...MOCK_CONTEXTS.map((c) => ({

@@ -300,6 +300,14 @@ export interface CpDashboardOverview {
   // `DashboardRevocation` re-export in this change — a declaration nothing
   // reads is a claim nothing checks. Add them WITH the surface that consumes
   // them, and a fixture that pins them.
+  //
+  // PR M (#84, the transparency-log alert worklist) does NOT change this:
+  // `log-witness-alerts.tsx` and `useLogWitnessAlerts` read a dedicated
+  // `LogWitnessAlert`/`LogWitnessAlertRow`/`LogWitnessAlertsResponse` surface
+  // (below), not `CpDashboardOverview.logWitness` — PR M's own pre-merge copy
+  // declared this field plus `totalRetracted`/`totalContextsLive`, but nothing
+  // on that branch ever read any of the three. Dropped here rather than
+  // resurrected, per the same standard this comment already states.
 }
 
 /** The three RFC-ACDP-0014 §7 compromise-boundary counters, window-scoped. */
@@ -724,11 +732,38 @@ export interface LogWitnessCheckpoint {
   historicalWitnessedCount?: number | null;
 }
 
+/**
+ * Why the control plane raised a transparency-log alert — the six values
+ * `checkpoint-witness.service.ts` can pass to `raiseAlert`.
+ *
+ * **The vocabulary is open**, the same case as `key_revocation_status` above:
+ * the column is `varchar(64)` with no DB CHECK constraint, so a newer control
+ * plane can emit a seventh reason. `(string & {})` keeps the six as
+ * autocompletable literals without collapsing the union to `string`, and the
+ * UI must render an unrecognised value rather than drop the row — a witness
+ * alert we cannot name is still a witness alert.
+ *
+ * These are the wire values, not the prose names #84's description uses for
+ * them, and not the controller's own summary text.
+ */
+export type WitnessAlertReason =
+  | 'checkpoint_invalid'
+  | 'checkpoint_signature_invalid'
+  | 'tree_size_regression'
+  | 'root_mismatch'
+  | 'consistency_failed'
+  | 'log_id_changed'
+  | (string & {});
+
 /** Cursor-level alert state: root rewrites, split views, tree-size regressions. */
 export interface LogWitnessAlert {
   alerted: boolean;
-  /** One of the upstream `WitnessAlertReason` enum values when alerted. */
-  reason?: string | null;
+  /**
+   * One of the upstream `WitnessAlertReason` values when alerted. Typed as
+   * that union rather than bare `string` since #84 introduced it — the comment
+   * asserted the coupling before the type expressed it.
+   */
+  reason?: WitnessAlertReason | null;
   /**
    * Structured jsonb, **not** a string — stringifying it yields
    * `[object Object]`. Every upstream `raiseAlert` call site puts the
@@ -751,6 +786,67 @@ export interface LogWitnessState {
   /** Newest-first, capped at 20 by the control plane. May be empty. */
   checkpoints: LogWitnessCheckpoint[];
   total: number;
+}
+
+/**
+ * One row of `GET control-plane /registries/log-witness/alerts` — the durable
+ * alert worklist (#84).
+ *
+ * One row per ALERTED AUTHORITY, not per alert: the table's primary key is
+ * `(tenantId, registryAuthority)`, so an authority holds at most one alert at
+ * a time and a new detection overwrites the previous one. There is no alert
+ * history here.
+ *
+ * Every field except `authority` and `consecutiveFailures` is nullable,
+ * because a row can exist from a failure path that never completed a witness
+ * cycle. `null` in `lastWitnessedSize` means no size was ever recorded, which
+ * is not the same as a size of 0 — the `typeof x === 'number'` rule from
+ * `CLAUDE.md` applies to every count here.
+ */
+export interface LogWitnessAlertRow {
+  authority: string;
+  logId: string | null;
+  lastWitnessedSize: number | null;
+  lastRootHash: string | null;
+  reason: WitnessAlertReason | null;
+  /**
+   * Structured jsonb, **not** a string. Same contract as `LogWitnessAlert`:
+   * the human-readable message is at `detail.error` and nothing else in the
+   * object is stable.
+   */
+  detail: Record<string, unknown> | null;
+  at: string | null;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  consecutiveFailures: number;
+}
+
+/**
+ * The worklist envelope. `total` is kept even though the endpoint has **no
+ * pagination at all** (no limit/offset/cursor), so `total === data.length`
+ * always holds today — the wire sends both, and deriving one from the other
+ * here would bake in an assumption the endpoint has not promised.
+ */
+export interface LogWitnessAlertsResponse {
+  data: LogWitnessAlertRow[];
+  total: number;
+}
+
+/**
+ * What `POST /registries/:authority/log-witness/ack` answers with (#84).
+ *
+ * `alerted` is on this response and is expected to stay **true** after a
+ * successful acknowledgement: upstream stamps `acknowledgedAt` and does not
+ * clear the alert. It is typed here rather than dropped precisely so that fact
+ * stays visible at the type level — a caller tempted to read the ack as "the
+ * alert is resolved now" has the field in front of it saying otherwise.
+ */
+export interface LogWitnessAckResult {
+  authority: string;
+  alerted: boolean;
+  reason: WitnessAlertReason | null;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
 }
 
 // ── Misc ──────────────────────────────────────────────────────────────
