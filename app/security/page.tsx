@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { TableScroll } from '@/components/ui/table-scroll';
 import { useRevocations, useRegistryJwks } from '@/lib/hooks/use-security';
 import { useRegistries } from '@/lib/hooks/use-registries';
+import { useDashboard } from '@/lib/hooks/use-dashboard';
 import {
   ADMIN_ROUTE_FORBIDDEN,
   errorDiagnostic,
@@ -163,6 +164,17 @@ function SigningKeys() {
  */
 function LogWitness() {
   const registries = useRegistries();
+  // Must precede both early returns below, unconditionally — a hook called
+  // only on the non-early-return path is a Rules-of-Hooks violation the
+  // moment `rows.length` crosses zero within one mounted instance (which it
+  // does the moment `useRegistries()` resolves).
+  //
+  // `'24h'` mirrors `app/trust/page.tsx`'s fixed-window `useTrust('24h')`:
+  // `features` is deployment-wide, not window-scoped
+  // (`lib/data/mock-data.ts`'s own comment: "NOT overridden per window"), so
+  // any window answers identically and a picker would scope nothing.
+  const dashboard = useDashboard('24h');
+  const quorumEnabled = dashboard.data?.features?.witnessQuorum;
   const rows = registries.data ?? [];
   if (registries.error) {
     return (
@@ -185,7 +197,7 @@ function LogWitness() {
       </div>
       <div className="grid-2">
         {rows.map((r) => (
-          <LogWitnessCard key={r.authority} authority={r.authority} />
+          <LogWitnessCard key={r.authority} authority={r.authority} quorumEnabled={quorumEnabled} />
         ))}
       </div>
     </>

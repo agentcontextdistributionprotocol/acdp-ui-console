@@ -3,17 +3,19 @@
 import { Activity, ExternalLink, ArrowRight } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Card, CardHeader, CardBody } from '@/components/ui/card';
+import { ErrorPanel } from '@/components/ui/error-panel';
 import { HealthChecks } from '@/components/observability/health-checks';
 import { MetricsPanel } from '@/components/observability/metrics-panel';
 import { useRuns } from '@/lib/hooks/use-runs';
 import { useScenarios } from '@/lib/hooks/use-scenarios';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
+import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { elapsed } from '@/lib/utils/format';
 import { C } from '@/lib/colors';
 
 export default function ObservabilityPage() {
   const jaegerUrl = usePreferencesStore((s) => s.jaegerUrl);
-  const { data: runsData } = useRuns({});
+  const { data: runsData, error: runsError } = useRuns({});
   const { data: scenarios } = useScenarios();
   const scenarioName = (id: string) => scenarios?.find((s) => s.id === id)?.name ?? id;
   const recent = (runsData?.data ?? []).slice(0, 5);
@@ -42,7 +44,16 @@ export default function ObservabilityPage() {
           <CardHeader title="Traces" sub="Jaeger UI" />
           <CardBody>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {recent.map((run) => (
+              {/* #140: a failed runs fetch used to leave `recent` silently `[]`,
+                  so this card rendered zero rows with no signal anything went
+                  wrong — only the unrelated Jaeger link below survived. */}
+              {runsError && (
+                <ErrorPanel
+                  message={operatorErrorMessage(runsError, 'Could not load recent runs')}
+                  details={errorDiagnostic(runsError)}
+                />
+              )}
+              {!runsError && recent.map((run) => (
                 <a
                   key={run.runId}
                   href={`${jaegerUrl}/search?tags=${encodeURIComponent(JSON.stringify({ 'run.id': run.runId }))}`}

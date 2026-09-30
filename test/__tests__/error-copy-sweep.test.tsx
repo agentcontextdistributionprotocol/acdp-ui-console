@@ -108,6 +108,7 @@ import ContextsPage from '@/app/contexts/page';
 import DashboardPage from '@/app/dashboard/page';
 import EventsPage from '@/app/events/page';
 import LineagePage from '@/app/lineage/page';
+import ObservabilityPage from '@/app/observability/page';
 import RegistriesPage from '@/app/registries/page';
 import RunsPage from '@/app/runs/page';
 import RunDetailPage from '@/app/runs/[runId]/page';
@@ -271,6 +272,22 @@ const SURFACES: { name: string; lead: string; mount: () => Promise<void> }[] = [
     mount: async () => {
       listCpRuns.mockRejectedValue(apiError());
       mount(<LineagePage />);
+    },
+  },
+  {
+    // #140: the Traces card used to destructure only `data` from `useRuns({})`,
+    // so a failed fetch silently rendered zero rows in its recent-runs list
+    // instead of the trio every other listed surface uses.
+    name: '/observability',
+    lead: 'Could not load recent runs',
+    mount: async () => {
+      listCpRuns.mockRejectedValue(apiError());
+      // MetricsPanel renders unconditionally on the same page; give its query
+      // something to resolve so a failure here is unambiguously the runs
+      // fetch, not React Query's own "query data cannot be undefined" error
+      // from an un-mocked getCpMetrics with no default implementation.
+      getCpMetrics.mockResolvedValue([]);
+      mount(<ObservabilityPage />);
     },
   },
   {

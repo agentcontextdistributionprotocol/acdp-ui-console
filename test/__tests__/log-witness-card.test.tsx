@@ -91,11 +91,11 @@ function state(cp: LogWitnessCheckpoint | null, over: Partial<LogWitnessState> =
   };
 }
 
-function renderCard() {
+function renderCard(quorumEnabled?: boolean) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <LogWitnessCard authority={AUTHORITY} />
+      <LogWitnessCard authority={AUTHORITY} quorumEnabled={quorumEnabled} />
     </QueryClientProvider>,
   );
 }
@@ -144,12 +144,35 @@ describe('LogWitnessCard — quorum disabled vs quorum failed', () => {
     // …and the omission is stated rather than silent, so an operator is not
     // left wondering whether the numbers failed to render.
     expect(el.textContent).toContain('Cosignature quorum not reported for this head.');
+    // …and, with `quorumEnabled` omitted (unknown), it must NOT claim the
+    // deployment-wide "disabled" wording #131 introduced.
+    expect(el.textContent).not.toContain('disabled for this deployment');
     // …and, because every other field here is free of the digit, the stronger
     // claim holds too: the card never invents a count of zero.
     expect(el.textContent).not.toContain('0');
     // Sanity that the card rendered at all — otherwise the two assertions
     // above would pass on an empty <div>.
     expect(rowValue(el, 'Checkpoint tree size')).toBe('1,234');
+  });
+
+  it('says quorum consumption is disabled for the deployment when features.witnessQuorum is false (#131)', async () => {
+    getLogWitness.mockResolvedValue(state(checkpoint()));
+    renderCard(false);
+    const el = await card();
+    expect(el.textContent).toContain('Cosignature quorum consumption is disabled for this deployment.');
+    expect(el.textContent).not.toContain('not reported for this head');
+  });
+
+  it('keeps "not reported" when the flag says quorum runs but this head still has none', async () => {
+    // `witnessQuorum: true` only means the DEPLOYMENT runs quorum consumption
+    // — it says nothing about this particular head, which is one of the
+    // other two indistinguishable-from-here causes `counted()`'s docblock
+    // names. Claiming "disabled" here would be false.
+    getLogWitness.mockResolvedValue(state(checkpoint()));
+    renderCard(true);
+    const el = await card();
+    expect(el.textContent).toContain('Cosignature quorum not reported for this head.');
+    expect(el.textContent).not.toContain('disabled for this deployment');
   });
 
   it('renders a counted zero as a FAILING quorum — the case a `?? 0` guard erases', async () => {

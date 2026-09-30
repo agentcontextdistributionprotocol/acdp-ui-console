@@ -29,6 +29,13 @@ import type { LogWitnessCheckpoint, LogWitnessAlert } from '@/lib/types';
  * `typeof` test, everywhere, with no shorthand. (The cursor's
  * `lastWitnessedSize` gets the same treatment for the same reason: a log with
  * a witnessed head of size 0 is a fact, not a blank.)
+ *
+ * Since #131, one of the three indistinguishable-from-here causes above CAN
+ * be named: `quorumEnabled === false` (from `CpDashboardOverview.features
+ * .witnessQuorum`, deployment-wide) means quorum consumption is confirmed
+ * off, not merely absent for this head. `true` or `undefined` — quorum runs
+ * but this head has none, or the flag itself is unknown — still cannot be
+ * told apart, so both keep the original "not reported" wording.
  */
 function counted(x: number | null | undefined): x is number {
   return typeof x === 'number';
@@ -121,7 +128,14 @@ function Row({ name, children }: { name: string; children: ReactNode }) {
  * (`registries.controller.ts`), so that message would send an operator to fix
  * something that was never the cause.
  */
-export function LogWitnessCard({ authority }: { authority: string }) {
+export function LogWitnessCard({
+  authority,
+  quorumEnabled,
+}: {
+  authority: string;
+  /** `CpDashboardOverview.features.witnessQuorum`, deployment-wide (#131). */
+  quorumEnabled?: boolean;
+}) {
   const witness = useLogWitness(authority);
   const notFound = witness.error instanceof ApiError && witness.error.isNotFound;
   if (notFound) return null;
@@ -220,11 +234,16 @@ export function LogWitnessCard({ authority }: { authority: string }) {
                   The quorum half. Replaced wholesale by a "not reported" line
                   when quorum consumption produced nothing for this head —
                   never rendered as `0 witnesses`, which would assert a check
-                  that was never run.
+                  that was never run. `quorumEnabled === false` names the one
+                  of the three possible causes this console can actually
+                  confirm (#131); `true`/`undefined` keep the original wording
+                  since they cannot be told apart from here.
                 */}
                 {!hasQuorumData(cp) && (
                   <div style={{ fontSize: 11, color: C.muted, paddingTop: 4 }}>
-                    Cosignature quorum not reported for this head.
+                    {quorumEnabled === false
+                      ? 'Cosignature quorum consumption is disabled for this deployment.'
+                      : 'Cosignature quorum not reported for this head.'}
                   </div>
                 )}
                 {hasQuorumData(cp) && (
