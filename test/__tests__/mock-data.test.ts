@@ -18,12 +18,18 @@ import {
   MOCK_ENROLLMENTS,
   MOCK_CAPABILITIES,
   MOCK_SDK_MATRIX,
+  MOCK_AGENTS,
   SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
 import * as MockData from '@/lib/data/mock-data';
 import { dashboardRevocationState } from '@/lib/utils/revocation';
 import { scenarioNumber } from '@/components/scenarios/scenario-card';
 import packageLock from '@/package-lock.json';
+import { profileCopyTable } from '../support/profile-copy-table';
+import {
+  REGISTRY_ADVERTISABLE_PROFILES,
+  NOT_ADVERTISABLE,
+} from '../support/advertisable-profiles';
 
 describe('mock scenarios', () => {
   it('covers the full catalog', () => {
@@ -643,55 +649,12 @@ describe('run-revoked-1: the RFC-ACDP-0014 fixture', () => {
 // deliberately about the CLASS of drift rather than this instance.
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * A literal mirror of `REGISTRY_ADVERTISABLE_PROFILES` from
- * `acdp-registry-rs/crates/acdp-registry-types/src/config.rs:332-340` — the set
- * `acdp-registry-server/src/main.rs:415-431` enforces at STARTUP, so a registry
- * advertising anything outside it does not run.
- *
- * Mirrored rather than imported on purpose. A cross-repo import is not
- * available here and would be wrong if it were: this repo must not take a
- * dependency on a Rust crate's source layout.
- *
- * BE PRECISE ABOUT WHAT THE MIRROR CAN AND CANNOT DETECT, because the first
- * version of this comment got it backwards. A hand-copied list has no coupling
- * to its source, so nothing here observes upstream at all. The two staleness
- * directions are not symmetric:
- *
- *   Upstream ADDS an eighth profile → the mirror is now STRICTER than reality.
- *     A fixture advertising the new id fails the subset check below. That is a
- *     false red, which is loud and self-explaining — annoying, not dangerous.
- *
- *   Upstream REMOVES or RENAMES one → the mirror is now MORE PERMISSIVE than
- *     reality. A fixture advertising the dead id passes here while a real
- *     registry refuses to boot on it — the exact defect #95 was. Nothing in
- *     this repo can see that happen. The length assertion below does not help:
- *     the removal changes a number upstream and no number here.
- *
- * So the guard that follows makes NO claim about upstream. What it does pin is
- * the local failure mode, which is the likely one: the cheapest way to make a
- * fixture pass the subset check is to add the invalid id to this mirror, and
- * `acdp-consumer`/`acdp-federated` are exactly the two values that would be
- * added. Widening the mirror is what it catches.
- *
- * The mitigation for the unguarded direction is not a test, it is provenance:
- * the file:line above is where to re-check, and upstream keeps ITS copy honest
- * with a conformance test (`registry_advertisable_profiles_matches_spec`) that
- * recomputes the set from the pinned spec's `registries/profiles.json`, so the
- * const cannot drift from the SPEC without upstream CI going red first. A
- * machine-readable list this repo could actually consume is requested in
- * `acdp-registry-rs#347`; until one exists, a mirror plus a citation is the
- * honest ceiling.
- */
-const REGISTRY_ADVERTISABLE_PROFILES = [
-  'acdp-registry-core',
-  'acdp-registry-discovery',
-  'acdp-registry-federated',
-  'acdp-registry-receipts',
-  'acdp-registry-head-receipts',
-  'acdp-registry-transparency-log',
-  'acdp-registry-lifecycle',
-];
+// `REGISTRY_ADVERTISABLE_PROFILES` and `NOT_ADVERTISABLE` are imported from
+// `test/support/advertisable-profiles.ts`, where the mirror's provenance and
+// the precise limits of what a hand-copy can detect are written out. Shared
+// because `registry-card-profiles.test.tsx` makes a DIFFERENT claim about the
+// same seven strings, and two copies of a mirror can disagree.
+
 
 /**
  * The acdp version each profile first appears in, for the version-coherence
@@ -721,14 +684,28 @@ function atLeast(actual: string, required: string): boolean {
 }
 
 describe('demo registry profiles are ones a real registry would start with', () => {
-  it('cannot be widened to launder an invalid id through the subset check', () => {
-    // NOT a staleness guard — see the docblock; a local literal compared to a
-    // local number observes nothing upstream, and the first version of this test
-    // claimed otherwise. What it guards is the local shortcut: the cheapest way
-    // to make an invalid fixture pass the subset check below is to add the id
-    // here, and these are the two ids that would be added.
-    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-consumer');
-    expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain('acdp-federated');
+  it('cannot be widened to launder any id a real registry refuses to boot with', () => {
+    // NOT a staleness guard — see the mirror's own docblock; a local literal
+    // compared to a local number observes nothing upstream, and the first
+    // version of this test claimed otherwise. What it guards is the local
+    // shortcut: the cheapest way to make an invalid fixture pass the subset
+    // check below is to add the id here, and `NOT_ADVERTISABLE` is the list of
+    // ids that would be added.
+    //
+    // The title named "the two" while the list held THREE — it was written
+    // before `acdp-log-witness` joined, and a title that enumerates a set it
+    // does not own goes stale silently. It now names the PROPERTY, which is
+    // what the loop below actually delivers: whatever `NOT_ADVERTISABLE` holds,
+    // none of it may be laundered in here.
+    //
+    // Still narrower than "no invalid id can get through", and deliberately so.
+    // Round 2 of the gate measured the wider claim and found it false:
+    // inventing a WELL-FORMED id and adding it to the mirror, the fixture,
+    // `PROFILE_MIN_VERSION` and `PROFILE_INFO` together — four coordinated
+    // edits — passes everything. Widening the mirror ALONE is caught; a
+    // four-file conspiracy is not, and no test in this repo claims to catch
+    // one.
+    for (const id of NOT_ADVERTISABLE) expect(REGISTRY_ADVERTISABLE_PROFILES).not.toContain(id);
     // Every entry must look like a registry profile id. `acdp-consumer` fails
     // this on its own shape, which is the property that generalises: a consumer
     // or agent profile smuggled in later is caught without being named.
@@ -753,6 +730,12 @@ describe('demo registry profiles are ones a real registry would start with', () 
     // Not a taste call. `acdp-playground/config/registry-b.toml:8` is
     // `["acdp-registry-core", "acdp-registry-discovery"]`, and this demo depicts
     // that playground — so the set is copied, and copied in order.
+    //
+    // TWO, not three. Issue #95's parenthetical says registry-b is configured
+    // with `acdp-registry-federated` as well. It is not — re-read at
+    // `registry-b.toml:8` while implementing this, and the line has exactly the
+    // two ids above. The issue is wrong on that detail and this fixture follows
+    // the config, so nobody re-litigates it from the issue text later.
     expect(MOCK_CAPABILITIES.b.profiles).toEqual([
       'acdp-registry-core',
       'acdp-registry-discovery',
@@ -784,9 +767,14 @@ describe('demo registry profiles are ones a real registry would start with', () 
     }
   });
 
-  it('records a minimum version for every advertisable profile', () => {
-    // Otherwise the guard above silently skips any profile the table forgot.
-    for (const p of REGISTRY_ADVERTISABLE_PROFILES) expect(PROFILE_MIN_VERSION[p]).toBeDefined();
+  it('records a minimum version for EXACTLY the advertisable profiles', () => {
+    // Both directions. "Every advertisable profile has an entry" alone leaves
+    // the table widenable: adding `'acdp-consumer': '0.1.0'` was green, which is
+    // the same two-copies-that-may-disagree shape `advertisable-profiles.ts`
+    // was created to remove — this was the last un-pinned copy of the seven.
+    expect(Object.keys(PROFILE_MIN_VERSION).sort()).toEqual(
+      [...REGISTRY_ADVERTISABLE_PROFILES].sort(),
+    );
   });
 
   it('agrees with the version each profile chip already names on screen', () => {
@@ -797,13 +785,21 @@ describe('demo registry profiles are ones a real registry would start with', () 
     //
     // `PROFILE_INFO` in `registry-card.tsx` puts the version in the operator's
     // tooltip — "(RFC-ACDP-0010, acdp 0.2.0)" — so the two files are now held to
-    // each other and neither can be edited alone. Source text rather than an
-    // import because `PROFILE_INFO` is private to the component, and widening a
-    // component's public API to let a test read a constant is the wrong trade.
-    const src = readFileSync(join(process.cwd(), 'components/registries/registry-card.tsx'), 'utf8');
+    // each other and neither can be edited alone.
+    //
+    // Read with the TYPESCRIPT COMPILER, not by importing the object and not by
+    // regex. An early version ran an unanchored, first-match-wins regex over the
+    // RAW file, so a docblock line reading `'acdp-registry-receipts': { title:
+    // 'baseline (acdp 0.1.0)' }` shadowed the real entry and let the table be
+    // lowered to match. The version after that imported the object, which
+    // required exporting it — and the export let any module mutate the table at
+    // module scope, invisible to a guard in a different test file because Vitest
+    // isolates module graphs. `profileCopyTable()` needs neither: it parses the
+    // file and fails CLOSED on anything it cannot account for.
+    const { entries: copy } = profileCopyTable();
     for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
-      const entry = new RegExp(`'${p}':\\s*\\{([\\s\\S]*?)\\}`).exec(src)?.[1];
-      expect(entry, `no PROFILE_INFO entry for ${p}`).toBeDefined();
+      const entry = copy.get(p);
+      expect(entry, `no profile copy entry for ${p}`).toBeDefined();
       // Baseline profiles carry no version marker because they ARE the 0.1.0
       // baseline; anything later says so in the copy. The default is asserted,
       // not assumed — a marker appearing on a baseline profile is drift too.
@@ -811,6 +807,38 @@ describe('demo registry profiles are ones a real registry would start with', () 
       expect(named, `${p}: tooltip says acdp ${named}, PROFILE_MIN_VERSION says ${PROFILE_MIN_VERSION[p]}`).toBe(
         PROFILE_MIN_VERSION[p],
       );
+    }
+  });
+
+  it('each tooltip names the RFC the pinned spec assigns that profile', () => {
+    // The version half of every tooltip was cross-checked; the RFC half was
+    // checked only against /RFC-ACDP-\d{4}/, so rewriting `RFC-ACDP-0012` to
+    // `RFC-ACDP-0099` in operator-facing copy left the whole suite green.
+    //
+    // `acdp-spec-pinned/registries/profiles.md` carries the exact mapping, and
+    // the three baseline profiles genuinely share RFC-ACDP-0001 §9.1 — the
+    // later ones cite their own RFC first and RFC-ACDP-0001 §9.1 second, and
+    // the tooltip names the FIRST, which is the one that describes the feature.
+    const PROFILE_RFC: Record<string, string> = {
+      'acdp-registry-core': 'RFC-ACDP-0001',
+      'acdp-registry-discovery': 'RFC-ACDP-0001',
+      'acdp-registry-federated': 'RFC-ACDP-0001',
+      'acdp-registry-receipts': 'RFC-ACDP-0010',
+      'acdp-registry-head-receipts': 'RFC-ACDP-0011',
+      'acdp-registry-transparency-log': 'RFC-ACDP-0012',
+      'acdp-registry-lifecycle': 'RFC-ACDP-0013',
+    };
+    // Pinned both ways, so the table cannot be silently narrowed to whatever
+    // the tooltips happen to say.
+    expect(new Set(Object.keys(PROFILE_RFC))).toEqual(new Set(REGISTRY_ADVERTISABLE_PROFILES));
+
+    const { entries: copy } = profileCopyTable();
+    for (const p of REGISTRY_ADVERTISABLE_PROFILES) {
+      const title = copy.get(p);
+      expect(title, `no copy entry for ${p}`).toBeDefined();
+      const named = /(RFC-ACDP-\d{4})/.exec(title!)?.[1];
+      expect(named, `${p}: tooltip names no RFC at all`).toBeDefined();
+      expect(named, `${p}: tooltip says ${named}, spec says ${PROFILE_RFC[p]}`).toBe(PROFILE_RFC[p]);
     }
   });
 
@@ -1097,7 +1125,9 @@ describe('the receipt-bearing contexts and the events describing them share a cl
 
   it.each(ON_RECEIPT_CLOCK)('$name: every event about it is within a day of that clock', ({ ctxId, receiptTs }) => {
     // THE GATING ASSERTION. Fails on `iso(140)` / `iso(110)` / `iso(80)`, which
-    // are ~81 days away from the receipt.
+    // sit weeks away from the receipt. (Deliberately not a figure: the gap is
+    // wall-clock-dependent and grows every day, so any number written here is
+    // wrong tomorrow. It was '81 days' and is over 83 now.)
     const referencing = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ctxId);
     expect(referencing.length).toBeGreaterThan(0);
     for (const e of referencing) {
@@ -1292,13 +1322,13 @@ describe('ev-1 and ev-2 are a KNOWN, DOCUMENTED exception', () => {
   //
   // `arcticSource` is `LIVE_LINEAGE.nodes[0]`: the LIVE run's own first node.
   // The live run is `status: 'running'`, started seconds ago. So a run happening
-  // now published a context whose signed `created_at` is 81 days old, and that
+  // now published a context whose signed `created_at` is months old, and that
   // contradiction is not in the events feed — it is in the shape of the dataset.
   //
   // Moving ev-1/ev-2 onto the fixture clock would make the events feed agree
   // with the context card while leaving the live run's OWN step timeline
   // (`MOCK_RUN_EVENTS`) contradicting both: a run that started 24 seconds ago
-  // with steps dated 81 days back. That trades one visible contradiction for a
+  // with steps dated just as far back. That trades one visible contradiction for a
   // subtler one, which is the defect class this phase exists to remove.
   //
   // The honest fix is to DECOUPLE — the live run should publish a context with
@@ -1327,5 +1357,210 @@ describe('ev-1 and ev-2 are a KNOWN, DOCUMENTED exception', () => {
     const arcticReceipt = Date.parse(MockCrypto.MOCK_CRYPTO.arcticSource.registry_receipt.created_at);
     const ev1 = Date.parse(MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-1')!.eventTs);
     expect(Math.abs(ev1 - arcticReceipt)).toBeGreaterThan(DAY_MS);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// An agent's summary row agrees with the agent's own events.
+//
+// The gate on the phase above found `MOCK_AGENTS[DID_KEY]` still carrying
+// `iso(140)` — the value ev-7 had BEFORE this phase moved it onto the receipt
+// clock. `/agents` renders `First seen` / `Last active` directly above that
+// agent's RECENT ACTIVITY list (`app/agents/page.tsx:88-89` and `:111`), so the
+// card claimed the agent was last active two minutes ago immediately above its
+// only recorded activity, dated ~83 days back. That is symptom (1) of #85 —
+// one surface contradicting another about the same fact — created by the fix
+// for symptom (2).
+//
+// The lesson from this phase's earlier gate rounds is that the guard has to
+// cover the CLASS, not the instance: moving ANY event can strand the agent row
+// keyed to it, in either direction. So this derives both ends from the feed
+// rather than pinning literals. Run against the pre-fix fixture it fails on
+// three rows, only one of which was the reported one:
+//
+//   DID_KEY  — lastSeen ~83 days AFTER its only event    (the gate's finding)
+//   DID_SOLO — lastSeen 30s BEFORE its latest event       (this phase's ev-10
+//              move; missed by the gate, same defect, same diff)
+//   DID_B    — lastSeen 18s BEFORE its latest event       (pre-existing)
+//
+// `contextCount` is deliberately NOT asserted: it is a registry-wide total, so
+// it neither equals nor bounds the number of demo events.
+// ══════════════════════════════════════════════════════════════════════
+describe('every agent row agrees with that agent’s own event feed', () => {
+  /**
+   * The same selection `listCpEvents({ agentId })` makes — SUBSTRING, not
+   * equality (`lib/api/client.ts`: `e.agentId.includes(filter.agentId!)`).
+   * Mirrored rather than approximated: an earlier version of this helper used
+   * `===` under a comment claiming it was "exactly" the client's filter, which
+   * happened to select the same rows only because no DID in `MOCK_AGENTS` is a
+   * substring of another event's `agentId`. That is a property of today's
+   * fixture, not of the code, so the helper now does what the client does.
+   */
+  function eventsOf(did: string) {
+    return MOCK_CONTEXT_EVENTS.filter((e) => e.agentId.includes(did)).map((e) => ({
+      id: e.id,
+      ts: Date.parse(e.eventTs),
+    }));
+  }
+
+  const WITH_EVENTS = MOCK_AGENTS.filter((a) => eventsOf(a.agentDid).length > 0);
+
+  it('covers most of the roster, so the per-agent checks are not vacuous', () => {
+    // If a rename silently emptied every filter, the `it.each` below would pass
+    // by iterating over nothing. Measured: 4 of 4 rows carry at least one event.
+    expect(MOCK_AGENTS.length).toBeGreaterThanOrEqual(4);
+    expect(WITH_EVENTS.length).toBe(MOCK_AGENTS.length);
+  });
+
+  it.each(WITH_EVENTS.map((a) => [a.agentDid, a] as const))(
+    '%s: firstSeen is at or before its earliest event, lastSeen IS its latest',
+    (_did, agent) => {
+      const evs = eventsOf(agent.agentDid);
+      const earliest = Math.min(...evs.map((e) => e.ts));
+      const latest = Math.max(...evs.map((e) => e.ts));
+      const ids = evs.map((e) => e.id).join(', ');
+
+      // `firstSeen` keeps a one-sided bound. It legitimately predates the feed:
+      // DID_A has been seen for two days and publishes 12 contexts, of which
+      // the demo feed carries one, so equality would be wrong here.
+      expect(
+        Date.parse(agent.firstSeen),
+        `firstSeen postdates ${agent.agentDid}'s earliest event (${ids})`,
+      ).toBeLessThanOrEqual(earliest);
+
+      // `lastSeen` is pinned to EQUALITY, not a floor. A floor is what the
+      // round-3 gate broke: moving an event BACKWARDS leaves the row ahead of
+      // it and still passes, so `/agents` can render "Last active 8 s ago"
+      // above a ten-minute-old activity list — the same contradiction, pointed
+      // the other way. The floor also made the commit message's claim ("moving
+      // any event carries the agent row with it") false in one direction.
+      //
+      // Equality is defensible where the `firstSeen` bound is not, because the
+      // feed is the agent's RECENT activity in full: `listCpEvents` returns
+      // every event this fixture has for the DID, newest first, and that newest
+      // row is what the card renders directly under "Last active". If a future
+      // fixture genuinely needs an agent last seen after its newest event, the
+      // card needs to say so first.
+      expect(
+        Date.parse(agent.lastSeen),
+        `lastSeen must equal ${agent.agentDid}'s newest event (${ids}) — the /agents card ` +
+          `renders them adjacently, so any gap in either direction reads as a contradiction`,
+      ).toBe(latest);
+    },
+  );
+
+  it('the ephemeral did:key agent is pinned to the attested publish, not to a literal', () => {
+    // The specific instance the gate caught, asserted against the same source
+    // the event derives from rather than against a copied timestamp — so the
+    // next move of the receipt clock carries this row with it instead of
+    // stranding it again.
+    const key = MOCK_AGENTS.find((a) => a.agentDid.startsWith('did:key:'));
+    expect(key, 'the did:key agent row is what this asserts about').toBeTruthy();
+    const ev7 = MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-7');
+    expect(ev7?.agentId).toBe(key!.agentDid);
+    expect(key!.firstSeen).toBe(ev7!.eventTs);
+    expect(key!.lastSeen).toBe(ev7!.eventTs);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// A retraction window may not swallow a signed instant about the same context.
+//
+// `MOCK_CRYPTO.attested` carries four frozen timestamps besides its receipt —
+// `lineage_head_receipt.as_of` (with `head_status: 'active'`), the log
+// checkpoint's `timestamp`, and two witness `witnessed_at` values — and
+// `context-detail.tsx` renders all of them on the SAME card as the lifecycle
+// strip. The first version of this phase moved the hold/restore pair onto the
+// receipt clock at +1800/+5400 s, which put every one of those instants inside
+// the retraction window: the card then read "head status: active, as of 12:34"
+// directly above "retracted 12:27 · republished 13:27". `lib/types.ts`
+// documents `head_status` as the registry's attestation of the head's status
+// AT `as_of`, so that is a flat contradiction about one context on one screen.
+//
+// The guard is derived, not listed: it walks every ISO-8601 string anywhere in
+// the crypto fixture, so a regenerated fixture that adds a fifth signed instant
+// is covered without anyone remembering to add it here. Signed material cannot
+// move, so the NARRATIVE is what has to stay clear of it.
+// ══════════════════════════════════════════════════════════════════════
+describe('no signed instant falls inside a retraction window for the same context', () => {
+  /** Every ISO-8601 timestamp anywhere in a fixture, with its path. */
+  function frozenInstants(node: unknown, path = ''): Array<{ path: string; ts: number }> {
+    if (typeof node === 'string') {
+      return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(node) ? [{ path, ts: Date.parse(node) }] : [];
+    }
+    if (node && typeof node === 'object') {
+      return Object.entries(node as Record<string, unknown>).flatMap(([k, v]) =>
+        frozenInstants(v, path ? `${path}.${k}` : k),
+      );
+    }
+    return [];
+  }
+
+  /** The [retracted, republished) windows the feed describes for one ctx_id. */
+  function retractionWindows(ctxId: string): Array<{ from: number; to: number }> {
+    const forCtx = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ctxId).sort(
+      (a, b) => Date.parse(a.eventTs) - Date.parse(b.eventTs),
+    );
+    const out: Array<{ from: number; to: number }> = [];
+    let openedAt: number | null = null;
+    for (const e of forCtx) {
+      if (e.eventType === 'context_retracted') openedAt = Date.parse(e.eventTs);
+      else if (e.eventType === 'context_republished' && openedAt !== null) {
+        out.push({ from: openedAt, to: Date.parse(e.eventTs) });
+        openedAt = null;
+      }
+    }
+    // A hold never lifted stays open to the end of time.
+    if (openedAt !== null) out.push({ from: openedAt, to: Number.POSITIVE_INFINITY });
+    return out;
+  }
+
+  const CASES = RECEIPT_BEARING.map((r) => {
+    const entry = (MockCrypto.MOCK_CRYPTO as Record<string, unknown>)[r.name];
+    return { name: r.name, ctxId: r.ctxId, windows: retractionWindows(r.ctxId), entry };
+  });
+
+  it('there is at least one receipt-bearing context that actually gets retracted', () => {
+    // Otherwise every case below iterates over an empty window list and the
+    // whole describe asserts nothing.
+    const withWindows = CASES.filter((c) => c.windows.length > 0);
+    expect(withWindows.length).toBeGreaterThanOrEqual(1);
+    // …and that context has signed material to collide with.
+    for (const c of withWindows) {
+      expect(frozenInstants(c.entry).length, c.name).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it.each(CASES.map((c) => [c.name, c] as const))(
+    '%s: every signed timestamp sits outside every retraction window',
+    (_name, c) => {
+      for (const w of c.windows) {
+        for (const f of frozenInstants(c.entry)) {
+          // `receipt.created_at` is the publish instant itself and is expected
+          // to precede the window; the assertion is simply that nothing lands
+          // strictly inside it.
+          const inside = f.ts > w.from && f.ts < w.to;
+          expect(
+            inside,
+            `${c.name}.${f.path} (${new Date(f.ts).toISOString()}) is inside the retraction window ` +
+              `${new Date(w.from).toISOString()} → ${new Date(w.to).toISOString()} — the detail card ` +
+              `renders both, so one of them is a lie`,
+          ).toBe(false);
+        }
+      }
+    },
+  );
+
+  it('the attested head receipt specifically attests ACTIVE, which is what makes the overlap a contradiction', () => {
+    // If `head_status` were ever anything else, the guard above would still be
+    // right but for a different reason. Pinned so the rationale stays true.
+    const lhr = (MockCrypto.MOCK_CRYPTO.attested as Record<string, unknown>)
+      .lineage_head_receipt as { as_of: string; head_status: string } | undefined;
+    expect(lhr).toBeTruthy();
+    expect(lhr!.head_status).toBe('active');
+    const asOf = Date.parse(lhr!.as_of);
+    const windows = retractionWindows(ATTESTED_CTX);
+    expect(windows.length).toBeGreaterThanOrEqual(1);
+    for (const w of windows) expect(asOf < w.from || asOf >= w.to).toBe(true);
   });
 });

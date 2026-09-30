@@ -32,6 +32,8 @@ import {
   TRUST_VIOLATIONS_SUB,
   TRUST_VIOLATIONS_COLUMNS,
   TRUST_VIOLATIONS_TITLE,
+  TRUST_VIOLATIONS_CAPTION,
+  TRUST_VIOLATIONS_TABLE_SCROLL_LABEL,
   expectedTrustViolationsBlocks,
   expectedTrustViolationsTableBlocks,
   normalize,
@@ -770,11 +772,16 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       table,
       'the violations card renders neither an empty state nor a table — this guard lost its subject',
     ).toBeTruthy();
+    // The `sr-only` caption TableScroll requires precedes the header row in
+    // document order — a block like any other: dropped or reworded, this
+    // guard is the only thing that notices, since it is invisible on screen.
+    const caption = table!.querySelector<HTMLElement>('caption');
+    expect(caption, 'the violations table renders no caption — TableScroll requires one').toBeTruthy();
     // Every header and every cell, in document order. A cell is a block: a
     // finding rewritten, a column added, a row that should not be there and a
     // row missing all change this list.
     const cells = [...table!.querySelectorAll<HTMLElement>('th, td')];
-    return [...head, ...cells].map((n) => normalize(n.textContent));
+    return [...head, caption!, ...cells].map((n) => normalize(n.textContent));
   }
 
   /**
@@ -1288,7 +1295,8 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       return [...head, ...parts];
     }
     const table = card.querySelector<HTMLElement>('table.data-table');
-    return [...head, ...(table ? [...table.querySelectorAll<HTMLElement>('th, td')] : [])];
+    const caption = table?.querySelector<HTMLElement>('caption');
+    return [...head, ...(caption ? [caption] : []), ...(table ? [...table.querySelectorAll<HTMLElement>('th, td')] : [])];
   }
 
   /**
@@ -1310,8 +1318,17 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
    *
    * `allowed` is the announced set for this render. It is a parameter and not a
    * constant because `KpiCard` mirrors its `hint` into a `title`; the violations
-   * card renders no hint, so every caller here passes `[]` and a LOST
-   * announcement is a defect too.
+   * card renders no hint, so a LOST announcement is a defect too.
+   *
+   * Its default is DERIVED from `expected` rather than hand-passed at each call
+   * site: `TableScroll` puts a real `aria-label` on the table state's wrapper —
+   * an attribute, so `announcedIn()` sees it and a block-only `expected` array
+   * does not — and `expected` already says unambiguously which state this
+   * render is in, since only `expectedTrustViolationsTableBlocks` includes
+   * `TRUST_VIOLATIONS_CAPTION`. Deriving it here means the ~15 call sites below
+   * cannot individually forget the label the way a hand-typed `allowed` at each
+   * one could; a call that overrides it explicitly still can, for the one case
+   * that needs a different announced set.
    *
    * ROUND 10: there are FOUR halves now — the fourth is reachability, and it
    * was missing from both revocation surfaces. Rather than write the number
@@ -1337,7 +1354,9 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     card: HTMLElement,
     expected: string[],
     label?: string,
-    allowed: readonly string[] = [],
+    allowed: readonly string[] = expected.includes(TRUST_VIOLATIONS_CAPTION)
+      ? [TRUST_VIOLATIONS_TABLE_SCROLL_LABEL]
+      : [],
   ) {
     expectBlocksPinned(card, expected, label);
     expectNothingOutside(card, expected, label);
@@ -1613,7 +1632,7 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
       ],
     });
     expectPinnedViolations(card, expected, 'table state');
-    expectNothingAnnounced(card, [], 'violations table');
+    expectNothingAnnounced(card, [TRUST_VIOLATIONS_TABLE_SCROLL_LABEL], 'violations table');
     // Anti-vacuity on the column table itself: emptying it would make the
     // header half of every expectation above disappear silently.
     expect(TRUST_VIOLATIONS_COLUMNS.length, 'the column table emptied out').toBe(5);

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { useRevocations, useRegistryJwks } from '@/lib/hooks/use-security';
 import { useRegistries } from '@/lib/hooks/use-registries';
 import {
@@ -77,28 +78,31 @@ function RevocationFeed() {
           <EmptyState title="No revocations recorded" />
         )}
         {entries.length > 0 && (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Subject</th>
-                <th>Issuer</th>
-                <th>JTI</th>
-                <th>Revoked</th>
-                <th>Original expiry</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((e) => (
-                <tr key={e.jti}>
-                  <td className="did">{formatAgentDid(e.sub)}</td>
-                  <td>{shortAuthority(e.iss)}</td>
-                  <td className="did">{e.jti}</td>
-                  <td>{timeAgo(e.revoked_at_ms)}</td>
-                  <td style={{ color: C.muted }}>{clockTime(e.exp * 1000)}</td>
+          <TableScroll label="Revocation feed">
+            <table className="data-table">
+              <caption className="sr-only">Revoked credentials: subject, issuer, JTI, revoked and original expiry</caption>
+              <thead>
+                <tr>
+                  <th>Subject</th>
+                  <th>Issuer</th>
+                  <th>JTI</th>
+                  <th>Revoked</th>
+                  <th>Original expiry</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {entries.map((e) => (
+                  <tr key={e.jti}>
+                    <td className="did">{formatAgentDid(e.sub)}</td>
+                    <td>{shortAuthority(e.iss)}</td>
+                    <td className="did">{e.jti}</td>
+                    <td>{timeAgo(e.revoked_at_ms)}</td>
+                    <td style={{ color: C.muted }}>{clockTime(e.exp * 1000)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
         {revs.hasNextPage && (
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: 12 }}>

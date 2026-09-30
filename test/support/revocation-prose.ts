@@ -582,6 +582,31 @@ export const TRUST_VIOLATIONS_TITLE = 'Trust violations';
  */
 export const TRUST_VIOLATIONS_COLUMNS = ['Run', 'Ctx ID', 'Finding', 'Detail', 'When'] as const;
 
+/** `['Run', 'Ctx ID', 'When']` → `'run, ctx id and when'`. */
+function lowerCommaAnd(items: readonly string[]): string {
+  const lower = items.map((s) => s.toLowerCase());
+  if (lower.length <= 1) return lower.join('');
+  return `${lower.slice(0, -1).join(', ')} and ${lower[lower.length - 1]}`;
+}
+
+/**
+ * The `label` prop `app/trust/page.tsx:254` passes to `TableScroll`, which
+ * renders it as `aria-label` on the focusable `role="group"` wrapper — an
+ * attribute, not a block, so it shows up in `announcedIn()` rather than
+ * `violationsBlocks()`. The `<caption>` one line below shares this same text
+ * as its own opening words, so both are derived from one constant here rather
+ * than typed independently twice.
+ */
+export const TRUST_VIOLATIONS_TABLE_SCROLL_LABEL = 'Trust findings';
+
+/**
+ * The `sr-only` `<caption>` `TableScroll`'s wrapped table renders
+ * (`app/trust/page.tsx:256`) — derived from `TRUST_VIOLATIONS_COLUMNS` rather
+ * than typed a second time, so the two cannot silently disagree about which
+ * columns exist.
+ */
+export const TRUST_VIOLATIONS_CAPTION = `${TRUST_VIOLATIONS_TABLE_SCROLL_LABEL}: ${lowerCommaAnd(TRUST_VIOLATIONS_COLUMNS)}`;
+
 /**
  * The violations subtitle, composed exactly as the page composes it.
  *
@@ -635,6 +660,7 @@ export function expectedTrustViolationsTableBlocks(opts: {
   return [
     TRUST_VIOLATIONS_TITLE,
     opts.sub,
+    TRUST_VIOLATIONS_CAPTION,
     ...TRUST_VIOLATIONS_COLUMNS,
     ...opts.rows.flat(),
   ].map(normalize);

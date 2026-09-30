@@ -82,8 +82,18 @@ function ByRun({ demoMode }: { demoMode: boolean }) {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <select className="form-input" style={{ width: 320 }} value={selectedRunId ?? ''} onChange={(e) => setRunId(e.target.value)}>
+      {/* Not a table, but the same overflow defect (#93) for the same reason: a
+          fixed 320px child in a non-wrapping flex row cannot shrink, so at phone
+          width it pushed `.content` sideways exactly as the tables did.
+          `maxWidth: '100%'` lets it shrink instead of overflowing; `flexWrap`
+          covers the case where a sibling is added later. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <select
+          className="form-input"
+          style={{ width: 320, maxWidth: '100%' }}
+          value={selectedRunId ?? ''}
+          onChange={(e) => setRunId(e.target.value)}
+        >
           {runs.map((r) => (
             <option key={r.runId} value={r.runId}>
               {scenarioName(r.scenarioId)} · {r.runId}
@@ -136,11 +146,19 @@ function ByLineage({ demoMode }: { demoMode: boolean }) {
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+      {/* Same defect as the run picker above, and it was missed on the first
+          pass. `flex: 1` is `1 1 0%`, but a flex item's `min-width` is `auto`,
+          which for a text input resolves to the intrinsic width of its default
+          `size=20` — roughly 180px that it will NOT give up. Add the fixed
+          130px select and the button and the row cannot fit 400px, so it
+          pushed `.content` sideways. `minWidth: 0` is what actually lets the
+          input shrink; `flexWrap` puts the button on its own line rather than
+          squeezing the input to nothing. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
         <input
           className="form-input"
           placeholder="lineage_id (e.g. lin-cashflow-001)"
-          style={{ flex: 1 }}
+          style={{ flex: 1, minWidth: 0 }}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && lookup()}
