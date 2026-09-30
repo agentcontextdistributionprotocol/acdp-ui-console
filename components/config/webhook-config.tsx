@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
-import { ErrorDetail } from '@/components/ui/error-panel';
+import { ErrorDetail, ErrorPanel } from '@/components/ui/error-panel';
 import { TableScroll } from '@/components/ui/table-scroll';
 import {
   listWebhooks,
@@ -31,7 +31,7 @@ export function WebhookConfig() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Editing>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['webhooks', demoMode],
     queryFn: () => listWebhooks(demoMode),
   });
@@ -58,6 +58,8 @@ export function WebhookConfig() {
         <div style={{ padding: 14 }}>
           <LoadingSkeleton rows={2} height={32} />
         </div>
+      ) : error ? (
+        <ErrorPanel message={operatorErrorMessage(error, 'Could not load webhooks')} details={errorDiagnostic(error)} />
       ) : data && data.length > 0 ? (
         <TableScroll label="Webhook subscriptions">
           <table className="data-table">

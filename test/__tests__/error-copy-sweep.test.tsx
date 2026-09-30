@@ -258,6 +258,20 @@ const SURFACES: { name: string; lead: string; mount: () => Promise<void> }[] = [
     },
   },
   {
+    // #128: `ByRun` used to destructure only `data`/`isLoading` from
+    // `useRuns({})`, so a failed runs fetch rendered "No runs with lineage
+    // yet" — a false all-clear indistinguishable from the genuinely-empty
+    // case. The run picker and DAG panel both need at least one run before
+    // either can render, so this is the one `/lineage` surface reachable
+    // with no other mock set up first.
+    name: '/lineage (runs list)',
+    lead: 'Could not load runs',
+    mount: async () => {
+      listCpRuns.mockRejectedValue(apiError());
+      mount(<LineagePage />);
+    },
+  },
+  {
     name: '/registries',
     lead: 'Could not load the observed registries',
     mount: async () => {

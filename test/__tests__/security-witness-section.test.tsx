@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
+import { createQueryClient } from '@/components/providers';
 
 // ══════════════════════════════════════════════════════════════════════
 // The witness section's wiring on /security, as distinct from one card.
@@ -27,6 +28,9 @@ const listLogWitnessAlerts =
     data: [],
     total: 0,
   }));
+const listRevocations = vi.fn<(...args: unknown[]) => Promise<{ entries: unknown[]; next_cursor: number | null }>>(
+  async () => ({ entries: [], next_cursor: null }),
+);
 vi.mock('@/lib/api/client', () => ({
   getLogWitness: (...a: unknown[]) => getLogWitness(...a),
   listRegistries: (...a: unknown[]) => listRegistries(...a),
@@ -35,7 +39,7 @@ vi.mock('@/lib/api/client', () => ({
   // otherwise-passing tests — a failure that is invisible because nothing here
   // asserts on it.
   listLogWitnessAlerts: (...a: unknown[]) => listLogWitnessAlerts(...a),
-  listRevocations: vi.fn(async () => ({ entries: [], next_cursor: null })),
+  listRevocations: (...a: unknown[]) => listRevocations(...a),
   getRegistryJwks: vi.fn(async () => ({ keys: [] })),
   getRegistryCapabilities: vi.fn(async () => ({})),
 }));
@@ -74,7 +78,11 @@ function notFound(authority: string) {
 }
 
 function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // The real client, not a hand-rolled `{retry: false}` stand-in — this file
+  // is where #128's offline-doesn't-pause fix is proven end to end, so it
+  // must build the client the app actually runs, `networkMode: 'always'`
+  // included.
+  const client = createQueryClient();
   return render(
     <QueryClientProvider client={client}>
       <SecurityPage />
@@ -89,6 +97,11 @@ function sectionHeading(): HTMLElement | null {
 
 afterEach(() => {
   vi.clearAllMocks();
+  // `onlineManager` is module-global state in @tanstack/react-query, not
+  // per-QueryClient — leaving it false here would leak into every later test
+  // in this file (and, in a suite that shares module state across files,
+  // beyond it).
+  onlineManager.setOnline(true);
 });
 
 describe('/security — transparency-log witness section', () => {
@@ -166,5 +179,29 @@ describe('/security — the witness alert worklist is actually mounted', () => {
     renderPage();
     await waitFor(() => expect(listLogWitnessAlerts).toHaveBeenCalled());
     expect(listLogWitnessAlerts.mock.calls.at(-1)?.[0]).toEqual({ includeAcknowledged: true });
+  });
+});
+
+describe('/security — an offline browser reads as unreachable, not as an all-clear (#128)', () => {
+  // `onlineManager` never reads `navigator.onLine` — it only reflects an
+  // `offline`/`online` browser EVENT, which is the ordinary case for a
+  // console left open across a network blip. Before this phase, React Query
+  // PAUSES a query while `onlineManager` reports offline instead of running
+  // it: `listRevocations` was never even called, the revocation feed sat on
+  // its loading/empty branch forever, and a genuinely down network read
+  // exactly like "no revocations recorded" — a false all-clear on a
+  // security surface. `createQueryClient()`'s `networkMode: 'always'` makes
+  // the fetch run anyway, so it can fail honestly instead of stalling.
+  it('renders the revocation feed as failed, not empty, when the browser is offline', async () => {
+    onlineManager.setOnline(false);
+    listRegistries.mockResolvedValue([]);
+    listRevocations.mockRejectedValue(new TypeError('Failed to fetch'));
+    renderPage();
+
+    await waitFor(() => expect(listRevocations).toHaveBeenCalled());
+    // The exact period-terminated sentence `operatorErrorMessage` renders for
+    // a non-`ApiError` throw (a bare `TypeError` from `fetch`, here).
+    await waitFor(() => expect(screen.queryByText('Could not load the revocation feed.')).not.toBeNull());
+    expect(screen.queryByText('No revocations recorded')).toBeNull();
   });
 });
