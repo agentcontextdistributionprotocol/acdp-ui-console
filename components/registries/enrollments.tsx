@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorDetail, ErrorPanel } from '@/components/ui/error-panel';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { listEnrollments, enrollRegistry } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import {
@@ -104,58 +105,61 @@ export function Enrollments() {
           />
         </div>
       ) : data && data.length > 0 ? (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Authority</th>
-              <th>Registry DID</th>
-              <th>Base URL</th>
-              <th>Tenant</th>
-              <th>Status</th>
-              <th>Updated</th>
-              <th aria-label="Actions" />
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((e) => (
-              <tr key={e.authority}>
-                <td>{shortAuthority(e.authority)}</td>
-                <td className="did" style={{ maxWidth: 200 }}>
-                  {e.registryDid ?? '—'}
-                </td>
-                <td className="did" style={{ maxWidth: 180 }}>
-                  {e.baseUrl ?? '—'}
-                </td>
-                <td>{e.tenantId}</td>
-                <td>
-                  <button
-                    className="pill"
-                    aria-pressed={e.enabled}
-                    style={{ width: 'fit-content' }}
-                    disabled={toggleMut.isPending}
-                    onClick={() => toggleMut.mutate(e)}
-                    title="Toggle ingest enabled"
-                  >
-                    <span className={`dot ${e.enabled ? 'ok' : 'err'}`} />
-                    {e.enabled ? 'enabled' : 'disabled'}
-                  </button>
-                </td>
-                <td style={{ color: 'var(--muted)' }}>{e.updatedAt ? timeAgo(e.updatedAt) : timeAgo(e.createdAt)}</td>
-                <td>
-                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                    <button
-                      className="icon-btn"
-                      aria-label={`Edit enrollment ${e.authority}`}
-                      onClick={() => setEditing({ mode: 'edit', enrollment: e })}
-                    >
-                      <Pencil size={13} aria-hidden />
-                    </button>
-                  </div>
-                </td>
+        <TableScroll label="Registry enrollments">
+          <table className="data-table">
+            <caption className="sr-only">Registry enrollments: authority, registry DID, base URL, tenant, status, updated and actions</caption>
+            <thead>
+              <tr>
+                <th>Authority</th>
+                <th>Registry DID</th>
+                <th>Base URL</th>
+                <th>Tenant</th>
+                <th>Status</th>
+                <th>Updated</th>
+                <th aria-label="Actions" />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((e) => (
+                <tr key={e.authority}>
+                  <td>{shortAuthority(e.authority)}</td>
+                  <td className="did" style={{ maxWidth: 200 }}>
+                    {e.registryDid ?? '—'}
+                  </td>
+                  <td className="did" style={{ maxWidth: 180 }}>
+                    {e.baseUrl ?? '—'}
+                  </td>
+                  <td>{e.tenantId}</td>
+                  <td>
+                    <button
+                      className="pill"
+                      aria-pressed={e.enabled}
+                      style={{ width: 'fit-content' }}
+                      disabled={toggleMut.isPending}
+                      onClick={() => toggleMut.mutate(e)}
+                      title="Toggle ingest enabled"
+                    >
+                      <span className={`dot ${e.enabled ? 'ok' : 'err'}`} />
+                      {e.enabled ? 'enabled' : 'disabled'}
+                    </button>
+                  </td>
+                  <td style={{ color: 'var(--muted)' }}>{e.updatedAt ? timeAgo(e.updatedAt) : timeAgo(e.createdAt)}</td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button
+                        className="icon-btn"
+                        aria-label={`Edit enrollment ${e.authority}`}
+                        onClick={() => setEditing({ mode: 'edit', enrollment: e })}
+                      >
+                        <Pencil size={13} aria-hidden />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
       ) : (
         <EmptyState
           title="No registries enrolled"

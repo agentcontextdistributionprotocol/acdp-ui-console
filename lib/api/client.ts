@@ -308,7 +308,18 @@ export function getMockRunEvents(runId: string): StepEvent[] {
 export async function getCpDashboard(window: string, demoMode: boolean): Promise<CpDashboardOverview> {
   // Per-window demo payload: `{...MOCK_DASHBOARD, window}` returned identical
   // figures for every window and an always-non-zero `keyRevocation`, which left
-  // the "revocation not reported" degrade path unreachable outside a test.
+  // every state of the revocation tile but `reported` unreachable outside a
+  // test. (It used to say "the revocation not reported degrade path" — that
+  // heuristic is gone; #97 replaced it with `dashboardRevocationState`.)
+  //
+  // This payload reaches exactly TWO of that function's four kinds by hand:
+  // `1h` -> `checked-clean`, every other window -> `reported`. `disabled` and
+  // `unknown` stay test-only, because both need a `features` object the demo
+  // dashboard deliberately does not vary per window. Said precisely because an
+  // earlier version of this comment claimed "the other three states", and
+  // someone trusting it would go looking for `disabled` in demo mode, fail to
+  // find it, and either think the arm is broken or "fix" the demo in the one
+  // way `mock-data.ts` explicitly forbids.
   if (demoMode) return delay(demoDashboardForWindow(window));
   return fetchJson<CpDashboardOverview>('control-plane', `/dashboard/overview?window=${encodeURIComponent(window)}`);
 }

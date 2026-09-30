@@ -1,6 +1,7 @@
 'use client';
 
 import { BadgeCheck, ShieldAlert } from 'lucide-react';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { formatCtxId } from '@/lib/utils/acdp';
 import {
   failClosedCount,
@@ -114,78 +115,84 @@ export function RunTrustPanel({ trust }: { trust: RunTrustSummary }) {
         )}
 
         {hasFlags && (
-          <table className="data-table" style={{ marginBottom: hasRevoked ? 14 : 0 }}>
-            <thead>
-              <tr>
-                <th>Ctx ID</th>
-                <th>Status</th>
-                <th>Discrepancies</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trust.flagged.map((f) => (
-                <tr key={f.eventId}>
-                  <td className="did">{f.ctxId ? formatCtxId(f.ctxId) : '—'}</td>
-                  <td>
-                    <span className="chip bad">{f.status}</span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {f.discrepancies.map((d, i) => (
-                        <span key={i} className="did" style={{ fontSize: 10.5, color: C.danger }}>
-                          {d}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
+          <TableScroll label="Context discrepancies for this run" style={{ marginBottom: hasRevoked ? 14 : 0 }}>
+            <table className="data-table">
+              <caption className="sr-only">Context discrepancies for this run: ctx id, status and discrepancies</caption>
+              <thead>
+                <tr>
+                  <th>Ctx ID</th>
+                  <th>Status</th>
+                  <th>Discrepancies</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {trust.flagged.map((f) => (
+                  <tr key={f.eventId}>
+                    <td className="did">{f.ctxId ? formatCtxId(f.ctxId) : '—'}</td>
+                    <td>
+                      <span className="chip bad">{f.status}</span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {f.discrepancies.map((d, i) => (
+                          <span key={i} className="did" style={{ fontSize: 10.5, color: C.danger }}>
+                            {d}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
 
         {hasRevoked && (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Ctx ID</th>
-                <th>Status</th>
-                <th>Boundary</th>
-                <th>Trust class</th>
-                <th>Sources</th>
-              </tr>
-            </thead>
-            <tbody>
-              {revoked.map((r) => (
-                <tr key={r.eventId}>
-                  <td className="did">{r.ctxId ? formatCtxId(r.ctxId) : '—'}</td>
-                  <td>
-                    <span className={revocationChipClass(r.status)}>{r.status}</span>
-                  </td>
-                  <td className="did" style={{ fontSize: 10.5 }}>
-                    {/* control-plane's `boundary` is a Postgres textual timestamp
-                        ("2026-08-01 00:00:00+00" — space-separated, short "+00"
-                        offset, no ms). `new Date(...)` parses this directly; do
-                        NOT `.replace(' ', 'T')` first — the resulting ISO-8601-
-                        shaped string is stricter about the timezone offset and
-                        rejects the short "+00" form (Invalid Date), silently
-                        breaking this exact case. */}
-                    {new Date(r.boundary).toLocaleString()}
-                  </td>
-                  <td>{r.trustClass}</td>
-                  <td>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      {r.sources.map((s, i) => (
-                        <span key={i} className="did" style={{ fontSize: 10.5, color: C.muted }}>
-                          {formatCtxId(s.ctxId)} · {s.publisher}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
+          <TableScroll label="Revoked-key findings for this run">
+            <table className="data-table">
+              <caption className="sr-only">Revoked-key findings for this run: ctx id, status, boundary, trust class and sources</caption>
+              <thead>
+                <tr>
+                  <th>Ctx ID</th>
+                  <th>Status</th>
+                  <th>Boundary</th>
+                  <th>Trust class</th>
+                  <th>Sources</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {revoked.map((r) => (
+                  <tr key={r.eventId}>
+                    <td className="did">{r.ctxId ? formatCtxId(r.ctxId) : '—'}</td>
+                    <td>
+                      <span className={revocationChipClass(r.status)}>{r.status}</span>
+                    </td>
+                    <td className="did" style={{ fontSize: 10.5 }}>
+                      {/* control-plane's `boundary` is a Postgres textual timestamp
+                          ("2026-08-01 00:00:00+00" — space-separated, short "+00"
+                          offset, no ms). `new Date(...)` parses this directly; do
+                          NOT `.replace(' ', 'T')` first — the resulting ISO-8601-
+                          shaped string is stricter about the timezone offset and
+                          rejects the short "+00" form (Invalid Date), silently
+                          breaking this exact case. */}
+                      {new Date(r.boundary).toLocaleString()}
+                    </td>
+                    <td>{r.trustClass}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                        {r.sources.map((s, i) => (
+                          <span key={i} className="did" style={{ fontSize: 10.5, color: C.muted }}>
+                            {formatCtxId(s.ctxId)} · {s.publisher}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
       </div>
     </div>

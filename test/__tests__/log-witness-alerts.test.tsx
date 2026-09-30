@@ -3583,6 +3583,9 @@ describe('witness alert worklist — the CARD says exactly what it says', () => 
       enter: () => renderWith({ data: rows([FIXTURE_ROW]) }),
       expected: [
         ...cardChrome(true),
+        // The table's own caption — `sr-only`, so invisible on screen, but
+        // still a DOM text leaf and this walk does not filter on visibility.
+        'Witness alerts: authority, reason, detail, consecutive environmental failures, detected, state and acknowledge',
         // The header row, from the same list the header test asserts against.
         ...TABLE_COLUMNS,
         // The one fixture row. Data, but it arrives through the same leaves as

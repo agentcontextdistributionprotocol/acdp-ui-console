@@ -8,6 +8,7 @@ import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { TableScroll } from '@/components/ui/table-scroll';
 import { useLogWitnessAlerts } from '@/lib/hooks/use-security';
 import { acknowledgeLogWitnessAlert } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
@@ -786,111 +787,107 @@ export function LogWitnessAlerts() {
           />
         )}
         {rows.length > 0 && (
-          // TODO(#93/PR G): wrap in `<TableScroll label="Witness alerts">` once
-          // Phase 11's component is on main. It is not on this branch, and
-          // duplicating the component plus its CSS here would collide with that
-          // PR on two files. PR G merges first, and its table-discovery gate
-          // scans every `.data-table` in `app/` and `components/`, so the
-          // rebase FAILS LOUDLY if this is forgotten rather than shipping
-          // unwrapped.
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Authority</th>
-                <th>Reason</th>
-                <th>Detail</th>
-                {/*
-                  "Environmental" is not padding. `0016_log_witness.sql`:
-                  "Environmental (transport/resolution) failures since the last
-                  success. Dishonesty signals do NOT count here — they set the
-                  alert fields." Only `recordFailureSafe` increments it;
-                  `markAlert` never does. Unqualified, beside "Root mismatch
-                  (split view)", the number reads as how many times THIS alert
-                  recurred, which it is not.
-                */}
-                <th>Consecutive environmental failures</th>
-                <th>Detected</th>
-                <th>State</th>
-                <th>Acknowledge</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => {
-                const message = alertMessage(row.detail);
-                return (
-                  <tr key={row.authority}>
-                    {/*
-                      The FULL authority, not `shortAuthority`. This worklist's
-                      whole point is covering authorities the console does not
-                      proxy, and truncating at the first dot renders
-                      `registry-a.playground.local` and `registry-a.corp.example`
-                      identically — two different registries, one label, on the
-                      screen where telling them apart is the task. It would also
-                      disagree with `log-witness-card.tsx` directly below, which
-                      prints the authority in full.
-                    */}
-                    <td className="did">{row.authority}</td>
-                    <td>{reasonLabel(row.reason)}</td>
-                    <td style={{ color: C.muted }}>
-                      {message.kind === 'message'
-                        ? message.text
-                        : message.kind === 'unreadable'
-                          ? 'Detail not readable'
-                          : '—'}
-                    </td>
-                    <td>{row.consecutiveFailures}</td>
-                    <td style={{ color: C.muted }}>
+          <TableScroll label="Witness alerts">
+            <table className="data-table">
+              <caption className="sr-only">Witness alerts: authority, reason, detail, consecutive environmental failures, detected, state and acknowledge</caption>
+              <thead>
+                <tr>
+                  <th>Authority</th>
+                  <th>Reason</th>
+                  <th>Detail</th>
+                  {/*
+                    "Environmental" is not padding. `0016_log_witness.sql`:
+                    "Environmental (transport/resolution) failures since the last
+                    success. Dishonesty signals do NOT count here — they set the
+                    alert fields." Only `recordFailureSafe` increments it;
+                    `markAlert` never does. Unqualified, beside "Root mismatch
+                    (split view)", the number reads as how many times THIS alert
+                    recurred, which it is not.
+                  */}
+                  <th>Consecutive environmental failures</th>
+                  <th>Detected</th>
+                  <th>State</th>
+                  <th>Acknowledge</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const message = alertMessage(row.detail);
+                  return (
+                    <tr key={row.authority}>
                       {/*
-                        `at` is nullable and a null one sorts to the TOP, so
-                        this cell is on the first row an operator reads.
-                        `timeAgo(null)` returns the em dash `—`, which is
-                        indistinguishable from the dash this table uses for "no
-                        detail" — so the null case gets WORDS instead. An empty
-                        or dashed cell reads as a rendering bug; "Time not
-                        recorded" is the fact.
-
-                        ROUND 7's N11: this branch is DEFENSIVE, and the
-                        paragraph above reads as though nulls arrive. Verified
-                        read-only against `acdp-control-plane`: `last_alert_at`
-                        is a nullable column, but the only write that sets
-                        `alerted = true` is `markAlert`, which sets
-                        `lastAlertAt` in the SAME statement, and `listAlerted`
-                        returns only `alerted = true` rows. `markFailure` never
-                        touches the alert fields at all. So a null `at` is
-                        unreachable from a correct control plane today. It is
-                        still rendered as words rather than trusted away,
-                        because the column permits it and the type this console
-                        parses permits it — the cost of the branch is one
-                        ternary and the cost of being wrong is a trust row that
-                        looks like a rendering bug.
+                        The FULL authority, not `shortAuthority`. This worklist's
+                        whole point is covering authorities the console does not
+                        proxy, and truncating at the first dot renders
+                        `registry-a.playground.local` and `registry-a.corp.example`
+                        identically — two different registries, one label, on the
+                        screen where telling them apart is the task. It would also
+                        disagree with `log-witness-card.tsx` directly below, which
+                        prints the authority in full.
                       */}
-                      {row.at === null ? 'Time not recorded' : `${timeAgo(row.at)} · ${clockTime(row.at)}`}
-                    </td>
-                    <td>
-                      <AcknowledgedCell row={row} />
-                    </td>
-                    <td>
-                      <Button
-                        variant="secondary"
-                        onClick={() => setConfirming(row)}
-                        // Named per row, because six buttons all reading
-                        // "Acknowledge" are six identical stops in a screen
-                        // reader's control list with no way to tell which
-                        // authority each one acts on.
-                        aria-label={`${row.acknowledgedAt === null ? 'Acknowledge' : 'Re-acknowledge'} ${row.authority}`}
-                      >
-                        {/* Already acknowledged and still alerting: upstream's
-                            update is unconditional, so the action is available
-                            rather than disabled — and the word changes so it
-                            does not read as an action with no effect. */}
-                        {row.acknowledgedAt === null ? 'Acknowledge' : 'Re-acknowledge'}
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="did">{row.authority}</td>
+                      <td>{reasonLabel(row.reason)}</td>
+                      <td style={{ color: C.muted }}>
+                        {message.kind === 'message'
+                          ? message.text
+                          : message.kind === 'unreadable'
+                            ? 'Detail not readable'
+                            : '—'}
+                      </td>
+                      <td>{row.consecutiveFailures}</td>
+                      <td style={{ color: C.muted }}>
+                        {/*
+                          `at` is nullable and a null one sorts to the TOP, so
+                          this cell is on the first row an operator reads.
+                          `timeAgo(null)` returns the em dash `—`, which is
+                          indistinguishable from the dash this table uses for "no
+                          detail" — so the null case gets WORDS instead. An empty
+                          or dashed cell reads as a rendering bug; "Time not
+                          recorded" is the fact.
+
+                          ROUND 7's N11: this branch is DEFENSIVE, and the
+                          paragraph above reads as though nulls arrive. Verified
+                          read-only against `acdp-control-plane`: `last_alert_at`
+                          is a nullable column, but the only write that sets
+                          `alerted = true` is `markAlert`, which sets
+                          `lastAlertAt` in the SAME statement, and `listAlerted`
+                          returns only `alerted = true` rows. `markFailure` never
+                          touches the alert fields at all. So a null `at` is
+                          unreachable from a correct control plane today. It is
+                          still rendered as words rather than trusted away,
+                          because the column permits it and the type this console
+                          parses permits it — the cost of the branch is one
+                          ternary and the cost of being wrong is a trust row that
+                          looks like a rendering bug.
+                        */}
+                        {row.at === null ? 'Time not recorded' : `${timeAgo(row.at)} · ${clockTime(row.at)}`}
+                      </td>
+                      <td>
+                        <AcknowledgedCell row={row} />
+                      </td>
+                      <td>
+                        <Button
+                          variant="secondary"
+                          onClick={() => setConfirming(row)}
+                          // Named per row, because six buttons all reading
+                          // "Acknowledge" are six identical stops in a screen
+                          // reader's control list with no way to tell which
+                          // authority each one acts on.
+                          aria-label={`${row.acknowledgedAt === null ? 'Acknowledge' : 'Re-acknowledge'} ${row.authority}`}
+                        >
+                          {/* Already acknowledged and still alerting: upstream's
+                              update is unconditional, so the action is available
+                              rather than disabled — and the word changes so it
+                              does not read as an action with no effect. */}
+                          {row.acknowledgedAt === null ? 'Acknowledge' : 'Re-acknowledge'}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </TableScroll>
         )}
         {/* Keyed on the authority so switching rows remounts the dialog rather
             than carrying the previous row's mutation error into it. */}

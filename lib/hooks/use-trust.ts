@@ -12,7 +12,17 @@ import {
 } from '@/lib/utils/revocation';
 import type { CpDashboardOverview, CpRun, RunTrustSummary } from '@/lib/types';
 
-const MAX_RUNS = 25;
+/**
+ * How many recent runs the trust page audits.
+ *
+ * EXPORTED so a test can bound its sweep by the value this hook uses rather
+ * than by a number parsed out of this file. Round 13's B2: the test read
+ * `/const\s+MAX_RUNS\s*=\s*(\d+)/`, which is unanchored, so rewriting this
+ * to `5 * 5` — same value, same fetch — silently narrowed the sweep's ceiling
+ * from 25 to 5 with the whole suite green. A parser written to stop a number
+ * drifting drifted, and less visibly than the hand-written number it replaced.
+ */
+export const MAX_RUNS = 25;
 
 export interface RunTrust {
   run: CpRun;

@@ -284,17 +284,30 @@ export interface CpDashboardOverview {
    * same discipline `components/registries/log-witness-card.tsx` already
    * encodes for the nullable quorum counts.
    */
+  // Optional, NOT nullable, and that asymmetry with `keyRevocation` above is
+  // deliberate: `dashboard.service.ts:260` builds this object unconditionally,
+  // so `null` is not a shape upstream can send, whereas an older control plane
+  // omitting the key entirely is. `dashboardRevocationState` still guards
+  // `null` at runtime — a round-2 gate found that a `null` on the wire crashed
+  // `/dashboard` outright — because a type is a claim about the deployments we
+  // know of, not a runtime guarantee about the one in front of us.
   features?: CpDashboardFeatures;
-  /**
-   * RFC-ACDP-0012 checkpoint-witness posture (`dashboard.service.ts:215-235`).
-   * `null` when `LOG_WITNESS_ENABLED` is off — the same
-   * distinguish-off-from-clean reasoning as `keyRevocation` above.
-   */
-  logWitness?: CpDashboardLogWitness | null;
-  /** Currently-retracted contexts in the window (`dashboard.service.ts:203`). */
-  totalRetracted?: number;
-  /** Published minus currently retracted (`dashboard.service.ts:204`). */
-  totalContextsLive?: number;
+  // Upstream's dashboard payload also carries `logWitness`, `totalRetracted`
+  // and `totalContextsLive`. They are deliberately NOT declared here: nothing
+  // in the console reads them, so no test could hold the declared shape to
+  // account, and a wrong shape would sit in the type surface being trusted
+  // until the first consumer arrived. Same standard that removed this module's
+  // `DashboardRevocation` re-export in this change — a declaration nothing
+  // reads is a claim nothing checks. Add them WITH the surface that consumes
+  // them, and a fixture that pins them.
+  //
+  // PR M (#84, the transparency-log alert worklist) does NOT change this:
+  // `log-witness-alerts.tsx` and `useLogWitnessAlerts` read a dedicated
+  // `LogWitnessAlert`/`LogWitnessAlertRow`/`LogWitnessAlertsResponse` surface
+  // (below), not `CpDashboardOverview.logWitness` — PR M's own pre-merge copy
+  // declared this field plus `totalRetracted`/`totalContextsLive`, but nothing
+  // on that branch ever read any of the three. Dropped here rather than
+  // resurrected, per the same standard this comment already states.
 }
 
 /** The three RFC-ACDP-0014 §7 compromise-boundary counters, window-scoped. */
@@ -313,6 +326,13 @@ export interface DashboardRevocation {
  * produce; making them optional would invent a fourth state for every tile and
  * put the burden of imagining it on every consumer.
  *
+ * That requirement is a claim about UPSTREAM, not a guarantee the wire makes —
+ * nothing validates this payload on arrival, so a renamed or dropped flag from
+ * a future release would reach a consumer typed `boolean` and be `undefined`.
+ * Consumers are written for that: every read is `=== true` / `=== false`, never
+ * truthiness, and `revocation.test.ts` exercises the non-boolean case through
+ * an `as unknown as` cast precisely because the type cannot express it.
+ *
  * `keyRevocationCheck` cannot be true without `receiptAudit` — upstream THROWS
  * at boot if it is (`app-config.service.ts:573-574`), rather than coercing —
  * so a fixture setting one without the other depicts a deployment that could
@@ -325,14 +345,6 @@ export interface CpDashboardFeatures {
   logInclusionAudit: boolean;
   witnessCosigning: boolean;
   witnessQuorum: boolean;
-}
-
-/** `dashboard.service.ts:215-235`. `unacknowledgedAlerts` is the durable worklist. */
-export interface CpDashboardLogWitness {
-  witnessedLogs: number;
-  activeAlerts: number;
-  unacknowledgedAlerts: number;
-  headsMeetingQuorum: number;
 }
 
 export interface KnownAgent {

@@ -206,8 +206,10 @@ export function violationCount(trust: RunTrustSummary): number {
 // Since acdp-control-plane#178 it does — `GET /dashboard/overview` returns
 // `keyRevocation: null` when the check is off and carries a `features` object
 // with all six audit/witness flags — so the DASHBOARD tile no longer infers
-// anything: `dashboardRevocationState()` below reads the flag and says which of
-// three states it is (#97).
+// anything from a zero: `dashboardRevocationState()` below reads the flag and
+// says which of FOUR states it is (#97). It still derives `reported` from the
+// counters, which is not an inference about the check — a non-zero count is
+// self-evidencing.
 //
 // This run-scoped inference stays, because there is no equivalent signal for it.
 // `features` rides on the overview payload and nothing else; a run's trust
@@ -269,16 +271,16 @@ export function runRevocationReported(trust: RunTrustSummary): boolean {
   return counted > 0;
 }
 
-/**
- * The dashboard overview's window-scoped revocation counters.
+/*
+ * `DashboardRevocation` is NOT re-exported from here.
  *
- * Re-exported rather than declared here. It now lives in `lib/types.ts` beside
- * `CpDashboardOverview`, which is the field's actual home — two structurally
- * identical declarations of the same name in two modules is how a wire type and
- * its consumer quietly drift apart. The re-export keeps this module's existing
- * import surface intact.
+ * An earlier revision of this change re-exported it with the rationale that
+ * doing so "keeps this module's existing import surface intact". That rationale
+ * was false: the type was only ever referenced inside this file, so the
+ * re-export had no consumer to keep intact, before the change or after. It now
+ * lives in `lib/types.ts` beside `CpDashboardOverview`, which is the field's
+ * actual home — import it from there.
  */
-export type { DashboardRevocation };
 
 /**
  * REMOVED with #97: `dashboardRevocationReported`, a type predicate over the
@@ -354,21 +356,114 @@ export function isKeyRevocationFacet(type: string | undefined): boolean {
  * Four arms, because there really are four things that can be true:
  *
  *   `reported`       counters arrived with something in them — render them.
- *   `checked-clean`  the flag says the check RAN, and it found nothing. This is
- *                    the state that did not previously exist and is the reason
- *                    the function exists.
- *   `disabled`       the flag says the check is off. Nothing was measured, and
- *                    saying so is different from saying nothing was found.
- *   `unknown`        no `features` at all — a control plane predating
- *                    acdp-control-plane#178. The legacy heuristic's answer, and
- *                    the honest one: we cannot tell.
+ *   `checked-clean`  the flag says the check is ON, and the counters that
+ *                    arrived are all zero. This is the state that did not
+ *                    previously exist and is the reason the function exists.
+ *                    NOT "the flag says the check RAN": the flag is current
+ *                    config and describes the deployment NOW, while the
+ *                    counters were persisted at audit time — so it cannot say
+ *                    the check was on when each event in the window was
+ *                    classified. `app/dashboard/page.tsx` renders exactly that
+ *                    caveat ("It does not follow that every event in the window
+ *                    was checked") and `dashboard-revocation.test.tsx` forbids
+ *                    the stronger reading outright. This bullet said "the check
+ *                    RAN" for one commit after the `disabled` bullet below was
+ *                    corrected for the same over-claim; a neighbouring arm is
+ *                    where these keep surviving.
+ *   `disabled`       the flag says the check is OFF. Whatever counters arrived
+ *                    are therefore not evidence either way: from here the
+ *                    console cannot tell a zero the check produced from a zero
+ *                    it never ran for, so neither may be rendered as a finding.
+ *
+ *                    NOT "nothing was measured", and NOT "zeros a check never
+ *                    produced" — which is the SAME CLAIM in different words,
+ *                    and is refuted by the next sentence of this very bullet.
+ *                    Upstream gates both the query and the tile on one config
+ *                    value, so disabling the check nulls the tile regardless of
+ *                    what was classified earlier in the window, and the
+ *                    persisted rows are untouched: a deployment that ran the
+ *                    check over the first half of the window and switched it
+ *                    off yesterday reaches this arm holding real zeros that a
+ *                    real check produced.
+ *
+ *                    This bullet has now stated that over-claim twice, in two
+ *                    wordings, each time as the FIX for the previous one —
+ *                    rounds 3 and 6 of this change's gate. The rendering has
+ *                    been right since round 3 (`app/dashboard/page.tsx`, "a
+ *                    zero produced WHILE THE CHECK IS OFF is not a finding",
+ *                    with `dashboard-revocation.test.tsx` forbidding the
+ *                    stronger reading outright); it is the definition that
+ *                    keeps lagging, and the definition is where the next
+ *                    consumer reads the meaning from.
+ *   `unknown`        we cannot tell — for one of the reasons enumerated
+ *                    below, carried on the arm as `because`, because they
+ *                    license different copy.
+ *
+ *                    NO NUMBER HERE, deliberately, and that is the third
+ *                    correction to this one line. It said "two" for one commit
+ *                    after the third `because` was added, contradicting its own
+ *                    list twenty lines further down; round 8's gate returned a
+ *                    blocking finding on it; the commit that fixed that added a
+ *                    FOURTH `because` and left "THREE" standing here, in this
+ *                    line and in five others. A count written in prose beside a
+ *                    list that already carries it is a second source of truth
+ *                    that only ever goes stale, and a stale one invites the
+ *                    next reader to conclude an arm is dead and merge it —
+ *                    which is precisely how the over-claiming `flags-disagree`
+ *                    copy came to be written. Count the list.
+ *
+ * The `because` split exists for a defect the first gate round on this change
+ * found. The `unknown` arm inherited the old prose verbatim, hedge included —
+ * "the check is disabled by default" — on the argument that this arm is a
+ * pre-#178 backend where the hedge is still honest. That argument covers only
+ * ONE of the routes into the arm. The others reach it holding a `features`
+ * object whose `keyRevocationCheck` is `true`, and rendering "disabled by
+ * default" there states a cause the console has direct evidence against. So:
+ *
+ *   `because: 'no-flags'`            nothing said whether the check runs
+ *                                    (pre-#178). The legacy hedge is a fair
+ *                                    explanation here and only here.
+ *   `because: 'flag-on-no-counters'` the flag says the check runs and the
+ *                                    counters are ABSENT (not zero). Upstream
+ *                                    cannot produce that combination.
+ *   `because: 'flag-unreadable'`     a `features` object arrived but its
+ *                                    `keyRevocationCheck` is neither `true` nor
+ *                                    `false`.
+ *   `because: 'counters-partial'`    some of the three counters arrived and
+ *                                    some did not. A fact about the PAYLOAD, so
+ *                                    it is read before any flag — it falsifies
+ *                                    the copy on the flag-derived arms rather
+ *                                    than being explained by them.
+ *
+ * The list has grown twice, both times because a value named a fact that did
+ * NOT hold on every route carrying it — which is the one invariant a `because`
+ * has to satisfy.
+ *
+ * `counters-partial` (seventh gate round): `flag-on-no-counters` had been
+ * widened to catch `{}` and swallowed partial triples with it, so its sentence
+ * — "sent no counters at all, not even zeros" — rendered over payloads that had
+ * sent a zero. The suite pinned that sentence positively, so it enforced the
+ * false claim instead of catching it.
+ *
+ * `flag-unreadable` (second gate round): a single `flags-disagree` value
+ * collapsed it with `flag-on-no-counters`, and the copy written for the pair
+ * described only the latter — it said the deployment "says the check is enabled
+ * but sent no counters at all", which on the unreadable route is false twice
+ * over: the deployment said nothing readable about the check, and the counters
+ * may well have arrived as zeros. Rendering one route's cause over another's is
+ * the same defect this split was introduced to remove, one level down.
+ *
+ * Widening a route without re-reading its copy is how the invariant keeps
+ * breaking, and it is why the pin in `test/support/revocation-prose.ts` keys
+ * its table off this union: a new value fails to typecheck there until its copy
+ * is written.
  *
  * `null` counters WITH `keyRevocationCheck === true` is a combination upstream
  * cannot produce — both derive from the same config value
- * (`dashboard.service.ts:39` and `:240`) — so it maps to `unknown` rather than
- * `checked-clean`. A state the backend cannot reach must not be asserted from
- * this side; if it ever appears, something is wrong and "we do not know" is the
- * only defensible reading.
+ * (`dashboard.service.ts:39` and `:240`, cited from #97 rather than verified
+ * from here) — so it maps to `unknown` rather than `checked-clean`. A state the
+ * backend cannot reach must not be asserted from this side; if it ever appears,
+ * something is wrong and "we do not know" is the only defensible reading.
  *
  * Every flag read is `=== true` / `=== false`, never truthiness. `features` is
  * typed with all six booleans required, so a partial object fails typecheck
@@ -380,40 +475,209 @@ export type DashboardRevocationState =
   | { kind: 'reported'; counts: DashboardRevocation }
   | { kind: 'disabled' }
   | { kind: 'checked-clean' }
-  | { kind: 'unknown' };
+  | {
+      kind: 'unknown';
+      because: 'no-flags' | 'flag-on-no-counters' | 'flag-unreadable' | 'counters-partial';
+    };
+
+/**
+ * Did a counter TRIPLE actually arrive, as three numbers?
+ *
+ * `!!keyRevocation` is not the same question, and the difference is a false
+ * claim: `{}` is truthy, carries nothing, and routed to `checked-clean`, whose
+ * copy states "this window's counters are zero".
+ *
+ * This docblock used to continue: "`undefined > 0` is `false`, so the
+ * `reported` guard already handled a missing member silently — it declined to
+ * report." That was wrong, and it is left here as the correction rather than
+ * deleted, because it is the sentence that made the defect invisible for three
+ * revisions. `undefined > 0` is indeed false, but the guard was a DISJUNCTION:
+ * `{ revokedAtOrAfter: 3 }` fails two of its three tests and passes the third,
+ * so it reported — and the tile rendered a fabricated `0` for each member that
+ * never arrived. The guard did not decline anything. It is now gated on this
+ * predicate, which is what the sentence claimed was already true.
+ *
+ * All three, not any: a partial triple is not a payload this console can read,
+ * and picking the members that happen to be present would report a sum over an
+ * unknown denominator.
+ */
+function hasCounters(k: DashboardRevocation | null | undefined): k is DashboardRevocation {
+  return (
+    !!k &&
+    typeof k.preCompromise === 'number' &&
+    typeof k.revokedAtOrAfter === 'number' &&
+    typeof k.revokedTimeUnverifiable === 'number'
+  );
+}
+
+/**
+ * Did SOMETHING counter-shaped arrive, without all three being there?
+ *
+ * The distinction `hasCounters` alone could not make, and the gap the previous
+ * revision fell into. `hasCounters` sorts payloads into "readable" and "not
+ * readable", but "not readable" then held two populations whose copy must
+ * differ: `{}` and `null` sent nothing, and `{ preCompromise: 0 }` sent
+ * something. Routing both to `flag-on-no-counters` made that arm's sentence —
+ * "sent no counters at all, not even zeros" — false of the second, and the
+ * suite POSITIVELY PINNED the sentence, so it enforced the false claim.
+ *
+ * `{}` is deliberately NOT partial: it carries no member of the triple, so
+ * "sent no counters" is true of it. The predicate is about members that are
+ * actually numbers, not about the object's existence.
+ */
+function hasSomeCounters(k: DashboardRevocation | null | undefined): boolean {
+  if (!k || typeof k !== 'object' || Array.isArray(k)) return false;
+  const r = k as unknown as Record<string, unknown>;
+  return (
+    typeof r.preCompromise === 'number' ||
+    typeof r.revokedAtOrAfter === 'number' ||
+    typeof r.revokedTimeUnverifiable === 'number'
+  );
+}
 
 export function dashboardRevocationState(
   keyRevocation: DashboardRevocation | null | undefined,
-  features: CpDashboardFeatures | undefined,
+  // `| null` is not decoration. `CpDashboardFeatures | undefined` is what a
+  // correct upstream sends, but this value comes off the network, and the
+  // second gate round reached this function with `features: null` and crashed
+  // the whole `/dashboard` route — `=== undefined` is false for `null`, and the
+  // next line dereferenced it. `/trust` was already null-safe via `?.`, so the
+  // two surfaces disagreed about the same payload. Typed as nullable so the
+  // guard below is required rather than remembered.
+  features: CpDashboardFeatures | null | undefined,
 ): DashboardRevocationState {
   // Counters with something in them are self-evidencing: whatever the flags
   // say, a non-zero count means the check ran and found that. Checked first so
   // the tile renders figures even against a backend whose `features` is missing
   // or contradicts them.
+  //
+  // `hasCounters` GATES THIS ARM, and its absence was a live defect. The guard
+  // used to be `keyRevocation && (a > 0 || b > 0 || c > 0)`, and `undefined > 0`
+  // is `false` — so `{ revokedAtOrAfter: 3 }` passed it, and the tile rendered
+  // `['0', '3', '0']`: a green "Pre-compromise (authorized) 0" and an amber
+  // "Revoked time unverifiable 0" from a payload that sent neither. Two
+  // fabricated zeros on a trust surface, beside one real figure, with nothing
+  // to tell them apart. This module's docblock said in three places that a
+  // partial triple "is not a payload this console can read"; this arm read one
+  // anyway.
+  // `!== 0`, NOT `> 0`, and round 10's NB5 is why. `checked-clean`'s copy states
+  // "this window's counters are zero", and its `licensedBy` said it was
+  // licensed by "a complete counter triple whose three members are all zero".
+  // With `> 0` here, the predicate the code actually applied was "no member is
+  // POSITIVE" — so `{ preCompromise: -1, revokedAtOrAfter: 0,
+  // revokedTimeUnverifiable: 0 }` satisfied `hasCounters`, failed this arm, and
+  // rendered "this window's counters are zero" over a triple that is not all
+  // zero. That is the module's own headline defect — a figure asserted from
+  // something that is not that figure — in the one arm whose whole job is to
+  // say a number is zero.
+  //
+  // A negative count is unreachable from a correct control plane (the counters
+  // are `?? 0` over SQL `COUNT`s), which is exactly the argument that was made
+  // for `{}`, for `features: null` and for `features: []`, and all three
+  // arrived off the network anyway. The fix is not a fourth `because`: routing
+  // a nonsense member to `counters-partial` would print "some of the three
+  // counters came through and some did not", which is false of a complete
+  // triple, and inventing an arm for it would be copy nobody can read in the
+  // wild. `reported` is the honest destination, because `reported` makes no
+  // claim beyond "these are the counters that arrived" — so a `-1` shows up on
+  // screen as `-1`, visible and reportable, rather than being laundered into
+  // the word "clean".
+  //
+  // ROUND 11's NB8, and the argument above is narrower than it was written.
+  // Measured: `formatNumber(-1) === '-1'`, so the sentence is true of the value
+  // it names. It is NOT true of every value `!== 0` admits —
+  // `formatNumber(NaN) === '0'`, because `NaN` passes `typeof === 'number'`,
+  // passes `!== 0`, lands here, and renders as a fabricated digit, which is a
+  // worse outcome than the word this arm exists to avoid. `NaN` is not
+  // JSON-reachable (a wire payload can carry `null`, a string or a number, and
+  // not a `NaN`), so what this falsifies is the ARGUMENT, not the code: the
+  // honest form is "a negative counter shows up as itself", not "anything that
+  // reaches `reported` shows up as itself". Two further limits, recorded rather
+  // than quietly relied on: no test in this repository renders a negative
+  // counter on the page, so the "shows up on screen" half is asserted at the
+  // formatter and not at the surface; and `hasSomeCounters` requires
+  // `typeof === 'number'`, so a triple whose three members arrive as strings
+  // routes to `flag-on-no-counters`, whose copy says "not even zeros" — false
+  // of that payload. Verified read-only against `acdp-control-plane`, which
+  // wraps each member in `Number(… ?? 0)` over `count(*) FILTER (…)::int`, so
+  // that route is unreachable upstream today. It is still a `because` whose
+  // fact does not hold on every route carrying it, which is this module's own
+  // stated invariant.
   if (
-    keyRevocation &&
-    (keyRevocation.preCompromise > 0 ||
-      keyRevocation.revokedAtOrAfter > 0 ||
-      keyRevocation.revokedTimeUnverifiable > 0)
+    hasCounters(keyRevocation) &&
+    (keyRevocation.preCompromise !== 0 ||
+      keyRevocation.revokedAtOrAfter !== 0 ||
+      keyRevocation.revokedTimeUnverifiable !== 0)
   ) {
     return { kind: 'reported', counts: keyRevocation };
   }
 
-  // No flag object at all — the pre-#178 backend. Everything below this point
-  // needs `features` to say anything, so this is where "we cannot know" lives.
-  if (features === undefined) return { kind: 'unknown' };
+  // A PARTIAL triple, checked before any flag is read.
+  //
+  // Its position is the point. This is a fact about the PAYLOAD, and it
+  // falsifies the copy on every flag-derived arm below: `no-flags` says
+  // "nothing in this window carried a revocation classification" (false of
+  // `{ revokedAtOrAfter: 3 }`), and `flag-on-no-counters` says "sent no
+  // counters at all — not even zeros" (false of anything that sent one). An
+  // earlier revision routed partials into the latter and the test suite pinned
+  // that sentence positively, so the guard enforced the false claim rather than
+  // catching it.
+  if (!hasCounters(keyRevocation) && hasSomeCounters(keyRevocation)) {
+    return { kind: 'unknown', because: 'counters-partial' };
+  }
+
+  // No usable flag object at all — the pre-#178 backend, or a wire payload that
+  // sent `null` or something that is not an object. This is the ONE route into
+  // `unknown` where "the check is disabled by default" is a fair explanation,
+  // because nothing has told us otherwise.
+  //
+  // `typeof !== 'object'` as well as the null test: a `features` that arrived
+  // as a string or a number tells us nothing about the check either, and
+  // reading a property off it would yield `undefined` and route to
+  // `flag-unreadable` — which would claim a features object arrived when what
+  // arrived was not one.
+  //
+  // An ARRAY is the gap in that reasoning and is excluded explicitly:
+  // `typeof [] === 'object'`, so without the array test a `features: []` would
+  // pass this guard and render "It sent a feature report, but the
+  // compromise-boundary setting in it was not a value this console can read" —
+  // asserting a feature report arrived when an array is not one either. The
+  // rationale above covers what it says it covers; this is the case it did not.
+  if (
+    features === undefined ||
+    features === null ||
+    typeof features !== 'object' ||
+    Array.isArray(features)
+  ) {
+    return { kind: 'unknown', because: 'no-flags' };
+  }
 
   if (features.keyRevocationCheck === false) return { kind: 'disabled' };
 
   if (features.keyRevocationCheck === true) {
     // The impossible combination described above: the flag says the check runs,
-    // but the counters are absent rather than zero. Do not report clean.
-    if (!keyRevocation) return { kind: 'unknown' };
+    // but the counters are absent rather than zero. Do not report clean — and
+    // do not explain it as "disabled" either, since the one thing we can read
+    // says it is on.
+    //
+    // `hasCounters`, not truthiness. `keyRevocation: {}` is truthy and carries
+    // no counters, so it fell through to `checked-clean` and rendered "this
+    // window's counters are zero" over a payload that sent none — a figure
+    // asserted from an absence, which is the one thing this module exists to
+    // stop. Upstream always builds all three with `?? 0`, so `{}` is not a
+    // shape a correct control plane sends; neither was `features: null` (round
+    // 2) or `features: []` (round 3), and both of those reached here off the
+    // network and produced a false claim.
+    if (!hasCounters(keyRevocation)) return { kind: 'unknown', because: 'flag-on-no-counters' };
     return { kind: 'checked-clean' };
   }
 
   // `keyRevocationCheck` is neither `true` nor `false` — a wire payload with
   // the flag missing or non-boolean. Unreachable through the type, reachable
-  // through the network.
-  return { kind: 'unknown' };
+  // through the network. Its own `because`, not the one above: the counters on
+  // this route may be absent OR present-and-zero, so nothing may be said about
+  // them, and a `features` object DID arrive, so the pre-#178 explanation is
+  // also unavailable. The only fact that holds on every route here is that the
+  // flag itself could not be read.
+  return { kind: 'unknown', because: 'flag-unreadable' };
 }

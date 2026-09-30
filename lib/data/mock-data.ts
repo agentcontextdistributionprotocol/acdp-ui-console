@@ -715,7 +715,7 @@ export const MOCK_RUNS: CpRun[] = [
 // CONSEQUENCE, DELIBERATE, DO NOT "FIX" BACK: these three render as locale
 // dates rather than "2 minutes ago", because `timeAgo` falls through to
 // `toLocaleDateString()` past 30 days (`lib/utils/format.ts:17-18`) and they
-// really are 81 days old. That is the honest outcome, and it is what makes the
+// really are that old. That is the honest outcome, and it is what makes the
 // events feed agree with the context card instead of contradicting it.
 //
 // A frozen global `now` was considered and rejected: it would break `elapsed()`
@@ -732,9 +732,34 @@ function afterReceipt(base: string, seconds: number): string {
 // Publish at the receipt moment itself, then hold and restore within the same
 // day. Distinct offsets so publish < retract < republish holds STRICTLY and the
 // guard can assert `<` rather than `<=`.
+//
+// The hold must begin AFTER every signed instant on this context's own crypto
+// fixture, not merely after the publish. `MOCK_CRYPTO.attested` carries four
+// more frozen timestamps that render on the SAME detail card as the lifecycle
+// strip, the latest at receipt+2280 s:
+//
+//   receipt+2160  witness_signatures[1].witnessed_at
+//   receipt+2220  lineage_head_receipt.as_of  <- with head_status: 'active'
+//   receipt+2220  log_checkpoint.timestamp (and witness[0]'s copy of it)
+//   receipt+2280  witness_signatures[0].witnessed_at
+//
+// The first version of this phase used 1800/5400, which put all four INSIDE
+// the retraction window - so `context-detail.tsx` rendered "head status:
+// active, as of 12:34" directly above "retracted 12:27 / republished 13:27".
+// `lib/types.ts` documents `head_status` as the registry's attestation of the
+// head's status AT `as_of`, so the card asserted the context was the live head
+// at an instant its own signed lifecycle says it was held. That is symptom (1)
+// of #85 - one surface contradicting another about the same fact - created by
+// the fix for symptom (2).
+//
+// These offsets move and the receipt does not: `as_of` and the witness
+// signatures are SIGNED and frozen by `scripts/gen-mock-crypto.mjs`, so the
+// narrative is the only side that can give. `mock-data.test.ts` holds the
+// window clear of every frozen instant on the fixture, derived rather than
+// listed, so a regenerated fixture cannot silently re-enter it.
 const ATTESTED_PUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 0);
-const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 1800);
-const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 5400);
+const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 3600);
+const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 7200);
 
 export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
@@ -841,12 +866,19 @@ const DEMO_WINDOW_SCALE: Record<string, number> = {
 // than an accident of where a rounding rule happens to land. Two windows are
 // pinned; every other window inherits the 24 h figures.
 //
-//   1h → all zero        → "not reported" (the degrade path)
+//   1h → all zero        → the no-figures branch
 //   6h → one non-zero    → figures render, INCLUDING the two genuine zeros
-//                          beside it — the heuristic's other arm, also
-//                          otherwise invisible to a human.
+//                          beside it, which are information only because the
+//                          non-zero proves the check ran.
+//
+// (Those two lines used to say "not reported (the degrade path)" and "the
+// heuristic's other arm". Both named a heuristic #97 deleted, and the first was
+// made false by the `features` block below — which turns the all-zero window
+// into `checked-clean`, not "not reported". The state each window now reaches
+// is spelled out further down rather than here.)
+//
 // `features` is deliberately absent from this table and must stay absent.
-// Upstream reads it from process config (`dashboard.service.ts:260-266`), so it
+// Upstream reads it from process config (`dashboard.service.ts:260-267`), so it
 // is identical for every window of the same deployment — a per-window
 // `features` would teach the demo's viewer a state the real system cannot
 // produce, which is the objection this file already records for the witness
@@ -931,11 +963,35 @@ export function demoDashboardForWindow(window: string): CpDashboardOverview {
 }
 
 // ── Agents ────────────────────────────────────────────────────────────
+// `/agents` renders an agent's `firstSeen`/`lastSeen` on the SAME card as the
+// list of that agent's own events (`app/agents/page.tsx:88-89` beside `:111`),
+// so the two must not disagree. The invariant, held by `mock-data.test.ts`:
+//
+//   firstSeen <= the agent's earliest event   and   lastSeen >= its latest
+//
+// where "its events" is `MOCK_CONTEXT_EVENTS.filter(e => e.agentId === did)`,
+// which is exactly what `listCpEvents({ agentId })` returns. `contextCount` is
+// NOT part of the invariant — it is a registry-wide total (DID_A publishes 12
+// and appears in one demo event), not a count of the feed.
+//
+// Three rows violated it before this phase, two of them because moving an
+// event is what breaks the other end of the pair:
+//
+//   DID_KEY  — was `iso(140)` on both, the pre-move value of ev-7. The card
+//              read "last active 2 min ago" above an only-event dated ~83 days
+//              back. Now the publish itself, since ev-7 is all this ephemeral
+//              did:key agent ever did (ev-8/ev-9 are the registry's).
+//   DID_SOLO — was `iso(240)`, which ev-10's move to `iso(210)` left 30s in
+//              the agent's own past. Now the retraction, its latest action.
+//   DID_B    — was `iso(21)`, 18s before its own ev-3 publish at `iso(3)`.
+//              PRE-EXISTING, not introduced here; fixed because an exception
+//              list on the guard below would be the laundering pattern this
+//              plan exists to remove.
 export const MOCK_AGENTS: KnownAgent[] = [
   { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
-  { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(21) },
-  { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(240) },
-  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: iso(140), lastSeen: iso(140) },
+  { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(3) },
+  { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(210) },
+  { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: ATTESTED_PUBLISHED_TS },
 ];
 
 // ── Registries ────────────────────────────────────────────────────────
@@ -1001,6 +1057,16 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
   // `Body` — not `RegistryCapabilities.acdp_version`) and it sits
   // inside a signed fixture's hash preimage: editing it breaks the signature.
   // A grep-driven "align the versions" pass is exactly what would hit both.
+  //
+  // WHAT THESE SIX ARE AND ARE NOT. #95 grounded registry-b's two in the
+  // playground it depicts (`acdp-playground/config/registry-b.toml:8`) and left
+  // this comment implying the same standard applied here. It does not:
+  // `config/registry-a.toml:9` configures the SAME two ids as b, so a's six are
+  // a demo-narrative choice — A is the richer peer — not a transcription. That
+  // is a legitimate choice and the six are all advertisable, which is what
+  // `mock-data.test.ts` pins; but a guard that says "evidence-backed" for one
+  // registry and nothing for its sibling reads as if both were checked. They
+  // are checked against the ADVERTISABLE SET, not against the playground.
   //
   // `profiles` is deliberately NOT extended. registry-rs advertises a closed
   // set (`acdp-registry-types/src/config.rs`, `REGISTRY_ADVERTISABLE_PROFILES`)
