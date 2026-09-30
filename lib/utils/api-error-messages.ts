@@ -450,6 +450,35 @@ export function errorDiagnostic(error: unknown): string | undefined {
 }
 
 /**
+ * A render-crash boundary's disclosure — #116.
+ *
+ * `app/error.tsx`, `app/global-error.tsx` and `ErrorBoundary` used to render
+ * `error.message` directly, which for an `ApiError` IS the raw upstream body
+ * (`fetcher.ts`'s constructor: `super(body || ...)`) — the exact string this
+ * module exists to keep out of a primary sentence. But `errorDiagnostic` alone
+ * is the wrong replacement here: it returns `undefined` for anything that
+ * isn't an `ApiError`, and the reachable crash case at a render boundary is
+ * ordinarily a plain `TypeError` from React itself — using `errorDiagnostic`
+ * alone would delete that message entirely rather than demote it.
+ *
+ * So this composes both: an `ApiError` gets the same upstream-bytes string
+ * `errorDiagnostic` gives every other surface (one diagnostic vocabulary, not
+ * two), anything else that is at least an `Error` gets its own `name` and
+ * `message` (`TypeError: Cannot read properties of undefined`), and Next's own
+ * `digest` — present only in production, where the original message is
+ * stripped server-side — is appended when given, to either case or to neither.
+ * `undefined` only for a throw that is both a non-`Error` and digest-less (a
+ * bare string/object thrown, with no digest to show in its place) — the one
+ * case with truly nothing to disclose.
+ */
+export function crashDiagnostic(error: unknown, digest?: string): string | undefined {
+  const base = errorDiagnostic(error) ?? (error instanceof Error ? `${error.name}: ${error.message}` : undefined);
+  const digestLine = digest ? `Digest: ${digest}` : undefined;
+  if (base && digestLine) return `${base}\n\n${digestLine}`;
+  return base ?? digestLine;
+}
+
+/**
  * The last resort, reached when the response carried no `errorCode` (a non-JSON
  * body) or one this console has never seen — a newer control plane, or a direct
  * registry call. Never blank, and never a claim about trust: a status alone

@@ -3,6 +3,8 @@
 import { Component, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { C } from '@/lib/colors';
+import { ErrorDetail } from '@/components/ui/error-panel';
+import { crashDiagnostic } from '@/lib/utils/api-error-messages';
 
 interface Props {
   children: ReactNode;
@@ -28,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <AlertTriangle size={18} color={C.danger} />
           <div>
             <div style={{ fontSize: 13, color: C.text }}>Component failed to render</div>
-            <div style={{ fontSize: 11, color: C.muted }}>{this.state.error.message}</div>
+            <ErrorDetail details={crashDiagnostic(this.state.error)} />
           </div>
         </div>
       );
