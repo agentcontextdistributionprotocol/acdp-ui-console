@@ -21,6 +21,7 @@ import {
   MOCK_LOG_WITNESS,
   MOCK_LOG_WITNESS_ALERTS,
   MOCK_AGENTS,
+  MOCK_REGISTRIES,
   SCENARIO_COUNT,
 } from '@/lib/data/mock-data';
 import * as MockData from '@/lib/data/mock-data';
@@ -227,6 +228,18 @@ describe('mock runs and lineage', () => {
   it('every run id is unique', () => {
     const ids = new Set(MOCK_RUNS.map((r) => r.runId));
     expect(ids.size).toBe(MOCK_RUNS.length);
+  });
+
+  it('no context event names a runId absent from MOCK_RUNS', () => {
+    // `events-table.tsx` renders a non-null `runId` as a pressable link into
+    // the run inspector — ev-7 named `'run-receipts-1'`, a run that does not
+    // exist in `MOCK_RUNS`, which would 404. `null` (ev-8/9/10's shape) is the
+    // correct spelling for "published outside any run", not a synthesized id.
+    const runIds = new Set(MOCK_RUNS.map((r) => r.runId));
+    for (const e of MOCK_CONTEXT_EVENTS) {
+      if (e.runId == null) continue;
+      expect(runIds.has(e.runId), `${e.id} names runId "${e.runId}", which is not in MOCK_RUNS`).toBe(true);
+    }
   });
 
   it('cross-registry lineage has an edge across authorities', () => {
@@ -1463,6 +1476,99 @@ describe('every agent row agrees with that agent’s own event feed', () => {
     expect(key!.firstSeen).toBe(ev7!.eventTs);
     expect(key!.lastSeen).toBe(ev7!.eventTs);
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// A registry's summary row agrees with that registry's own event feed — the
+// same class of guard as the agent one above, for the same reason: moving ANY
+// event can strand a summary row keyed to it. `MOCK_REGISTRIES[AUTH_A].firstSeen`
+// was `iso(432000)` (5 days ago, relative to test-run time) while ev-7 — the
+// registry's actual earliest event — sits on the frozen receipt clock, ~86
+// days in the past. `firstSeen` is not rendered for registries today (the
+// `/registries` card renders `lastSeen` only), so nothing in the UI ever
+// disagreed with itself over this — but the guard is the point: derived from
+// the feed, not a copied literal, so the next event move carries this row
+// with it instead of silently drifting the way `firstSeen` just had.
+// ══════════════════════════════════════════════════════════════════════
+describe('every registry row agrees with that registry’s own event feed', () => {
+  /** Mirrors `listCpEvents`'s registryAuthority filter (`lib/api/client.ts`: `e.registryAuthority.includes(...)`). */
+  function eventsOf(authority: string) {
+    return MOCK_CONTEXT_EVENTS.filter((e) => e.registryAuthority.includes(authority)).map((e) => ({
+      id: e.id,
+      ts: Date.parse(e.eventTs),
+    }));
+  }
+
+  const WITH_EVENTS = MOCK_REGISTRIES.filter((r) => eventsOf(r.authority).length > 0);
+
+  it('covers the whole roster, so the per-registry checks are not vacuous', () => {
+    expect(MOCK_REGISTRIES.length).toBeGreaterThanOrEqual(2);
+    expect(WITH_EVENTS.length).toBe(MOCK_REGISTRIES.length);
+  });
+
+  it.each(WITH_EVENTS.map((r) => [r.authority, r] as const))(
+    '%s: firstSeen is at or before its earliest event, lastSeen IS its latest',
+    (_authority, registry) => {
+      const evs = eventsOf(registry.authority);
+      const earliest = Math.min(...evs.map((e) => e.ts));
+      const latest = Math.max(...evs.map((e) => e.ts));
+      const ids = evs.map((e) => e.id).join(', ');
+
+      expect(
+        Date.parse(registry.firstSeen),
+        `firstSeen postdates ${registry.authority}'s earliest event (${ids})`,
+      ).toBeLessThanOrEqual(earliest);
+
+      expect(
+        Date.parse(registry.lastSeen),
+        `lastSeen must equal ${registry.authority}'s newest event (${ids})`,
+      ).toBe(latest);
+    },
+  );
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// A lineage-graph node's status must not disagree with that same ctx_id's
+// `registry_state.status` in `MOCK_CONTEXTS` — the DAG (`lineage-dag.tsx`)
+// and the context detail panel (`context-detail.tsx`) both render a status
+// chip for the same context, reachable from adjacent surfaces on the same
+// run. `MOCK_LINEAGE[COMPLETED_RUN_ID]`'s node had no `status` (defaulting to
+// 'active') while its `MOCK_CONTEXTS` counterpart was `'retracted'` — the DAG
+// showed a live node for a context the detail panel said was gone.
+//
+// Derived over every `MOCK_LINEAGE` graph rather than listed, so a future
+// graph carrying a ctx_id already in `MOCK_CONTEXTS` is covered without
+// anyone remembering to add a case. `FANOUT_LINEAGE`'s nodes have no
+// `MOCK_CONTEXTS` counterpart (`run-fan-3`'s contexts are not otherwise
+// registered), so they contribute no pairs — the three that exist are
+// `LIVE_LINEAGE`'s two nodes (both 'active' on both sides) plus
+// `COMPLETED_RUN_ID`'s one node (the fixed disagreement).
+// ══════════════════════════════════════════════════════════════════════
+describe('a lineage node’s status agrees with that ctx_id’s registry_state.status', () => {
+  const lineageStatusByCtxId = new Map<string, string>();
+  for (const graph of Object.values(MOCK_LINEAGE)) {
+    for (const node of graph.nodes) {
+      lineageStatusByCtxId.set(node.ctx_id, node.status ?? 'active');
+    }
+  }
+
+  const pairs = MOCK_CONTEXTS.filter((c) => lineageStatusByCtxId.has(c.body.ctx_id));
+
+  it('covers at least three ctx_ids, so the check below is not vacuous', () => {
+    expect(pairs.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it.each(pairs.map((c) => [c.body.ctx_id, c] as const))(
+    '%s: the lineage node’s status matches registry_state.status',
+    (ctxId, context) => {
+      const lineageStatus = lineageStatusByCtxId.get(ctxId)!;
+      const contextStatus = context.registry_state.status ?? 'active';
+      expect(
+        lineageStatus,
+        `the DAG node says "${lineageStatus}" but registry_state says "${contextStatus}" for ${ctxId}`,
+      ).toBe(contextStatus);
+    },
+  );
 });
 
 // ══════════════════════════════════════════════════════════════════════
