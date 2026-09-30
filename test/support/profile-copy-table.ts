@@ -2019,6 +2019,8 @@ export const CARD_LABELS = [
   'Anon reads',
   'enabled',
   'disabled',
+  // #124: the keyboard-reachable profile-glossary disclosure's <summary>.
+  'Profile glossary',
 ] as const;
 
 /**
