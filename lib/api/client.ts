@@ -391,7 +391,16 @@ export async function getRunLineageGraph(runId: string, demoMode: boolean): Prom
 
 export async function getCpRunEvents(runId: string, demoMode: boolean): Promise<{ data: CpContextEvent[] }> {
   if (demoMode) {
-    return delay({ data: MOCK_CONTEXT_EVENTS.filter((e) => e.runId === runId) });
+    // Oldest-first, matching real mode's upstream order — `use-live-run.ts`
+    // maps this into the same step frames it replays oldest→newest. This
+    // order is unobservable in the demo UI today (`use-live-run.ts` prefers
+    // the richer recorded step stream over this result for a terminal run in
+    // demo mode), but it is worth being right before some future caller
+    // trusts this function's return order directly.
+    const events = [...MOCK_CONTEXT_EVENTS]
+      .filter((e) => e.runId === runId)
+      .sort((a, b) => (a.eventTs < b.eventTs ? -1 : a.eventTs > b.eventTs ? 1 : 0));
+    return delay({ data: events });
   }
   return fetchJson<{ data: CpContextEvent[] }>('control-plane', `/runs/${encodeURIComponent(runId)}/events`);
 }

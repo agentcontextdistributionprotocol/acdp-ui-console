@@ -410,7 +410,11 @@ export const MOCK_LINEAGE: Record<string, LineageGraph> = {
   [LIVE_RUN_ID]: LIVE_LINEAGE,
   [COMPLETED_RUN_ID]: {
     nodes: [
-      { ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agent_id: DID_SOLO, title: 'Quarterly cash flow snapshot', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1 },
+      // Retracted by its producer after v2 shipped (RFC-ACDP-0013) — see the
+      // matching `MOCK_CONTEXTS` entry's `registry_state.status`. Both must
+      // agree: `lineage-dag.tsx` and `context-detail.tsx` render the same
+      // ctx_id's status on adjacent surfaces.
+      { ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agent_id: DID_SOLO, title: 'Quarterly cash flow snapshot', context_type: 'data_snapshot', registry_authority: AUTH_A, step: 1, status: 'retracted' },
     ],
     edges: [],
   },
@@ -736,12 +740,13 @@ function afterReceipt(base: string, seconds: number): string {
 // The hold must begin AFTER every signed instant on this context's own crypto
 // fixture, not merely after the publish. `MOCK_CRYPTO.attested` carries four
 // more frozen timestamps that render on the SAME detail card as the lifecycle
-// strip, the latest at receipt+2280 s:
+// strip, the latest at receipt+2340 s:
 //
-//   receipt+2160  witness_signatures[1].witnessed_at
 //   receipt+2220  lineage_head_receipt.as_of  <- with head_status: 'active'
 //   receipt+2220  log_checkpoint.timestamp (and witness[0]'s copy of it)
 //   receipt+2280  witness_signatures[0].witnessed_at
+//   receipt+2340  witness_signatures[1].witnessed_at  <- must cosign AFTER the
+//                 checkpoint it embeds (#125 item 3); was +2160, BEFORE it
 //
 // The first version of this phase used 1800/5400, which put all four INSIDE
 // the retraction window - so `context-detail.tsx` rendered "head status:
@@ -768,7 +773,12 @@ export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
   { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
   { id: 'ev-5', eventType: 'search_executed', eventTs: iso(300), runId: COMPLETED_RUN_ID, agentId: DID_SOLO, registryAuthority: AUTH_A, scenarioId: 's1_single_publish' },
   { id: 'ev-6', eventType: 'context_published', eventTs: iso(710), runId: 'run-c4d5e6f7', ctxId: `acdp://${AUTH_A}/fee57f10-e884-42f8-b01f-c12eb4fa54e0`, agentId: 'did:web:registry-a.local:agents:tenant-a', contextType: 'data_snapshot', visibility: 'restricted', version: 1, registryAuthority: AUTH_A, scenarioId: 's10_tenant_isolation' },
-  { id: 'ev-7', eventType: 'context_published', eventTs: ATTESTED_PUBLISHED_TS, runId: 'run-receipts-1', ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
+  // `runId: null`, not a synthesized run id: this did:key agent publishes as a
+  // one-shot producer outside any run (`s22_receipts`), the same shape as
+  // ev-8/ev-9/ev-10 below. A non-null runId here named 'run-receipts-1', which
+  // does not exist in MOCK_RUNS — `events-table.tsx` would render it as a
+  // pressable link to a run inspector page for a run that cannot resolve.
+  { id: 'ev-7', eventType: 'context_published', eventTs: ATTESTED_PUBLISHED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: DID_KEY, contextType: 'demo:attestation', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's22_receipts', keyFingerprint: 'sha256:bd61f88a4c70', receiptPresent: true },
   // ── RFC-ACDP-0013 lifecycle events (ACDP 0.3) ─────────────────────────
   // Registry-initiated hold + restore on the attested context (a pair).
   { id: 'ev-8', eventType: 'context_retracted', eventTs: ATTESTED_RETRACTED_TS, runId: null, ctxId: `acdp://${AUTH_A}/5dcdb05d-bfbc-4088-936b-da19eec25319`, agentId: `did:web:${AUTH_A}`, contextType: 'demo:attestation', version: 1, registryAuthority: AUTH_A },
@@ -996,7 +1006,7 @@ export const MOCK_AGENTS: KnownAgent[] = [
 
 // ── Registries ────────────────────────────────────────────────────────
 export const MOCK_REGISTRIES: KnownRegistry[] = [
-  { authority: AUTH_A, baseUrl: 'http://localhost:8100', eventCount: 187, firstSeen: iso(432000), lastSeen: iso(8) },
+  { authority: AUTH_A, baseUrl: 'http://localhost:8100', eventCount: 187, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: iso(8) },
   { authority: AUTH_B, baseUrl: 'http://localhost:8200', eventCount: 125, firstSeen: iso(432000), lastSeen: iso(3) },
 ];
 

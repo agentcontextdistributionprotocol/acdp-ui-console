@@ -41,8 +41,8 @@ export const MOCK_DID_DOCS: Record<string, unknown> = {
         "publicKeyJwk": {
           "kty": "EC",
           "crv": "P-256",
-          "x": "R1PjkxFSuXhGTvTuwbwk2qUkB5s9LdEtA-bGW1QetgQ",
-          "y": "XqXdkB32MxleBKpGSfCchc6hrVuwAw3-PtVVZJZ2H9c"
+          "x": "hprGd6XLor_eqEFpZaQYBvBqlOUS0lYHaR28tEYdjpM",
+          "y": "a0xY9UfzgKNyrbzSQEjzagyl0i1Ga71tPDyPd7eBbXI"
         }
       }
     ],
@@ -190,7 +190,7 @@ export const MOCK_CRYPTO = {
     "signature": {
       "algorithm": "ecdsa-p256",
       "key_id": "did:web:registry-b.local:agents:cross-b#key-2",
-      "value": "nIFKVM5bb3YLebuu0AovJom/RtQ3szO/gKhJr0O17+6EDkV5kABkE+9Ttd4U9L4a9LnYV8NBQtD0NFfo09jGgg=="
+      "value": "cyOnMppmEdVOyMOZzsZqdRXmwywEZhzuxXqN+D6PXu7ybyP1Zaw8X+WE24aglJyfC/IJ9ZPbv02YKK1wc6llfg=="
     }
   },
   "cashV1": {
@@ -406,11 +406,11 @@ export const MOCK_CRYPTO = {
             "root_hash": "sha256:d93fc06ae8e2dc9b3ea7c24060d3d9cfea9720eebc1aef1f06a9ae74de9c592c",
             "timestamp": "2026-07-06T12:34:00.000Z"
           },
-          "witnessed_at": "2026-07-06T12:33:00.000Z",
+          "witnessed_at": "2026-07-06T12:36:00.000Z",
           "signature": {
             "algorithm": "ed25519",
             "key_id": "did:key:z6Mki11Bt3TszrQcX7c1GuaNUc3gFh4XLWjCQWXrRis9QQeH#witness-key-1",
-            "value": "AUu46Es/5ROnOPrIxQk2K2zl6C8b7kTfUEWOHNL7qn2SRQOOvSrho+UKP3og98O9aAqRespv/iTv73eCQKavAg=="
+            "value": "QBa7mxssQd5qutDYb373g9DGh8wZxFE62MOnu4h1vAwwQ3hKJpY2PmnK0pRledwV2Em9sWgJ0lw84uAhc1LlBA=="
           }
         }
       ]

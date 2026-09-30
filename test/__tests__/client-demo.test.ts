@@ -3,6 +3,7 @@ import {
   searchContexts,
   listRevocations,
   listCpEvents,
+  getCpRunEvents,
   listCpRuns,
   getCpRunLineage,
   getRunLineageGraph,
@@ -267,6 +268,22 @@ describe('listCpEvents (demo)', () => {
     }
     expect(seen.size).toBe(total); // exhaustive: every event surfaced exactly once
     expect(pages).toBe(Math.ceil(total / limit));
+  });
+});
+
+describe('getCpRunEvents (demo)', () => {
+  it('returns only this run’s events, oldest first', async () => {
+    // Unobservable in the demo UI today (`use-live-run.ts` prefers the
+    // recorded step stream over this result for a terminal run in demo mode)
+    // but worth being right before some future caller trusts this order
+    // directly — real mode's upstream order is oldest-first, and this should
+    // match it.
+    const { data } = await getCpRunEvents(COMPLETED_RUN_ID, DEMO);
+    expect(data.length).toBeGreaterThan(1); // guard: order is only meaningful with >1 row
+    expect(data.every((e) => e.runId === COMPLETED_RUN_ID)).toBe(true);
+    for (let i = 1; i < data.length; i++) {
+      expect(data[i].eventTs >= data[i - 1].eventTs).toBe(true);
+    }
   });
 });
 
