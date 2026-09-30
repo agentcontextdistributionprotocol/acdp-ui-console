@@ -142,6 +142,10 @@ function overview(
     receiptCoverage: [],
     didMethods: [],
     features,
+    // #115 defaults: no read failure in the ordinary fixture, and the
+    // denominator matches the (pre-filter) run count this helper was given.
+    readFailures: 0,
+    runsRequested: runs.length,
   };
 }
 
@@ -2287,8 +2291,17 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     // 42 files / 1050 tests green, and `[]` is what `useTrust` returns whenever
     // the dashboard overview omits the field — which is every control plane
     // predating ACDP 0.2.
+    // #115: `readFailures`/`runsRequested` go in UNREAD, not READ, here. The
+    // plan's Approach section says "add to read" speaking of the INTERFACE as
+    // a whole, but this particular sweep's surface is `violationsCard(container)`
+    // alone (via `expectViolationsUnmoved`, below) — the same narrow DOM
+    // subtree `receiptCoverage`/`didMethods` are UNREAD against, for exactly
+    // the same reason: the new banner they feed renders as a SIBLING of the
+    // violations card, above `.kpi-grid`, never inside it. `runs`/`totals`/
+    // `features` are READ because the violations card's own content is a
+    // function of them; these two are not, which is what UNREAD asserts.
     const READ = ['runs', 'totals', 'features'] as const;
-    const UNREAD = ['receiptCoverage', 'didMethods'] as const;
+    const UNREAD = ['receiptCoverage', 'didMethods', 'readFailures', 'runsRequested'] as const;
     const expected = expectedViolations(SWEEP_BASE);
     const lean = overview(sweepRuns(SWEEP_BASE), totalsFor(SWEEP_BASE), FEATURES_ON);
     expect(
@@ -2310,6 +2323,8 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
           { method: 'did:web', publish_count: 7 },
           { method: 'other', publish_count: 1 },
         ],
+        readFailures: 5,
+        runsRequested: 40,
       },
     });
     expect(postures, 'the TrustOverview sweep lost a posture').toHaveLength(UNREAD.length + 1);
@@ -2389,6 +2404,8 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
           receiptCoverage: [],
           didMethods: [],
           features: FEATURES_ON,
+          readFailures: 0,
+          runsRequested: 1,
         },
         expected,
         p.label,
@@ -2987,5 +3004,37 @@ describe('/trust — the KPI row and the violations card are a CLOSED set of blo
     expect(TRUST_SECTION.sub.length).toBeGreaterThan(40);
     expect(squash('a b\n c')).toBe('abc');
     expect(normalize('a  b\n c')).toBe('a b c');
+  });
+
+  // ════════════════════════════════════════════════════════════════════
+  // #115: a per-run read failure used to be swallowed by `.catch(() => null)`,
+  // so every figure on this page silently excluded that run with no
+  // disclosure. `readFailures`/`runsRequested` on `TrustOverview` are a cause
+  // this page counted ITSELF, so unlike the revocation copy above it may name
+  // one — `assertNamesNoCause` is not applied to this banner, and does not
+  // need to be: it forbids a GUESSED cause, and this one is measured.
+  // ════════════════════════════════════════════════════════════════════
+  describe('the read-failure banner', () => {
+    function withReadFailures(readFailures: number, runsRequested: number): TrustOverview {
+      return { ...overview([{ runId: 'r1', trust: trust() }]), readFailures, runsRequested };
+    }
+
+    it('names the count and denominator when readFailures > 0; says nothing at 0', () => {
+      const { container: withFailures } = renderWith(withReadFailures(3, 25));
+      expect(screen.getByText(/3 of 25 runs could not be read/)).toBeInTheDocument();
+      expect(withFailures.textContent).toContain('lower bound');
+      cleanup();
+
+      const { container: clean } = renderWith(withReadFailures(0, 1));
+      expect(clean.textContent).not.toContain('lower bound');
+      expect(clean.textContent).not.toContain('could not be read');
+    });
+
+    it('renders outside .kpi-grid and outside the violations card', () => {
+      const { container } = renderWith(withReadFailures(3, 25));
+      expect(container.textContent).toContain('could not be read');
+      expect(kpiGrid(container).textContent).not.toContain('could not be read');
+      expect(violationsCard(container).textContent).not.toContain('could not be read');
+    });
   });
 });

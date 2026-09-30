@@ -71,8 +71,10 @@ vi.mock('@/lib/api/client', async (orig) => ({
 
 // NO hook-level mocks. Every page below goes through its real hook and fails at
 // the client function, including `/trust` (whose `useTrust` raises from the two
-// outer `Promise.all` calls at `use-trust.ts:75-78` — the per-run fan-out is
-// what `.catch(() => null)` swallows, not these) and `/dashboard`. An earlier
+// outer `Promise.all([getCpDashboard, listCpRuns])` calls — the per-run fan-out
+// runs through `Promise.allSettled` instead (#115) and counts a rejection as a
+// `readFailures` disclosure rather than raising, so it can never be this test's
+// subject) and `/dashboard`. An earlier
 // cut mocked both hooks and justified `/dashboard`'s by saying the compound
 // no-error-no-data state was unreachable from a resolving `queryFn`; the
 // premise is true (React Query refuses `undefined` as query data) but the
