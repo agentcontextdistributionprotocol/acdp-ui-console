@@ -926,14 +926,24 @@ function digest(v: unknown): string {
  * instead of sixteen. The previous version's ±30s applied to every timestamp and
  * exceeded the live run's own `iso(24)`, so that run's `startedAt` could have
  * more than doubled undetected.
+ *
+ * `run-arctic-src-1` (#119) breaks that premise on purpose: its clock is
+ * frozen to its own receipt, not relative to `Date.now()` like every other
+ * row, so its distance from the anchor is NOT a fixed integer — it grows by
+ * one every second the suite goes unrun, the same reason the day-count
+ * comments elsewhere in this file refuse to hardcode a number. `FROZEN` marks
+ * its two time fields so the loop below checks them by DERIVATION instead of
+ * by the anchor-relative integer every other row uses.
  */
+const FROZEN = 'frozen-clock' as const;
+
 const RUNS_BEFORE_REORDER: Record<
   string,
   {
     scenarioId: string;
     status: string;
-    startedAfterAnchor: number;
-    completedAfterAnchor: number | null;
+    startedAfterAnchor: number | typeof FROZEN;
+    completedAfterAnchor: number | typeof FROZEN | null;
     contextsCount: number;
     tenantId: string;
     registries: string;
@@ -950,6 +960,7 @@ const RUNS_BEFORE_REORDER: Record<
   'run-revoked-1': { scenarioId: 's32_key_revocation', status: 'completed', startedAfterAnchor: 1876, completedAfterAnchor: 1826, contextsCount: 3, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '3d66fa1d6152', trust: '56312ec9329b', result: ABSENT },
   'run-fan-3': { scenarioId: 's3_fanout', status: 'completed', startedAfterAnchor: 3576, completedAfterAnchor: 3556, contextsCount: 4, tenantId: 'default', registries: 'registry-a.playground.local', inputs: 'b2e094463307', trust: 'd50f5a52bf87', result: ABSENT },
   'run-cross-org-1': { scenarioId: 's8_cross_org', status: 'completed', startedAfterAnchor: 7176, completedAfterAnchor: 7146, contextsCount: 2, tenantId: 'default', registries: 'registry-a.playground.local,registry-b.playground.local', inputs: '473789a75cae', trust: '36ce9993ab88', result: ABSENT },
+  'run-arctic-src-1': { scenarioId: 's5_cross_registry', status: 'completed', startedAfterAnchor: FROZEN, completedAfterAnchor: FROZEN, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: digest({ topic: 'Arctic shipping routes' }), trust: digest({ audited: 1, verified: 1, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0, flagged: [] }), result: ABSENT },
 };
 
 describe('MOCK_RUNS reads in time order', () => {
@@ -1001,8 +1012,11 @@ describe('MOCK_RUNS reads in time order', () => {
       const actual = {
         scenarioId: run!.scenarioId,
         status: run!.status,
-        startedAfterAnchor: afterAnchor(run!.startedAt),
-        completedAfterAnchor: afterAnchor(run!.completedAt),
+        // `run-arctic-src-1` (#119) is exempted from the anchor-diff here —
+        // see FROZEN's own comment — and checked for real, by derivation, in
+        // the dedicated test right below this one.
+        startedAfterAnchor: before.startedAfterAnchor === FROZEN ? FROZEN : afterAnchor(run!.startedAt),
+        completedAfterAnchor: before.completedAfterAnchor === FROZEN ? FROZEN : afterAnchor(run!.completedAt),
         contextsCount: run!.contextsCount,
         tenantId: run!.tenantId,
         registries: run!.registries.join(','),
@@ -1029,9 +1043,23 @@ describe('MOCK_RUNS reads in time order', () => {
     expect(secondsAgo(MOCK_RUNS.find((r) => r.runId === LIVE_RUN_ID)!.startedAt)!).toBeLessThanOrEqual(39);
   });
 
-  it('keeps all eight runs', () => {
-    expect(MOCK_RUNS).toHaveLength(8);
-    expect(new Set(MOCK_RUNS.map((r) => r.runId)).size).toBe(8);
+  it('run-arctic-src-1 is pinned to its own receipt clock, not this anchor (#119)', () => {
+    // The FROZEN fields above are exempted, not unchecked: this is where they
+    // are actually verified, by derivation against the same receipt production
+    // code derives from, rather than a literal that goes stale every day.
+    const run = MOCK_RUNS.find((r) => r.runId === 'run-arctic-src-1')!;
+    const receiptTs = Date.parse(MockCrypto.MOCK_CRYPTO.arcticSource.registry_receipt.created_at);
+    const startedDrift = Math.abs(Date.parse(run.startedAt) - receiptTs);
+    const completedDrift = Math.abs(Date.parse(run.completedAt!) - receiptTs);
+    expect(startedDrift, `startedAt is ${Math.round(startedDrift / DAY_MS)}d from its own receipt clock`).toBeLessThanOrEqual(DAY_MS);
+    expect(completedDrift, `completedAt is ${Math.round(completedDrift / DAY_MS)}d from its own receipt clock`).toBeLessThanOrEqual(DAY_MS);
+    expect(Date.parse(run.startedAt)).toBeLessThanOrEqual(Date.parse(run.completedAt!));
+  });
+
+  it('keeps all nine runs', () => {
+    // Eight, then run-arctic-src-1 (#119) made it nine.
+    expect(MOCK_RUNS).toHaveLength(9);
+    expect(new Set(MOCK_RUNS.map((r) => r.runId)).size).toBe(9);
   });
 
   it('keeps the lineage page opening on the live run', () => {
@@ -1099,12 +1127,14 @@ const RECEIPT_BEARING: ReceiptBearing[] = Object.entries(MockCrypto.MOCK_CRYPTO)
   .filter((r): r is ReceiptBearing => r !== null);
 
 /**
- * `arcticSource` is the live run's own first node, and its wall-clock events are
- * a documented structural exception — see the `ev-1`/`ev-2` block below, which
- * proves the exception is still needed rather than assuming it. Everything else
- * with a receipt is held to the receipt clock.
+ * #119 removed `arcticSource`'s exception: it now has its own publishing run
+ * (`run-arctic-src-1`, on the receipt clock) distinct from the live run, which
+ * only retrieves it — so every receipt-bearing context is on the receipt clock,
+ * with nothing exempted. Kept as an (empty) list rather than deleted, so a
+ * future genuine exception has somewhere to go without re-deriving this whole
+ * mechanism.
  */
-const CLOCK_EXCEPTIONS = ['arcticSource'];
+const CLOCK_EXCEPTIONS: string[] = [];
 const ON_RECEIPT_CLOCK = RECEIPT_BEARING.filter((r) => !CLOCK_EXCEPTIONS.includes(r.name));
 
 /**
@@ -1118,13 +1148,13 @@ const ALL_FIXTURE_CONTEXTS = [...new Map(
 ).values()];
 
 describe('the receipt-bearing contexts and the events describing them share a clock', () => {
-  it('derives more than one receipt-bearing context, and fences exactly one', () => {
+  it('derives more than one receipt-bearing context, and fences none', () => {
     // Without this the loops below could go quiet: a rename in `mock-crypto.ts`
     // that broke the `registry_receipt` shape would empty the derived list and
     // every assertion keyed off it would pass by describing nothing.
     expect(RECEIPT_BEARING.length).toBeGreaterThanOrEqual(2);
     expect(ON_RECEIPT_CLOCK.length).toBeGreaterThanOrEqual(1);
-    expect(RECEIPT_BEARING.length - ON_RECEIPT_CLOCK.length).toBe(1);
+    expect(RECEIPT_BEARING.length - ON_RECEIPT_CLOCK.length).toBe(0);
     for (const r of RECEIPT_BEARING) expect(Number.isFinite(r.receiptTs)).toBe(true);
   });
 
@@ -1138,21 +1168,39 @@ describe('the receipt-bearing contexts and the events describing them share a cl
     expect(Date.parse(ctx!.body.created_at)).toBe(receiptTs);
   });
 
-  it.each(ON_RECEIPT_CLOCK)('$name: every event about it is within a day of that clock', ({ ctxId, receiptTs }) => {
+  it.each(ON_RECEIPT_CLOCK)('$name: every PUBLISH-class event about it is within a day of that clock', ({ ctxId, receiptTs }) => {
     // THE GATING ASSERTION. Fails on `iso(140)` / `iso(110)` / `iso(80)`, which
     // sit weeks away from the receipt. (Deliberately not a figure: the gap is
     // wall-clock-dependent and grows every day, so any number written here is
     // wrong tomorrow. It was '81 days' and is over 83 now.)
-    const referencing = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ctxId);
+    //
+    // `context_retrieved` is excluded (#119): a registry serves a published
+    // context indefinitely, so a RETRIEVAL can honestly happen any distance
+    // from `created_at` — arcticSource's own `ev-2` is retrieved by the LIVE
+    // run, months after `ev-1` published it, and that gap is the fix, not a
+    // regression of it. The bound is about events that describe something
+    // happening TO the context (publish, retract, republish), not reads of it.
+    const referencing = MOCK_CONTEXT_EVENTS.filter((e) => e.ctxId === ctxId && e.eventType !== 'context_retrieved');
     expect(referencing.length).toBeGreaterThan(0);
     for (const e of referencing) {
       const drift = Math.abs(Date.parse(e.eventTs) - receiptTs);
       expect(drift, `${e.id} is ${Math.round(drift / DAY_MS)} days from the receipt clock`).toBeLessThanOrEqual(DAY_MS);
     }
   });
+
+  it('has at least one context_retrieved event, so the exclusion above is not vacuous', () => {
+    // If this ever hit zero, the filter above would be silently excluding
+    // nothing and the "within a day" bound would look tighter than it is.
+    expect(MOCK_CONTEXT_EVENTS.filter((e) => e.eventType === 'context_retrieved').length).toBeGreaterThanOrEqual(1);
+  });
 });
 
-const ATTESTED_CTX = ON_RECEIPT_CLOCK[0].ctxId;
+// By NAME, not array position: `ON_RECEIPT_CLOCK`'s order is
+// `Object.entries(MOCK_CRYPTO)`'s enumeration order, an implementation detail
+// that changed under this exact assumption once already (#119 — `arcticSource`
+// used to be excluded and `attested` was position 0; now both are on the
+// receipt clock and `arcticSource` enumerates first).
+const ATTESTED_CTX = ON_RECEIPT_CLOCK.find((r) => r.name === 'attested')!.ctxId;
 
 describe('the attested context and the events describing it share a clock', () => {
   const receiptTs = ON_RECEIPT_CLOCK[0].receiptTs;
@@ -1332,46 +1380,88 @@ describe('no event is dated before the context it describes', () => {
   });
 });
 
-describe('ev-1 and ev-2 are a KNOWN, DOCUMENTED exception', () => {
-  // Not scope-trimming — a structural fact about the dataset.
-  //
-  // `arcticSource` is `LIVE_LINEAGE.nodes[0]`: the LIVE run's own first node.
-  // The live run is `status: 'running'`, started seconds ago. So a run happening
-  // now published a context whose signed `created_at` is months old, and that
-  // contradiction is not in the events feed — it is in the shape of the dataset.
-  //
-  // Moving ev-1/ev-2 onto the fixture clock would make the events feed agree
-  // with the context card while leaving the live run's OWN step timeline
-  // (`MOCK_RUN_EVENTS`) contradicting both: a run that started 24 seconds ago
-  // with steps dated just as far back. That trades one visible contradiction for a
-  // subtler one, which is the defect class this phase exists to remove.
-  //
-  // The honest fix is to DECOUPLE — the live run should publish a context with
-  // no frozen receipt, and the receipt-bearing `arcticSource` should belong to
-  // an older completed run. That moves LIVE_LINEAGE, MOCK_RUN_EVENTS,
-  // MOCK_CONTEXT_EVENTS, MOCK_CONTEXTS and every trust fixture keyed off
-  // `LIVE_LINEAGE.nodes[0].ctx_id` together, gated by `wasm-fixtures.test.ts`.
-  // Filed as a follow-up rather than attempted inside a timestamps phase.
-  it('still points at the live run’s first node, so the exception cannot widen silently', () => {
-    // Through the EXPORTED surface (`MOCK_LINEAGE[LIVE_RUN_ID]`), which is the
-    // same object as the module-private `LIVE_LINEAGE`. Exporting an internal
-    // just so a test can reach it would widen the module's API for no runtime
-    // consumer.
-    const arctic = MOCK_LINEAGE[LIVE_RUN_ID].nodes[0].ctx_id;
-    for (const id of ['ev-1', 'ev-2']) {
-      const e = MOCK_CONTEXT_EVENTS.find((ev) => ev.id === id)!;
-      expect(e.ctxId, `${id} no longer references the live run's first node`).toBe(arctic);
-      expect(e.runId).toBe(LIVE_RUN_ID);
-    }
+// ══════════════════════════════════════════════════════════════════════
+// #119: the live run stops publishing an 85-day-old context. `arcticSource` is
+// `LIVE_LINEAGE.nodes[0]`; the live run is `status: 'running'`, started seconds
+// ago, and its signed `created_at` is months old. The dishonest shape was the
+// live run PUBLISHING it — a run happening now cannot have produced a
+// months-old artifact. The honest fix decouples: `run-arctic-src-1`, a
+// completed run on arcticSource's own receipt clock, published it; the live
+// run only RETRIEVES it (`ev-2`, `MOCK_RUN_EVENTS[LIVE_RUN_ID]`'s
+// `acdp.retrieve` step) — which is legitimate at any distance from publish,
+// and is what `s5_cross_registry` (a cross-registry lookup) is about.
+// ══════════════════════════════════════════════════════════════════════
+describe('the live run retrieves arcticSource; it no longer publishes it (#119)', () => {
+  const arctic = MOCK_LINEAGE[LIVE_RUN_ID].nodes[0].ctx_id;
+
+  it('has no acdp.publish of it in the live run’s own step timeline', () => {
+    const publishesIt = MOCK_RUN_EVENTS[LIVE_RUN_ID].some(
+      (e) => e.type === 'acdp.publish' && e.ctx_id === arctic,
+    );
+    expect(publishesIt).toBe(false);
   });
 
-  it('is still on wall-clock time, which is what makes it an exception', () => {
-    // If someone "fixes" these to the receipt clock without doing the decoupling,
-    // this fails and points them at the comment above. The exception is recorded
-    // as a fact, not as an absence.
+  it('still retrieves it in the live run’s own step timeline', () => {
+    const retrievesIt = MOCK_RUN_EVENTS[LIVE_RUN_ID].some(
+      (e) => e.type === 'acdp.retrieve' && e.ctx_id === arctic,
+    );
+    expect(retrievesIt).toBe(true);
+  });
+
+  it('ev-1 (the publish) now belongs to run-arctic-src-1, on the receipt clock', () => {
+    const ev1 = MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-1')!;
+    expect(ev1.ctxId).toBe(arctic);
+    expect(ev1.runId).toBe('run-arctic-src-1');
+    expect(ev1.eventTs).toBe(MockCrypto.MOCK_CRYPTO.arcticSource.registry_receipt.created_at);
+  });
+
+  it('ev-2 (the retrieval) still belongs to the live run, on wall-clock time', () => {
+    // Deliberately NOT pinned to the receipt clock — a retrieval can honestly
+    // happen any distance from publish (see the exclusion above), and the live
+    // run retrieving it right now is exactly the narrative #119 restores.
+    const ev2 = MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-2')!;
+    expect(ev2.ctxId).toBe(arctic);
+    expect(ev2.runId).toBe(LIVE_RUN_ID);
     const arcticReceipt = Date.parse(MockCrypto.MOCK_CRYPTO.arcticSource.registry_receipt.created_at);
-    const ev1 = Date.parse(MOCK_CONTEXT_EVENTS.find((e) => e.id === 'ev-1')!.eventTs);
-    expect(Math.abs(ev1 - arcticReceipt)).toBeGreaterThan(DAY_MS);
+    expect(Math.abs(Date.parse(ev2.eventTs) - arcticReceipt)).toBeGreaterThan(DAY_MS);
+  });
+
+  it('run-arctic-src-1 exists, is completed, and named nowhere else as a dangling id', () => {
+    const run = MOCK_RUNS.find((r) => r.runId === 'run-arctic-src-1');
+    expect(run, 'run-arctic-src-1 is missing from MOCK_RUNS').toBeDefined();
+    expect(run!.status).toBe('completed');
+  });
+});
+
+// The positive-class counterpart to 'no event is dated before the context it
+// describes' above: that guard is a LOWER bound (nothing precedes creation).
+// #119's defect was an UPPER-bound violation the other direction — a run
+// claiming to have JUST published something that was actually signed months
+// earlier. This checks every receipt-bearing publish's OWN run started near
+// that receipt's clock, not `Date.now()`.
+describe('a receipt-bearing publish belongs to a run that started near its own receipt clock', () => {
+  it('checks every receipt-bearing publish event, non-vacuously', () => {
+    const receiptTsByCtxId = new Map(RECEIPT_BEARING.map((r) => [r.ctxId, r.receiptTs]));
+    let checked = 0;
+    for (const e of MOCK_CONTEXT_EVENTS) {
+      if (e.eventType !== 'context_published') continue;
+      const receiptTs = e.ctxId ? receiptTsByCtxId.get(e.ctxId) : undefined;
+      if (receiptTs === undefined) continue;
+      checked++;
+      // `runId: null` (ev-7, s22_receipts) publishes outside any run — nothing
+      // to check a run's startedAt against.
+      if (!e.runId) continue;
+      const run = MOCK_RUNS.find((r) => r.runId === e.runId);
+      expect(run, `${e.id} names run '${e.runId}', which does not exist in MOCK_RUNS`).toBeDefined();
+      const drift = Math.abs(Date.parse(run!.startedAt) - receiptTs);
+      expect(
+        drift,
+        `${e.id}'s run '${e.runId}' started ${Math.round(drift / DAY_MS)} days from the receipt it published`,
+      ).toBeLessThanOrEqual(DAY_MS);
+    }
+    // ev-1 (run-arctic-src-1) and ev-7 (runId: null, skipped after counting) —
+    // without this the loop above could go quiet on an unrelated rename.
+    expect(checked).toBeGreaterThanOrEqual(2);
   });
 });
 
