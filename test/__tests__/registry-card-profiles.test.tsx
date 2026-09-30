@@ -2338,10 +2338,11 @@ describe('the rendered card is a closed world over its fixture', () => {
       // #124: the profile-glossary <details> renders ALL seven advertisable
       // ids and glosses unconditionally — the vocabulary, not a claim about
       // what THIS registry advertises — so they are licensed regardless of
-      // `c.profiles`, read through the same parsed copy table
-      // `allowedAnnounced()` uses rather than a second hand list.
+      // `c.profiles`. Sourced from the hand copy (`PROFILE_GLOSS_TEXT`), not
+      // `profileCopyTable()` — that parses `registry-card.tsx` itself, so a
+      // guard built on it could never reject its own subject.
       ...REGISTRY_ADVERTISABLE_PROFILES,
-      ...profileCopyTable().entries.values(),
+      ...Object.values(PROFILE_GLOSS_TEXT),
     ]);
   }
 
