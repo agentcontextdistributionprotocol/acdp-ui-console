@@ -676,7 +676,7 @@ describe('which .did elements the dropped cap actually affected', () => {
     // reproducible from this file rather than taken on trust.
     expect(ids).toEqual([
       'app/agents/page.tsx:span:112', // NOT in a table — activity list
-      'app/security/page.tsx:div:224', // NOT in a table — JWKS card
+      'app/security/page.tsx:div:236', // NOT in a table — JWKS card (shifted by #131's LogWitness() hook)
       'app/trust/page.tsx:span:306', // flex item — WAS capped
       'app/trust/page.tsx:span:326', // inline in a <td> — inert (§10.4)
       'app/trust/page.tsx:span:343', // inline in a <td> — inert (§10.4)

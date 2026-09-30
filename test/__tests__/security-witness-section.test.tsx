@@ -23,6 +23,30 @@ import { createQueryClient } from '@/components/providers';
 
 const getLogWitness = vi.fn();
 const listRegistries = vi.fn();
+// #131: `LogWitness` now also calls `useDashboard('24h')` for
+// `features.witnessQuorum`. This file's fixtures always render with
+// `checkpoints: []` (see `witnessState()` below), so the quorum-wording
+// branch itself is never reached here — this mock exists only so the new
+// call has a function to hit at all, not an undefined one.
+const getCpDashboard = vi.fn<
+  (...args: unknown[]) => Promise<{
+    window: string;
+    totalRuns: number;
+    totalContexts: number;
+    totalAgents: number;
+    recentRuns: unknown[];
+    byScenario: unknown[];
+    byRegistry: unknown[];
+  }>
+>(async () => ({
+  window: '24h',
+  totalRuns: 0,
+  totalContexts: 0,
+  totalAgents: 0,
+  recentRuns: [],
+  byScenario: [],
+  byRegistry: [],
+}));
 const listLogWitnessAlerts =
   vi.fn<(...args: unknown[]) => Promise<{ data: unknown[]; total: number }>>(async () => ({
     data: [],
@@ -34,6 +58,7 @@ const listRevocations = vi.fn<(...args: unknown[]) => Promise<{ entries: unknown
 vi.mock('@/lib/api/client', () => ({
   getLogWitness: (...a: unknown[]) => getLogWitness(...a),
   listRegistries: (...a: unknown[]) => listRegistries(...a),
+  getCpDashboard: (...a: unknown[]) => getCpDashboard(...a),
   // Stubbed deliberately. Without it the alert worklist this page now mounts
   // has no client function to call, so it renders a red ErrorPanel INSIDE
   // otherwise-passing tests — a failure that is invisible because nothing here
