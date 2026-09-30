@@ -2343,15 +2343,26 @@ describe('the rendered card is a closed world over its fixture', () => {
     );
   });
 
-  it('announces no string its fixture does not license, through ANY attribute', () => {
-    for (const r of REGISTRIES) {
-      for (const c of CAPABILITY_AXIS) {
-        cleanup();
-        const { container } = render(<RegistryCard registry={r} capabilities={c} />);
-        expectAllAnnouncedLicensed(container, allowedAnnounced(c), coord(r, c));
+  it(
+    'announces no string its fixture does not license, through ANY attribute',
+    () => {
+      for (const r of REGISTRIES) {
+        for (const c of CAPABILITY_AXIS) {
+          cleanup();
+          const { container } = render(<RegistryCard registry={r} capabilities={c} />);
+          expectAllAnnouncedLicensed(container, allowedAnnounced(c), coord(r, c));
+        }
       }
-    }
-  });
+    },
+    // issue #133: this walks every attribute of every element across a full
+    // render matrix (REGISTRIES × CAPABILITY_AXIS), strictly more DOM work
+    // than its text-node sibling above. It has intermittently exceeded
+    // vitest's 5000ms default on GitHub's shared runners (never locally, and
+    // never on a real assertion) across four separate CI runs. Raising the
+    // timeout doesn't relax what's checked — the loop and every assertion are
+    // unchanged — it only stops a slow runner from being misread as a defect.
+    20_000,
+  );
 
   it('the non-text allow-list is a CLOSED list, pinned member by member', () => {
     // ROUND 12's G30. Adding `value` to `NON_TEXT_ATTRS` was green: nothing in
