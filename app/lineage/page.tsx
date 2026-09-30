@@ -64,7 +64,7 @@ export default function LineagePage() {
 }
 
 function ByRun({ demoMode }: { demoMode: boolean }) {
-  const { data: runsData, isLoading } = useRuns({});
+  const { data: runsData, isLoading, error: runsError } = useRuns({});
   const { data: scenarios } = useScenarios();
   const [runId, setRunId] = useState<string | null>(null);
   const [activeCtx, setActiveCtx] = useState<string | null>(null);
@@ -102,7 +102,13 @@ function ByRun({ demoMode }: { demoMode: boolean }) {
         </select>
       </div>
       {isLoading && <LoadingSkeleton rows={1} height={420} />}
-      {!isLoading && runs.length === 0 && <EmptyState title="No runs with lineage yet" />}
+      {!isLoading && runsError && (
+        <ErrorPanel
+          message={operatorErrorMessage(runsError, 'Could not load runs')}
+          details={errorDiagnostic(runsError)}
+        />
+      )}
+      {!isLoading && !runsError && runs.length === 0 && <EmptyState title="No runs with lineage yet" />}
       {selectedRunId && (
         <div className="card" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--topbar-h) - 150px)' }}>
           <div className="feed-header">

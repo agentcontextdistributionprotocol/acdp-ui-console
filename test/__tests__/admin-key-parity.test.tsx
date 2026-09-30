@@ -285,7 +285,7 @@ describe('a 403 this console minted is not an admin-scope problem', () => {
 
 // ── The five swept sites ──────────────────────────────────────────────
 
-describe('the five non-403 arms render a sentence, not a response body', () => {
+describe('the seven non-403 arms render a sentence, not a response body', () => {
   const RAW = '{"error":{"code":"schema_violation","message":"bad column"}}';
   function stamped(status: number, path: string): ApiError {
     return new ApiError(status, RAW, 'control-plane', path, true);
@@ -296,6 +296,21 @@ describe('the five non-403 arms render a sentence, not a response body', () => {
     const { container } = mount(<SecurityPage />);
     await waitFor(() =>
       expect(container.textContent).toContain('Could not load the revocation feed'),
+    );
+    const det = container.querySelector('details.error-detail');
+    expect(det!.textContent).toContain('schema_violation');
+    det!.remove();
+    expect(container.textContent).not.toContain('schema_violation');
+  });
+
+  it('the transparency-log witness section (#128: used to return null instead)', async () => {
+    // `LogWitness` used to `return null` on ANY empty registry list,
+    // including one it couldn't fetch at all — indistinguishable from the
+    // genuinely-empty case this same early return also covers.
+    listRegistries.mockRejectedValue(stamped(500, '/registries'));
+    const { container } = mount(<SecurityPage />);
+    await waitFor(() =>
+      expect(container.textContent).toContain('Could not load registries'),
     );
     const det = container.querySelector('details.error-detail');
     expect(det!.textContent).toContain('schema_violation');
@@ -335,6 +350,16 @@ describe('the five non-403 arms render a sentence, not a response body', () => {
     await waitFor(() =>
       expect(container.textContent).toContain('Could not save this enrollment'),
     );
+    const det = container.querySelector('details.error-detail');
+    expect(det!.textContent).toContain('schema_violation');
+    det!.remove();
+    expect(container.textContent).not.toContain('schema_violation');
+  });
+
+  it('the webhook list (#128: used to render an empty table instead)', async () => {
+    listWebhooks.mockRejectedValue(stamped(500, '/webhooks'));
+    const { container } = mount(<WebhookConfig />);
+    await waitFor(() => expect(container.textContent).toContain('Could not load webhooks'));
     const det = container.querySelector('details.error-detail');
     expect(det!.textContent).toContain('schema_violation');
     det!.remove();

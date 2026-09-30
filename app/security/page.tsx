@@ -164,6 +164,14 @@ function SigningKeys() {
 function LogWitness() {
   const registries = useRegistries();
   const rows = registries.data ?? [];
+  if (registries.error) {
+    return (
+      <ErrorPanel
+        message={operatorErrorMessage(registries.error, 'Could not load registries')}
+        details={errorDiagnostic(registries.error)}
+      />
+    );
+  }
   if (rows.length === 0) return null;
 
   return (
