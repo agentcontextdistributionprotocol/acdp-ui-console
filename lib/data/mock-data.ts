@@ -34,6 +34,16 @@ function iso(secondsAgo: number): string {
   return new Date(now - secondsAgo * 1000).toISOString();
 }
 
+/**
+ * A fixed offset from a frozen receipt clock, so the narrative cannot drift.
+ * Declared here (rather than beside `ATTESTED_RECEIPT_TS` below, where it was
+ * first used) because #119 needs it for `arcticSource`'s lineage/run-events
+ * too, which are declared earlier in this file.
+ */
+function afterReceipt(base: string, seconds: number): string {
+  return new Date(Date.parse(base) + seconds * 1000).toISOString();
+}
+
 export const LIVE_RUN_ID = 'run-7f3c9a1b';
 export const COMPLETED_RUN_ID = 'run-a1b2c3d4';
 export const FAILED_RUN_ID = 'run-9d8e7f6a';
@@ -364,10 +374,18 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
 export const SCENARIO_COUNT = MOCK_SCENARIOS.length;
 
 // ── Lineage graphs ────────────────────────────────────────────────────
+// #119: `arcticSource`'s own receipt (`registry_receipt.created_at`, frozen at
+// 2026-07-06) is the clock its publish belongs on — this run only RETRIEVES
+// it. See MOCK_RUN_EVENTS['run-arctic-src-1'] below for the run that actually
+// published it.
+const ARCTIC_RECEIPT_TS = MOCK_CRYPTO.arcticSource.registry_receipt.created_at;
+
 const LIVE_LINEAGE: LineageGraph = {
   nodes: [
     {
-      ctx_id: `acdp://${AUTH_A}/d1feb434-ef44-4166-b3ac-a157f795661d`,
+      // Derived, not a literal UUID: this node IS arcticSource, so its id
+      // comes from the same receipt as MOCK_CONTEXTS[0] below (#119).
+      ctx_id: MOCK_CRYPTO.arcticSource.registry_receipt.ctx_id,
       agent_id: DID_A,
       title: 'Cross-registry source — Arctic shipping routes',
       context_type: 'data_snapshot',
@@ -385,10 +403,18 @@ const LIVE_LINEAGE: LineageGraph = {
   ],
   edges: [
     {
-      src: `acdp://${AUTH_A}/d1feb434-ef44-4166-b3ac-a157f795661d`,
+      src: MOCK_CRYPTO.arcticSource.registry_receipt.ctx_id,
       dst: `acdp://${AUTH_B}/29b45ae4-1607-4e71-9efc-5016babeb19c`,
     },
   ],
+};
+
+// The completed run that actually PUBLISHED arcticSource (#119) — the live
+// run above only retrieves it (see its `acdp.retrieve` step, and `ev-2`).
+// Reuses the identical node object so both graphs describe the same context.
+const ARCTIC_SOURCE_LINEAGE: LineageGraph = {
+  nodes: [LIVE_LINEAGE.nodes[0]],
+  edges: [],
 };
 
 const FANOUT_LINEAGE: LineageGraph = {
@@ -408,6 +434,7 @@ const FANOUT_LINEAGE: LineageGraph = {
 
 export const MOCK_LINEAGE: Record<string, LineageGraph> = {
   [LIVE_RUN_ID]: LIVE_LINEAGE,
+  'run-arctic-src-1': ARCTIC_SOURCE_LINEAGE,
   [COMPLETED_RUN_ID]: {
     nodes: [
       // Retracted by its producer after v2 shipped (RFC-ACDP-0013) — see the
@@ -427,16 +454,9 @@ export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
     { type: 'run.started', run_id: LIVE_RUN_ID, ts: iso(24), scenario_id: 's5_cross_registry', title: 's5_cross_registry · run-7f3c9a1b' },
     { type: 'agent.started', run_id: LIVE_RUN_ID, ts: iso(23), agent_id: DID_A, title: DID_A },
     { type: 'llm.thinking', run_id: LIVE_RUN_ID, ts: iso(21), agent_id: DID_A, preview: 'Geopolitical risks in Arctic shipping routes…', title: 'gpt-4o-mini' },
-    {
-      type: 'acdp.publish',
-      run_id: LIVE_RUN_ID,
-      ts: iso(16),
-      agent_id: DID_A,
-      ctx_id: LIVE_LINEAGE.nodes[0].ctx_id,
-      title: 'Cross-registry source — Arctic shipping routes',
-      registry_authority: AUTH_A,
-      contexts_produced: 1,
-    },
+    // No acdp.publish of node[0] here (#119): this run RETRIEVES arcticSource
+    // (below), it does not publish it — see 'run-arctic-src-1' for the run
+    // that did, months ago, on its own receipt clock.
     { type: 'agent.started', run_id: LIVE_RUN_ID, ts: iso(15), agent_id: DID_B, title: DID_B },
     {
       type: 'acdp.retrieve',
@@ -464,9 +484,37 @@ export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
       run_id: LIVE_RUN_ID,
       ts: iso(0),
       scenario_id: 's5_cross_registry',
-      title: 'Run complete · 2 contexts',
+      title: 'Run complete · 1 context',
       lineage_graph: LIVE_LINEAGE,
-      contexts_produced: 2,
+      contexts_produced: 1,
+    },
+  ],
+  // The completed run that actually published arcticSource (#119), on its own
+  // frozen receipt clock rather than `iso()` — the live run above only
+  // retrieves it. `ARCTIC_RECEIPT_TS` is arcticSource's own registry receipt's
+  // `created_at`; these offsets bracket that instant the same way every other
+  // run's own step events bracket its publish.
+  'run-arctic-src-1': [
+    { type: 'run.started', run_id: 'run-arctic-src-1', ts: afterReceipt(ARCTIC_RECEIPT_TS, -9), scenario_id: 's5_cross_registry', title: 's5_cross_registry · run-arctic-src-1' },
+    { type: 'agent.started', run_id: 'run-arctic-src-1', ts: afterReceipt(ARCTIC_RECEIPT_TS, -8), agent_id: DID_A, title: DID_A },
+    {
+      type: 'acdp.publish',
+      run_id: 'run-arctic-src-1',
+      ts: ARCTIC_RECEIPT_TS,
+      agent_id: DID_A,
+      ctx_id: LIVE_LINEAGE.nodes[0].ctx_id,
+      title: 'Cross-registry source — Arctic shipping routes',
+      registry_authority: AUTH_A,
+      contexts_produced: 1,
+    },
+    {
+      type: 'run.complete',
+      run_id: 'run-arctic-src-1',
+      ts: afterReceipt(ARCTIC_RECEIPT_TS, 1),
+      scenario_id: 's5_cross_registry',
+      title: 'Run complete · 1 context',
+      lineage_graph: ARCTIC_SOURCE_LINEAGE,
+      contexts_produced: 1,
     },
   ],
   [COMPLETED_RUN_ID]: [
@@ -699,6 +747,21 @@ export const MOCK_RUNS: CpRun[] = [
       ],
     },
   },
+  {
+    // The run that actually published arcticSource (#119) — on its own frozen
+    // receipt clock, months before every `iso(N)` run above, so it sorts last
+    // regardless of how much time passes (every other row's N is <= 7200).
+    runId: 'run-arctic-src-1',
+    tenantId: 'default',
+    scenarioId: 's5_cross_registry',
+    status: 'completed',
+    startedAt: afterReceipt(ARCTIC_RECEIPT_TS, -9),
+    completedAt: afterReceipt(ARCTIC_RECEIPT_TS, 1),
+    contextsCount: 1,
+    registries: [AUTH_A],
+    inputs: { topic: 'Arctic shipping routes' },
+    trust: { audited: 1, verified: 1, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
+  },
 ];
 
 // ── Context events (global firehose / history) ────────────────────────
@@ -727,11 +790,6 @@ export const MOCK_RUNS: CpRun[] = [
 // `iso()` sites past the same 30-day cliff, rendering the whole demo as bare
 // locale dates.
 const ATTESTED_RECEIPT_TS = MOCK_CRYPTO.attested.registry_receipt.created_at;
-
-/** A fixed offset from a frozen receipt clock, so the narrative cannot drift. */
-function afterReceipt(base: string, seconds: number): string {
-  return new Date(Date.parse(base) + seconds * 1000).toISOString();
-}
 
 // Publish at the receipt moment itself, then hold and restore within the same
 // day. Distinct offsets so publish < retract < republish holds STRICTLY and the
@@ -767,7 +825,14 @@ const ATTESTED_RETRACTED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 3600);
 const ATTESTED_REPUBLISHED_TS = afterReceipt(ATTESTED_RECEIPT_TS, 7200);
 
 export const MOCK_CONTEXT_EVENTS: CpContextEvent[] = [
-  { id: 'ev-1', eventType: 'context_published', eventTs: iso(8), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
+  // Published by 'run-arctic-src-1', not the live run (#119): the live run only
+  // RETRIEVES this context (ev-2, below) — its signed created_at is months old,
+  // so an event dated "now" against it would be the same #85 clock mismatch
+  // fixed elsewhere in this file. `eventTs` is exactly the receipt's own
+  // created_at, matching MOCK_CONTEXTS[0].body.created_at (both derive from the
+  // same registry_receipt), which is what lets `arcticSource` join the
+  // receipt-clock class in `mock-data.test.ts` instead of needing an exception.
+  { id: 'ev-1', eventType: 'context_published', eventTs: ARCTIC_RECEIPT_TS, runId: 'run-arctic-src-1', ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_A, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:1f4a90c2e7b3', receiptPresent: true },
   { id: 'ev-2', eventType: 'context_retrieved', eventTs: iso(11), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[0].ctx_id, agentId: DID_B, registryAuthority: AUTH_B, scenarioId: 's5_cross_registry' },
   { id: 'ev-3', eventType: 'context_published', eventTs: iso(3), runId: LIVE_RUN_ID, ctxId: LIVE_LINEAGE.nodes[1].ctx_id, agentId: DID_B, contextType: 'analysis', visibility: 'public', version: 1, derivedFrom: [LIVE_LINEAGE.nodes[0].ctx_id], registryAuthority: AUTH_B, scenarioId: 's5_cross_registry', keyFingerprint: 'sha256:a07c5d1b9e22', receiptPresent: false },
   { id: 'ev-4', eventType: 'context_published', eventTs: iso(272), runId: COMPLETED_RUN_ID, ctxId: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, agentId: DID_SOLO, contextType: 'data_snapshot', visibility: 'public', version: 1, registryAuthority: AUTH_A, scenarioId: 's1_single_publish', keyFingerprint: 'sha256:3c8e2f04a1d6', receiptPresent: true },
@@ -998,7 +1063,9 @@ export function demoDashboardForWindow(window: string): CpDashboardOverview {
 //              list on the guard below would be the laundering pattern this
 //              plan exists to remove.
 export const MOCK_AGENTS: KnownAgent[] = [
-  { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: iso(172800), lastSeen: iso(8) },
+  // ev-1 (its only recorded event) moved to arcticSource's own receipt clock
+  // (#119) — firstSeen/lastSeen follow it, same pattern as DID_KEY below.
+  { agentDid: DID_A, registryAuthority: AUTH_A, contextCount: 12, firstSeen: ARCTIC_RECEIPT_TS, lastSeen: ARCTIC_RECEIPT_TS },
   { agentDid: DID_B, registryAuthority: AUTH_B, contextCount: 8, firstSeen: iso(172800), lastSeen: iso(3) },
   { agentDid: DID_SOLO, registryAuthority: AUTH_A, contextCount: 47, firstSeen: iso(432000), lastSeen: iso(210) },
   { agentDid: DID_KEY, registryAuthority: AUTH_A, contextCount: 1, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: ATTESTED_PUBLISHED_TS },
@@ -1006,7 +1073,10 @@ export const MOCK_AGENTS: KnownAgent[] = [
 
 // ── Registries ────────────────────────────────────────────────────────
 export const MOCK_REGISTRIES: KnownRegistry[] = [
-  { authority: AUTH_A, baseUrl: 'http://localhost:8100', eventCount: 187, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: iso(8) },
+  // lastSeen was `iso(8)`, matching ev-1's old (live-run) timestamp — now that
+  // ev-1 moved to arcticSource's receipt clock (#119), the newest AUTH_A event
+  // is ev-10 at `iso(210)`.
+  { authority: AUTH_A, baseUrl: 'http://localhost:8100', eventCount: 187, firstSeen: ATTESTED_PUBLISHED_TS, lastSeen: iso(210) },
   { authority: AUTH_B, baseUrl: 'http://localhost:8200', eventCount: 125, firstSeen: iso(432000), lastSeen: iso(3) },
 ];
 
