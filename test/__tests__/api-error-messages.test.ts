@@ -20,6 +20,7 @@ import {
   CONTEXT_ERROR_MESSAGES,
   contextErrorFallback,
   contextErrorMessage,
+  crashDiagnostic,
   errorDiagnostic,
   isUpstreamForbidden,
   operatorErrorMessage,
@@ -596,6 +597,40 @@ describe('errorDiagnostic', () => {
     const d = errorDiagnostic(apiError(500, body))!;
     expect(d).toContain(body);
     expect(d.length).toBeGreaterThan(40_000);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// #116: a render-crash boundary's disclosure. `errorDiagnostic` alone is the
+// wrong fit here — it is `undefined` for anything that isn't an `ApiError`,
+// and the ordinary crash a boundary actually catches is a plain `TypeError`
+// from React, not an `ApiError`. `crashDiagnostic` covers both without adding
+// a second, competing diagnostic vocabulary for the `ApiError` half.
+// ══════════════════════════════════════════════════════════════════════
+describe('crashDiagnostic', () => {
+  it('is the exact string errorDiagnostic gives, for an ApiError', () => {
+    const err = apiError(502, '{"error":{"code":"schema_violation"}}');
+    expect(crashDiagnostic(err)).toBe(errorDiagnostic(err));
+  });
+
+  it("is the throw's own name and message, for any other Error", () => {
+    expect(crashDiagnostic(new TypeError('Cannot read properties of undefined'))).toBe(
+      'TypeError: Cannot read properties of undefined',
+    );
+  });
+
+  it('appends the digest when given, to either arm', () => {
+    const err = apiError(500, '');
+    expect(crashDiagnostic(err, 'abc123')).toBe(`${errorDiagnostic(err)}\n\nDigest: abc123`);
+    expect(crashDiagnostic(new TypeError('x'), 'abc123')).toBe('TypeError: x\n\nDigest: abc123');
+  });
+
+  it('is undefined only for an empty, digest-less, non-Error throw', () => {
+    expect(crashDiagnostic('a string')).toBeUndefined();
+    expect(crashDiagnostic(null)).toBeUndefined();
+    expect(crashDiagnostic({})).toBeUndefined();
+    // A digest alone is still something worth showing, even with nothing else.
+    expect(crashDiagnostic('a string', 'abc123')).toBe('Digest: abc123');
   });
 });
 

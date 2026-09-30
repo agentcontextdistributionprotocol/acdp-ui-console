@@ -4,6 +4,7 @@ import { ScrollText } from 'lucide-react';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ApiError } from '@/lib/api/fetcher';
+import { errorDiagnostic } from '@/lib/utils/api-error-messages';
 import { useLogWitness } from '@/lib/hooks/use-security';
 import { C } from '@/lib/colors';
 import { formatNumber, shortId, timeAgo } from '@/lib/utils/format';
@@ -141,7 +142,10 @@ export function LogWitnessCard({ authority }: { authority: string }) {
       <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {witness.isLoading && <LoadingSkeleton rows={3} height={28} />}
         {witness.error && !notFound && (
-          <ErrorPanel message={`Could not load transparency-log witness state for ${authority}.`} />
+          <ErrorPanel
+            message={`Could not load transparency-log witness state for ${authority}.`}
+            details={errorDiagnostic(witness.error)}
+          />
         )}
 
         {state && (

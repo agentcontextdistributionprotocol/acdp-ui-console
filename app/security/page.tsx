@@ -207,7 +207,7 @@ function JwksCard({ authority, label }: { authority: RegistryAuthority; label: s
       </div>
       <div className="card-body">
         {jwks.isLoading && <LoadingSkeleton rows={2} height={48} />}
-        {jwks.error && <ErrorPanel message="Could not load JWKS." />}
+        {jwks.error && <ErrorPanel message="Could not load JWKS." details={errorDiagnostic(jwks.error)} />}
         {!jwks.isLoading && !jwks.error && keys.length === 0 && <EmptyState title="No published keys" />}
         {keys.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

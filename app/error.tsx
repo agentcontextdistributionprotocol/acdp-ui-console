@@ -2,6 +2,8 @@
 
 import { AlertTriangle } from 'lucide-react';
 import { C } from '@/lib/colors';
+import { ErrorDetail } from '@/components/ui/error-panel';
+import { crashDiagnostic } from '@/lib/utils/api-error-messages';
 
 export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
@@ -12,7 +14,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
       >
         <AlertTriangle size={32} color={C.danger} />
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700 }}>Something went wrong</div>
-        <div style={{ fontSize: 12, color: C.muted, maxWidth: 480 }}>{error.message || 'An unexpected error occurred.'}</div>
+        <ErrorDetail details={crashDiagnostic(error, error.digest)} />
         <button className="btn btn-primary" onClick={reset} style={{ marginTop: 8 }}>
           Try again
         </button>
