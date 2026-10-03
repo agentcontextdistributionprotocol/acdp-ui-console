@@ -1772,9 +1772,9 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 // would have no way to know which one the UI honours.
 export const MOCK_SDK_MATRIX = [
   { component: 'ACDP spec', version: '0.4.0 Final' },
-  { component: 'acdp-rs library', version: '0.14.1' },
-  { component: 'acdp-py binding', version: '0.14.1' },
-  { component: 'acdp-node binding', version: '0.14.1' },
+  { component: 'acdp-rs library', version: '0.14.2' },
+  { component: 'acdp-py binding', version: '0.14.2' },
+  { component: 'acdp-node binding', version: '0.14.2' },
   // Label must match SDK_MATRIX_ROW_SERVICE's key exactly; see the note there.
   // 0.5.0, matching what the real registry advertises and what
   // MOCK_CAPABILITIES.a now says — see the note there. The parenthetical names
