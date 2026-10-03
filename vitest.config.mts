@@ -16,7 +16,12 @@ export default defineConfig({
     // mandatory: a bare `exclude: ['temp/**']` would REPLACE Vitest's own
     // default list (`**/node_modules/**`, `**/.git/**`, …), not add to it,
     // and the runner would start collecting tests out of `node_modules`.
-    exclude: [...configDefaults.exclude, 'temp/**'],
+    // test/integration/**: the real-backend Playwright suite (playwright.config.ts).
+    // Its *.spec.ts files match Vitest's own default include pattern, and they
+    // import `@playwright/test`'s `test`/`expect`, not Vitest's — collected here
+    // they'd fail immediately with no backend running. `npm run test:integration`
+    // runs them instead.
+    exclude: [...configDefaults.exclude, 'temp/**', 'test/integration/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

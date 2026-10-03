@@ -9,6 +9,13 @@ next-env.d.ts
 .DS_Store
 /coverage
 
+# test/integration/ (playwright.config.ts) — real-backend integration suite.
+# .auth/ holds the logged-in storageState global-setup.ts writes; test-results/
+# and /playwright-report are per-run trace/screenshot/report output.
+/test-results
+/playwright-report
+test/integration/.auth/
+
 plans/
 temp/
 CLAUDE.md
