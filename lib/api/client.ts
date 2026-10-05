@@ -88,11 +88,12 @@ const authToService = (a: RegistryAuthority): ProxyService => AUTHORITY_TO_SERVI
 // | playground              | `200 {ok:true, service, version}`       | *(no failure path — static `ok:true`)*         |
 //
 // Only the registry signals degradation through the HTTP status. The control
-// plane signals it IN-BAND at 200 (`health.controller.ts` computes `dbOk` and
-// returns it as a field; no interceptor maps it to a status code), which is a
+// plane signals it IN-BAND at 200 (`ok:false`, no status code), which is a
 // defensible choice for the same reason the registry spells out for `/livez` —
 // a k8s liveness probe must not restart a process that cannot fix the database
-// by restarting. The console talks to deployments it does not control, so it
+// by restarting. `/healthz` is pure liveness there (acdp-control-plane #210): it
+// never awaits the database, `ok` mirrors the last background readiness verdict,
+// and a down Postgres surfaces on `/readyz` as 503 instead. The console talks to deployments it does not control, so it
 // has to tolerate both shapes regardless of what upstream might do later.
 //
 // Both upstreams with a failure path put `version` on the DEGRADED arm too

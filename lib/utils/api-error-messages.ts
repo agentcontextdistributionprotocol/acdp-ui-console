@@ -94,6 +94,29 @@ export const CONTEXT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * The control plane's labelled 4xx vocabulary (acdp-control-plane #182; the
+ * table in its `docs/API.md`). SCREAMING_SNAKE and looked up exactly, so it
+ * cannot collide with the registry's lowercase vocabulary below.
+ *
+ * Only codes whose meaning the bare status arm cannot convey are here. The
+ * generic `UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` are deliberately absent:
+ * the status arms already say that, with provenance. `ADMIN_REQUIRED` is the
+ * one 403 that is now distinguishable from a validation failure, so it names the
+ * fix. Applied by `operatorErrorMessage` AFTER a caller's own `codes`, so a
+ * surface with sharper copy still wins.
+ */
+export const CONTROL_PLANE_ERROR_CODES: ReadonlyMap<string, string> = new Map([
+  ['ADMIN_REQUIRED', 'This action needs an admin-scoped control-plane key, and the one this console holds is not.'],
+  ['INVALID_PAYLOAD', 'The control plane rejected the request as malformed. Check the values entered and retry.'],
+  ['PAYLOAD_TOO_LARGE', 'The control plane refused the request because it is too large.'],
+  ['RATE_LIMITED', 'The control plane is rate limiting this console. Wait a moment and retry.'],
+  ['RUN_NOT_FOUND', 'The control plane has no run with that id.'],
+  ['POLICY_DENIED', 'A control-plane policy denied this request.'],
+  ['REGISTRY_NOT_ENROLLED', 'That registry is not enrolled with this control plane.'],
+  ['REGISTRY_DISABLED', 'That registry is enrolled but currently disabled on this control plane.'],
+]);
+
+/**
  * The registry's own RFC-ACDP-0007 §5 vocabulary, for the surfaces that reach a
  * registry **directly** rather than through the control plane.
  *
@@ -390,6 +413,10 @@ export function operatorErrorMessage(
   // below are lowercase continuations, so they keep the dash.
   if (error.errorCode && opts?.codes) {
     const mapped = opts.codes.get(error.errorCode);
+    if (mapped) return `${lead}. ${mapped}`;
+  }
+  if (error.errorCode && error.service === 'control-plane') {
+    const mapped = CONTROL_PLANE_ERROR_CODES.get(error.errorCode);
     if (mapped) return `${lead}. ${mapped}`;
   }
 
