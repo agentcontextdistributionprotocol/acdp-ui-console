@@ -896,3 +896,29 @@ describe('isUpstreamForbidden', () => {
     expect(isUpstreamForbidden(new TypeError('Failed to fetch'))).toBe(false);
   });
 });
+
+describe('operatorErrorMessage — control-plane labelled 4xx codes (#157)', () => {
+  const code = (c: string, status: number) => apiError(status, { statusCode: status, errorCode: c });
+
+  it('renders the code copy in place of the bare status arm', () => {
+    expect(operatorErrorMessage(code('RATE_LIMITED', 429), 'Could not load runs')).toBe(
+      'Could not load runs. The control plane is rate limiting this console. Wait a moment and retry.',
+    );
+    expect(operatorErrorMessage(code('ADMIN_REQUIRED', 403), 'Could not enroll')).toContain('admin-scoped');
+  });
+
+  it('is case-sensitive and ignores unmapped codes', () => {
+    expect(operatorErrorMessage(code('rate_limited', 429), 'x')).toContain('rate limiting right now');
+    expect(operatorErrorMessage(code('FORBIDDEN', 403), 'x')).toContain('not authorized');
+  });
+
+  it('does not apply control-plane copy to another service\'s response', () => {
+    const e = new ApiError(429, JSON.stringify({ errorCode: 'RATE_LIMITED' }), 'registry-a', '/x', true);
+    expect(operatorErrorMessage(e, 'x')).not.toContain('control plane is rate limiting');
+  });
+
+  it('a caller\'s own codes map wins', () => {
+    const own = new Map([['RATE_LIMITED', 'custom.']]);
+    expect(operatorErrorMessage(code('RATE_LIMITED', 429), 'x', { codes: own })).toBe('x. custom.');
+  });
+});

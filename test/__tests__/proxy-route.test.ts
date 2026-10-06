@@ -515,7 +515,7 @@ describe('proxy route — route allow-list', () => {
 });
 
 describe('proxy route — request header hygiene', () => {
-  it('forwards allow-listed headers but strips cookies and client authorization', async () => {
+  it('forwards allow-listed headers but strips cookies, client authorization and x-tenant-id', async () => {
     const fetchMock = mockFetch(() => upstream());
     const req = new NextRequest('http://localhost/api/proxy/registry-a/contexts/search', {
       headers: {
@@ -527,7 +527,7 @@ describe('proxy route — request header hygiene', () => {
     });
     await GET(req, ctx('registry-a', ['contexts', 'search']));
     const sent = fetchMock.mock.calls[0][1].headers as Headers;
-    expect(sent.get('x-tenant-id')).toBe('tenant-7');
+    expect(sent.get('x-tenant-id')).toBeNull();
     expect(sent.get('content-type')).toBe('application/json');
     expect(sent.get('cookie')).toBeNull();
     expect(sent.get('authorization')).toBeNull();

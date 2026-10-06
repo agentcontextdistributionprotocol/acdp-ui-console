@@ -11,13 +11,14 @@ export const dynamic = 'force-dynamic';
 // Only forward a known-safe set of request headers upstream. Notably this
 // excludes the browser's cookies and any client-supplied `authorization`, so a
 // client can't borrow the proxy's trust (confused-deputy). The control-plane
-// bearer token is injected server-side below.
+// bearer token is injected server-side below. `x-tenant-id` is deliberately
+// absent too: RFC-ACDP-0008 §6.4 requires an authenticated gateway to stamp
+// that header, not relay a browser-chosen one, and this console never sets it.
 const FORWARD_HEADERS = new Set([
   'content-type',
   'accept',
   'accept-language',
   'idempotency-key',
-  'x-tenant-id',
   'x-run-id',
   'x-acdp-event-id',
 ]);
