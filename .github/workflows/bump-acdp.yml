@@ -57,7 +57,7 @@ on:
 #     GitHub App token, so GITHUB_TOKEN is unused and already empty.
 #   - concurrency: two releases in quick succession are two *different* version
 #     bumps, not superseded runs of one. `cancel-in-progress` would abort a bump
-#     mid-push; bump-consume.yml already de-duplicates on the `deps/acdp-<ver>`
+#     mid-push; bump-consume.yml already de-duplicates on the `deps/acdp-wasm-<ver>`
 #     branch instead.
 jobs:
   bump:
