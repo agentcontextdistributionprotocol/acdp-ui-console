@@ -7,6 +7,10 @@ lineage DAGs, and monitor the control plane — all from one console.
 Built with Next.js 16 (App Router), React 19, TypeScript (strict), TanStack Query, Zustand,
 Recharts, and React Flow. No Tailwind — styling is pure CSS variables with a `C.*` design-token object.
 
+Full documentation lives in [`docs/`](./docs/README.md) (architecture, pages, trust verification,
+authentication, configuration, deployment, testing); it links to the sibling repos' docs rather than
+repeating them.
+
 ## Quick start
 
 ```bash
@@ -131,7 +135,7 @@ GitHub Actions workflows in [`.github/workflows/`](./.github/workflows):
 | `docker.yml` | push / PR to `main`, tags `v*` | Builds the image; on `main` and tags publishes to `ghcr.io/agentcontextdistributionprotocol/acdp-ui-console`. PRs build only. |
 | `smoke.yml` | nightly + manual | Runs `scripts/smoke-routes.mjs` against the deployed console. |
 | `bump-acdp.yml` | `repository_dispatch: acdp-released` (from acdp-rs's release workflow) + manual | Opens a bump PR for `@agentcontextdistributionprotocol/acdp-wasm` via the shared `acdp-ci` `bump-consume.yml`. |
-| `notify-website.yml` | `docs/**` / `README.md` on `main` | Notifies `acdp-website` to re-sync docs. This repo has no `docs/` directory, so in practice only `README.md` changes (or a manual run) trigger it. |
+| `notify-website.yml` | `docs/**` / `README.md` on `main` | Dispatches `docs-updated` to `acdp-website`. The website's `scripts/sync-content.sh` deliberately does not sync this console, so the dispatch is currently a no-op for its content. |
 | `auto-merge.yml` | PR | Delegates to the shared `acdp-ci` auto-merge workflow, which can merge a green PR without human review. It is not armed for a breaking `acdp-wasm` bump (on 0.x, a minor counts as breaking). |
 
 Dependency updates are automated via [Dependabot](./.github/dependabot.yml) (monthly npm + actions).
@@ -177,4 +181,3 @@ repo links to them instead of restating them.
 | Python verifier | [`acdp-verifier-py`](https://github.com/agentcontextdistributionprotocol/acdp-verifier-py) |
 | Ecosystem overview / agent-readable index | [`acdp-docs`](https://github.com/agentcontextdistributionprotocol/acdp-docs) (`README.md`, `llms.txt`) |
 | Shared CI workflows (auto-merge, bump-consume) | [`acdp-ci`](https://github.com/agentcontextdistributionprotocol/acdp-ci) |
-| Website that re-syncs this README | [`acdp-website`](https://github.com/agentcontextdistributionprotocol/acdp-website) |
