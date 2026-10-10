@@ -176,8 +176,8 @@ assembled is documented in its
 On a first run, Playwright's Chromium may need installing
 (`npx playwright install chromium`).
 
-> `playwright.config.ts` mentions a `test/integration/README.md`. That file is
-> not in the repo. This section is the setup reference.
+The short setup version lives in
+[`test/integration/README.md`](../test/integration/README.md).
 
 ### What it does
 
