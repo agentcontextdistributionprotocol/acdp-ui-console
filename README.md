@@ -115,8 +115,8 @@ production build of this app against a real `acdp-playground` stack, which must 
 cd ../acdp-playground && LLM_PROVIDER=mock make up-full
 ```
 
-See [`CLAUDE.md`](./CLAUDE.md) for what the suite asserts and why some pages are expected to be empty
-in that stack.
+The suite seeds real runs through the playground and asserts the stack's real, honest emptiness for
+pages fed by registry webhooks (that stack ships with webhooks disabled).
 
 House style: mock upstreams with `vi.stubGlobal('fetch', …)` and env with `vi.stubEnv`, cleaned up in
 `afterEach`. Follow the existing files (`fetcher.test.ts`, `integrations.test.ts`) when adding tests.
@@ -178,60 +178,3 @@ repo links to them instead of restating them.
 | Ecosystem overview / agent-readable index | [`acdp-docs`](https://github.com/agentcontextdistributionprotocol/acdp-docs) (`README.md`, `llms.txt`) |
 | Shared CI workflows (auto-merge, bump-consume) | [`acdp-ci`](https://github.com/agentcontextdistributionprotocol/acdp-ci) |
 | Website that re-syncs this README | [`acdp-website`](https://github.com/agentcontextdistributionprotocol/acdp-website) |
-
-See [`CLAUDE.md`](./CLAUDE.md) for what the suite asserts and why some pages are expected to be empty
-in that stack.
-
-House style: mock upstreams with `vi.stubGlobal('fetch', …)` and env with `vi.stubEnv`, cleaned up in
-`afterEach`. Follow the existing files (`fetcher.test.ts`, `integrations.test.ts`) when adding tests.
-
-## CI/CD & Deployment
-
-GitHub Actions workflows in [`.github/workflows/`](./.github/workflows):
-
-| Workflow | Trigger | Does |
-| --- | --- | --- |
-| `ci.yml` | push / PR to `main` | Lint → typecheck → test (with coverage artifact) → build, on Node 24 (`.nvmrc`), with `.next/cache` reuse. |
-| `docker.yml` | push / PR to `main`, tags `v*` | Builds the image; on `main` and tags publishes to `ghcr.io/agentcontextdistributionprotocol/acdp-ui-console`. PRs build only. |
-| `smoke.yml` | nightly + manual | Runs `scripts/smoke-routes.mjs` against the deployed console. |
-| `bump-acdp.yml` | `repository_dispatch: acdp-released` (from acdp-rs's release workflow) + manual | Opens a bump PR for `@agentcontextdistributionprotocol/acdp-wasm` via the shared `acdp-ci` `bump-consume.yml`. |
-| `notify-website.yml` | `docs/**` / `README.md` on `main` | Notifies `acdp-website` to re-sync docs. This repo has no `docs/` directory, so in practice only `README.md` changes (or a manual run) trigger it. |
-| `auto-merge.yml` | PR | Delegates to the shared `acdp-ci` auto-merge workflow, which can merge a green PR without human review. It is not armed for a breaking `acdp-wasm` bump (on 0.x, a minor counts as breaking). |
-
-Dependency updates are automated via [Dependabot](./.github/dependabot.yml) (monthly npm + actions).
-The `typescript` major is held below `6.1` via an `ignore` entry, since typescript-eslint hard-throws
-above that range until [typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
-lands; see [issue #59](https://github.com/agentcontextdistributionprotocol/acdp-ui-console/issues/59)
-for the unblock condition. `acdp-wasm` is on 0.x, where a minor is a semantics change, so Dependabot's own minor bumps for it are
-excluded; only `bump-acdp.yml`'s dispatch-driven PR delivers them, and a minor waits for human review
-(gated by the real-binary `wasm-fixtures.test.ts`). `@types/node` is similarly held below `25` — types must track this repo's
-pinned Node 24 runtime (`.nvmrc`), not the newest publish — see `.github/dependabot.yml` for the
-guard.
-
-**Deployment.** The primary target is Vercel (Next.js git integration; see [`vercel.json`](./vercel.json)).
-A multi-stage [`Dockerfile`](./Dockerfile) produces a standalone image (`output: 'standalone'`) — the
-published GHCR image bakes demo mode (`NEXT_PUBLIC_ACDP_UI_DEMO_MODE=true`) since `NEXT_PUBLIC_*` is
-inlined at build time; the sibling compose stacks override that ARG to build a real-mode image.
-
-**`ACDP_UI_CONSOLE_PASSWORD` is required in any production deployment that calls the real backends.**
-Root `middleware.ts` gates `/api/proxy/*` and `/api/stream/*` behind a signed operator-session cookie
-(`/login` → `POST /api/auth/login`); with the var unset, gated requests 503 in production (fail
-closed) but pass through unauthenticated in development (fail open, with a console warning) so the
-zero-setup demo keeps working. A pure demo deployment that never flips `NEXT_PUBLIC_ACDP_UI_DEMO_MODE`
-to `false` never calls the gated routes and doesn't need the var configured. There is no login
-rate-limiting (an accepted tradeoff for a single-operator tool), so pick a high-entropy passphrase —
-4+ diceware words or 20+ random characters. Note this applies to any production-mode image, including a
-sibling compose stack's console (e.g. the playground's `make up-full` sets no password, so its console
-on `:3000` answers 503 on gated routes until you supply one).
-
-## Related repositories
-
-The console is a client of the ACDP backends — see their own docs rather than duplicating them here:
-
-- [`agentcontextdistributionprotocol`](https://github.com/agentcontextdistributionprotocol/agentcontextdistributionprotocol) — the protocol spec / RFCs.
-- [`acdp-playground`](https://github.com/agentcontextdistributionprotocol/acdp-playground) — scenario catalog + run execution.
-- [`acdp-control-plane`](https://github.com/agentcontextdistributionprotocol/acdp-control-plane) — runs, events, agents, registries, metrics.
-- [`acdp-registry-rs`](https://github.com/agentcontextdistributionprotocol/acdp-registry-rs) — context registry (storage, search, JWKS).
-- [`acdp-rs`](https://github.com/agentcontextdistributionprotocol/acdp-rs) / [`acdp-verifier-py`](https://github.com/agentcontextdistributionprotocol/acdp-verifier-py) — SDKs and the verifier.
-
-See [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions.
