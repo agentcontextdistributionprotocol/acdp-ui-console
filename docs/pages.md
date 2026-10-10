@@ -131,7 +131,11 @@ status.
 - **Detail view.** Opening a result fetches the full context with
   `getContext` (through the control plane) and renders
   `components/contexts/context-detail.tsx`, with its in-browser verification
-  chips. A failed fetch is worded by `contextErrorMessage` in
+  chips. In real mode, the issuing registry's own `did:web` DID document is
+  fetched from its configured base URL so registry-signed chips can verify.
+  A visible line says where that key came from (see
+  [Trust and verification](trust-and-verification.md#where-keys-come-from)).
+  A failed fetch is worded by `contextErrorMessage` in
   `lib/utils/api-error-messages.ts`, the same function the run inspector
   (`components/runs/context-inspector.tsx`) uses.
 

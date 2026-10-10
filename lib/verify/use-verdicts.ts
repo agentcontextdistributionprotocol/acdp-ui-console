@@ -54,8 +54,8 @@ export interface ContextVerdicts {
 // context while the lineage-head-receipt chip kept the verdict computed against
 // `active` (`verify.ts` binds `expected.head_status = status`), and a refetch
 // that ADDED a receipt left its chip on "verifying…" forever with `ready`
-// already true. Reachable via React Query's `refetchOnReconnect` (default
-// `true`, not overridden in `components/providers.tsx`), an explicit
+// already true. Reachable via React Query's `refetchOnReconnect` (set
+// explicitly to `true` in `components/providers.tsx`, since `networkMode: 'always'` flips its default), an explicit
 // `invalidateQueries`, or a long-mounted inspector on a live run.
 //
 // The key covers the whole of `ctx` that the effect can reach: the body, the

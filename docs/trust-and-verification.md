@@ -101,10 +101,43 @@ only ever pass (see the comment in `app/lineage/page.tsx`).
 - **`did:key`** is resolved entirely offline, using the wasm
   `resolveDidKey`. `resolveDidDocument` builds a DID document from the key in
   the identifier.
-- **`did:web`** is resolved only from the `DidDocMap` the host passes in.
-  `ContextDetail` passes `MOCK_DID_DOCS` in demo mode and **`undefined` in
-  real mode**. A live `did:web` signer, registry or witness therefore comes
-  out `unavailable` ("… DID document not fetched"), never as a false green.
+- **`did:web`** is looked up only in the `DidDocMap` the host passes in, which
+  `ContextDetail` gets from `useRegistryDidDocs`
+  (`lib/hooks/use-registry-did-docs.ts`):
+  - **Demo mode:** the bundled `MOCK_DID_DOCS`.
+  - **Real mode:** at most the **issuing registry's own** DID document, and
+    nothing else. For each configured registry (`a`, `b`), the capabilities
+    probe (`/.well-known/acdp.json`) gives the registry's `authority` and
+    `registry_did`. If that authority equals the authority in the context's
+    ctx_id, the console fetches `GET /.well-known/did.json` from that
+    registry's configured base URL (`REGISTRY_*_BASE_URL`, through the proxy).
+    `acceptRegistryDidDocument` (`lib/verify/did-docs.ts`) then accepts the
+    document only if its shape is valid (at most `MAX_VERIFICATION_METHODS`
+    keys, each controlled by and fragment-scoped to the document's DID) and
+    `doc.id === registry_did === "did:web:" + authority` (with a port's `:`
+    written as `%3A`). A 404, a fetch error or any mismatch leaves the map
+    empty. If both registries advertise the same authority, neither document
+    is trusted (nothing binds a document to the registry that served the
+    context), and the map is empty.
+  - The map is keyed by the document's **exact** DID, so a producer DID on the
+    same host (`did:web:<authority>:agents:x`) never matches it.
+  - This is **not** did:web resolution. did:web says to fetch
+    `https://<authority>/.well-known/did.json` over DNS and TLS. The console
+    instead asks the registry it is configured to use, so a verified chip only
+    means the material is consistent with that registry. When a live document
+    was accepted, `ContextDetail` says so in a visible line above the
+    registry-signed sections.
+  - The proxy allows `/.well-known/did.json` on `registry-a`/`registry-b`
+    only, as a fixed path. No route takes a DID or a host, because that would
+    let a browser make the server fetch arbitrary URLs (SSRF).
+  - **Producers and witnesses on other hosts stay `unavailable` ("… DID
+    document not fetched"), by design**, never a false green. The registry
+    receipt also stays amber for a `did:web` producer, because recomputing its
+    fingerprint needs the producer key (next bullet). Registry-signed
+    surfaces that need only the registry key (lineage-head receipt,
+    transparency-log checkpoint, and the receipt for a `did:key` producer) can
+    turn green. A registry that 404s `did.json` (for example one without the
+    receipts profile) leaves them amber.
 - `verifyRegistryReceipt` needs an Ed25519 producer key to recompute the
   receipt fingerprint (`resolveEd25519Raw`). Without one it returns
   `unavailable`.

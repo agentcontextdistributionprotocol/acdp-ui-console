@@ -81,8 +81,10 @@ flowchart TD
 - `confirmSessionOrRedirect` in `lib/api/fetcher.ts` returns early in demo
   mode, so a demo session can never send a real request.
 - Demo mode still verifies for real. Mock contexts carry real signatures, and
-  `components/contexts/context-detail.tsx` passes `MOCK_DID_DOCS` to the wasm
-  verifier. See [Trust and verification](trust-and-verification.md).
+  `useRegistryDidDocs` hands `MOCK_DID_DOCS` to the wasm verifier. In real
+  mode it hands over only the issuing registry's own `/.well-known/did.json`,
+  once it has been checked against that registry's advertised authority. See
+  [Trust and verification](trust-and-verification.md#where-keys-come-from).
 
 ## The proxy route
 
@@ -108,8 +110,10 @@ flowchart TD
   pairs that `lib/api/client.ts` sends for each service. Anything else gets a
   403 before any request goes out, so a guessed URL cannot reach other upstream
   routes with the injected credential attached. The two registries share one
-  list, `REGISTRY_ROUTES`. The upstream routes themselves are documented in
-  their own repos, linked below.
+  list, `REGISTRY_ROUTES`. That list includes `GET /.well-known/did.json`, the
+  registry's own DID document, as a fixed path. No route on any service
+  takes a DID or a host to fetch. The upstream routes themselves are
+  documented in their own repos, linked below.
 - **Request headers.** Only `FORWARD_HEADERS` reach the upstream:
   `content-type`, `accept`, `accept-language`, `idempotency-key`, `x-run-id`
   and `x-acdp-event-id`. The browser's cookies and `authorization` header are

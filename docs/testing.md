@@ -42,9 +42,9 @@ these groups:
 |------|----------|
 | Route handlers and the auth gate | `proxy-route.test.ts`, `stream-routes.test.ts`, `middleware.test.ts`, `auth-route.test.ts` |
 | API client and fetcher | `client.test.ts`, `client-demo.test.ts`, `fetcher.test.ts`, `integrations.test.ts` |
-| Trust-verdict core | `verify.test.ts`, `use-verdicts.test.ts`, `revocation.test.ts`, `use-trust.test.ts`, `wasm-loader*.test.ts`, `wasm-fixtures.test.ts` |
+| Trust-verdict core | `verify.test.ts`, `use-verdicts.test.ts`, `revocation.test.ts`, `use-trust.test.ts`, `wasm-loader*.test.ts`, `wasm-fixtures.test.ts`, `did-docs.test.ts`, `registry-did-keying.test.ts`, `use-registry-did-docs.test.tsx` |
 | Hooks and store | `use-live-run.test.ts`, `use-global-events.test.ts`, `use-health.test.tsx`, `use-registries.test.ts`, `preferences-store.test.ts`, `providers.test.tsx` |
-| Component and page render tests | `trust-page.test.tsx`, `dashboard-revocation.test.tsx`, `context-detail-verdicts.test.tsx`, `registry-card-*.test.tsx`, `log-witness-*.test.tsx`, `contexts-page.test.tsx` |
+| Component and page render tests | `trust-page.test.tsx`, `dashboard-revocation.test.tsx`, `context-detail-verdicts.test.tsx`, `context-detail-did-disclosure.test.tsx`, `registry-card-*.test.tsx`, `log-witness-*.test.tsx`, `contexts-page.test.tsx` |
 | Cross-cutting UI checks | `a11y.test.ts`, `modal-focus.test.tsx`, `table-scroll.test.tsx`, `render-boundaries.test.tsx`, `error-copy-sweep.test.tsx` |
 | Fixture invariants | `mock-data.test.ts` |
 
@@ -67,9 +67,11 @@ these groups:
 
 ### The real-binary wasm gate
 
-`wasm-fixtures.test.ts` is the only test that loads the real
+`wasm-fixtures.test.ts` is the gate test that loads the real
 `acdp_wasm_bg.wasm`, reading it with `readFileSync` and passing it to `init()`.
-Every other verifier test mocks the wasm symbols. It runs the committed demo
+(`registry-did-keying.test.ts` loads it the same way, for one narrow purpose:
+asserting which surfaces verify when only the issuing registry's own DID
+document is on hand.) Every other verifier test mocks the wasm symbols. It runs the committed demo
 fixtures through the real verifier and pins any upstream error-message text that
 `lib/verify/verify.ts` matches against. That makes it **the gate for every
 `acdp-wasm` bump**: if it fails on a dependency PR, that's a real signal, not a
@@ -176,8 +178,8 @@ assembled is documented in its
 On a first run, Playwright's Chromium may need installing
 (`npx playwright install chromium`).
 
-> `playwright.config.ts` mentions a `test/integration/README.md`. That file is
-> not in the repo. This section is the setup reference.
+The short setup version lives in
+[`test/integration/README.md`](../test/integration/README.md).
 
 ### What it does
 
