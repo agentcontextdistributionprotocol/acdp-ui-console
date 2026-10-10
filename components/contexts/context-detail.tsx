@@ -18,12 +18,12 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { JsonViewer } from '@/components/ui/json-viewer';
-import { formatCtxId, formatAgentDid, shortAuthority } from '@/lib/utils/acdp';
+import { formatCtxId, formatAgentDid, parseCtxId, shortAuthority } from '@/lib/utils/acdp';
 import { clockTime, timeAgo, shortId } from '@/lib/utils/format';
 import { C, statusChipClass } from '@/lib/colors';
-import type { FullContext, LifecycleEvent } from '@/lib/types';
+import { REGISTRY_LABELS, type FullContext, type LifecycleEvent } from '@/lib/types';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import { MOCK_DID_DOCS } from '@/lib/data/mock-data';
+import { useRegistryDidDocs } from '@/lib/hooks/use-registry-did-docs';
 import { useContextVerdicts } from '@/lib/verify/use-verdicts';
 import { useNow } from '@/lib/hooks/use-now';
 import type { Verdict } from '@/lib/verify/verify';
@@ -214,12 +214,23 @@ export function ContextDetail({
   const b = ctx.body;
   const fontSize = compact ? 10.5 : 11.5;
 
-  // In demo mode the console supplies the mock did:web DID documents so the
-  // did:web-signed surfaces can be verified offline; did:key surfaces verify
-  // with no documents at all. In live mode no did:web docs are on hand, so
-  // those surfaces honestly read "material only" (did:key still verifies).
+  // did:key surfaces verify with no documents at all. For did:web:
+  //  - demo mode: `useRegistryDidDocs` returns the bundled mock DID documents,
+  //    so the did:web-signed surfaces verify offline;
+  //  - real mode: it returns ONLY the issuing registry's own DID document,
+  //    fetched from the registry this console is configured to use
+  //    (`REGISTRY_*_BASE_URL`, via the proxy) and accepted only if its id is
+  //    exactly `did:web:<authority>` for the authority both the registry's
+  //    capabilities and this ctx_id name. That is consistency with the
+  //    configured registry, not did:web's DNS/TLS lookup, and the disclosure
+  //    line below says so. Producer and witness did:web documents are never
+  //    fetched, so those surfaces (and the registry receipt, which needs the
+  //    producer key) honestly read "material only".
+  // `didDocs` is referentially stable — `useContextVerdicts` re-runs the whole
+  // wasm suite when its identity changes.
   const demoMode = usePreferencesStore((s) => s.demoMode);
-  const didDocs = demoMode ? MOCK_DID_DOCS : undefined;
+  const ctxAuthority = parseCtxId(b.ctx_id)?.authority ?? '';
+  const { docs: didDocs, fetched: liveRegistryDids } = useRegistryDidDocs(ctxAuthority);
   const verdicts = useContextVerdicts(ctx, didDocs, requestedCtxId);
   const now = useNow();
 
@@ -393,6 +404,23 @@ export function ContextDetail({
           </>
         )}
       </Group>
+
+      {/* Where live did:web key material came from (real mode only). Visible
+          text, never a tooltip: it qualifies every registry-signed verdict
+          below. Deliberately not worded as did:web resolution — the document
+          came from the configured base URL, not the authority's own domain. */}
+      {!demoMode && liveRegistryDids.length > 0 && (
+        <div role="note" style={{ color: C.muted, fontSize: 10.5, lineHeight: 1.5 }}>
+          {liveRegistryDids.map(({ registry, did }) => (
+            <div key={did}>
+              Registry key material: the DID document for <span className="did">{did}</span> was fetched from{' '}
+              {REGISTRY_LABELS[registry]}, the registry this console is configured to use (
+              {`REGISTRY_${registry.toUpperCase()}_BASE_URL`}), and checked against the authority named in this ctx_id. It is
+              consistent with that registry; it was not looked up from the authority&apos;s own domain over DNS/TLS.
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Registry receipt (RFC-ACDP-0010) */}
       {ctx.registry_receipt && (

@@ -20,6 +20,14 @@ vi.mock('@/lib/verify/use-verdicts', () => ({
   useContextVerdicts: (...args: unknown[]) => useContextVerdicts(...args),
 }));
 
+// The DID-document hook needs a QueryClient; this file asserts verdict
+// rendering only, so it returns the demo-mode map (what the hook itself returns
+// in demo mode). Its own behaviour is covered by use-registry-did-docs.test.tsx.
+vi.mock('@/lib/hooks/use-registry-did-docs', async () => {
+  const { MOCK_DID_DOCS } = await import('@/lib/data/mock-data');
+  return { useRegistryDidDocs: () => ({ docs: MOCK_DID_DOCS, fetched: [] }) };
+});
+
 // Imported after the (hoisted) mock so the component binds to it.
 import { ContextDetail } from '@/components/contexts/context-detail';
 import { MOCK_CONTEXTS } from '@/lib/data/mock-data';

@@ -12,6 +12,7 @@ import {
   MOCK_CAPABILITIES,
   MOCK_CONTEXTS,
   MOCK_CONTEXT_EVENTS,
+  MOCK_DID_DOCS,
   MOCK_JWKS,
   MOCK_LINEAGE,
   MOCK_LINEAGE_CHAINS,
@@ -808,6 +809,33 @@ export async function listRevocations(
 export async function getRegistryJwks(authority: RegistryAuthority, demoMode: boolean): Promise<JwkSet> {
   if (demoMode) return delay(MOCK_JWKS[authority]);
   return fetchJson<JwkSet>(authToService(authority), '/.well-known/jwks.json');
+}
+
+/**
+ * A registry's OWN did:web DID document (`GET /.well-known/did.json` on the
+ * registry this console is configured to use — `REGISTRY_*_BASE_URL`), which
+ * carries its receipt / checkpoint verification keys.
+ *
+ * Returned as `unknown` on purpose: these are registry-controlled bytes, and the
+ * only sanctioned consumer is `acceptRegistryDidDocument`
+ * (`lib/verify/did-docs.ts`), which shape-checks them and binds the document id
+ * to the registry's advertised authority before anything verifies against it.
+ *
+ * A **404** resolves to `null` — "this registry publishes no DID document" (a
+ * registry without the receipts profile 404s this path) is an ordinary absence,
+ * not an error panel. Any other failure throws as usual. The demo branch returns
+ * the `MOCK_DID_DOCS` entry for the demo registry's advertised DID, or `null`
+ * when the demo dataset has none for it (registry-b), so the absent path is
+ * exercised in demo mode too.
+ */
+export async function getRegistryDidDocument(authority: RegistryAuthority, demoMode: boolean): Promise<unknown | null> {
+  if (demoMode) return delay(MOCK_DID_DOCS[MOCK_CAPABILITIES[authority].registry_did] ?? null);
+  try {
+    return await fetchJson<unknown>(authToService(authority), '/.well-known/did.json');
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
 }
 
 /**

@@ -43,6 +43,13 @@ const REGISTRY_ROUTES: RouteMatcher[] = [
   { method: 'GET', pattern: /^\/lineages\/[^/]+\/current$/ },
   { method: 'GET', pattern: /^\/\.well-known\/acdp\.json$/ },
   { method: 'GET', pattern: /^\/\.well-known\/jwks\.json$/ },
+  // The registry's OWN did:web DID document (its receipt / checkpoint keys),
+  // read by `getRegistryDidDocument` and accepted only by
+  // `lib/verify/did-docs.ts`. A fixed literal on the configured registry base
+  // URL — deliberately no route here (or on any service) takes a DID or host
+  // to fetch, which would turn this proxy into an SSRF primitive. Producer and
+  // witness DID documents on other hosts are therefore never fetched.
+  { method: 'GET', pattern: /^\/\.well-known\/did\.json$/ },
 ];
 
 const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {

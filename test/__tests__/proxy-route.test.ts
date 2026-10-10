@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { GET, POST, PATCH, DELETE } from '@/app/api/proxy/[service]/[...path]/route';
+import { GET, POST, PATCH, DELETE, HEAD } from '@/app/api/proxy/[service]/[...path]/route';
 
 /** Build the Next 15 async-params context the route handler expects. */
 function ctx(service: string, path?: string[]) {
@@ -233,6 +233,8 @@ describe('proxy route — route allow-list', () => {
       { method: 'GET', service: 'registry-a', path: ['lineages', 'l1', 'current'] },
       { method: 'GET', service: 'registry-a', path: ['.well-known', 'acdp.json'] },
       { method: 'GET', service: 'registry-a', path: ['.well-known', 'jwks.json'] },
+      { method: 'GET', service: 'registry-a', path: ['.well-known', 'did.json'] },
+      { method: 'GET', service: 'registry-b', path: ['.well-known', 'did.json'] },
       { method: 'GET', service: 'registry-b', path: ['contexts', 'search'] },
   ];
 
@@ -940,5 +942,64 @@ describe('proxy route — a non-2xx upstream body is relayed byte-for-byte', () 
     );
     expect(res.status).toBe(504);
     await expect(res.text()).resolves.toBe(html);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// `GET /.well-known/did.json` — a registry's own did:web DID document, the
+// only DID-document fetch this console makes. Allowed on the two registries
+// alone, GET alone, as a fixed literal (no route takes a DID or host — SSRF),
+// and relayed with the same no-store rewrite and stamp as every pass-through.
+// ══════════════════════════════════════════════════════════════════════
+describe('proxy route — registry did.json', () => {
+  const PATH = ['.well-known', 'did.json'];
+  const url = (service: string) => `http://localhost/api/proxy/${service}/${PATH.join('/')}`;
+
+  it.each(['registry-a', 'registry-b'])('allows GET on %s, stamped, cache-control rewritten to no-store', async (service) => {
+    vi.stubEnv('REGISTRY_A_BASE_URL', 'http://registry-a:8100');
+    vi.stubEnv('REGISTRY_B_BASE_URL', 'http://registry-b:8200');
+    const fetchMock = mockFetch(() =>
+      upstream({ headers: new Headers({ 'cache-control': 'public, max-age=3600', 'content-type': 'application/json' }) }),
+    );
+    const res = await GET(new NextRequest(url(service)), ctx(service, PATH));
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `${service === 'registry-a' ? 'http://registry-a:8100' : 'http://registry-b:8200'}/.well-known/did.json`,
+    );
+    expect(res.headers.get('cache-control')).toBe('no-store, no-transform');
+    expect(res.headers.get('x-acdp-ui-proxy')).toBe(service);
+  });
+
+  it.each(['playground', 'control-plane'])('refuses GET on %s with 403 and never calls upstream', async (service) => {
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(new NextRequest(url(service)), ctx(service, PATH));
+    expect(res.status).toBe(403);
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['POST', POST],
+    ['HEAD', HEAD],
+  ] as const)('refuses %s on a registry with 403 (method-exact)', async (method, handler) => {
+    const fetchMock = mockFetch(() => upstream());
+    const res = await handler(new NextRequest(url('registry-a'), { method }), ctx('registry-a', PATH));
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a DID-shaped tail', ['.well-known', 'did.json', 'did:web:evil.example']],
+    ['a path-based did:web document', ['agents', 'x', 'did.json']],
+    ['a widened filename', ['.well-known', 'did.jsonx']],
+  ])('refuses %s', async (_label, path) => {
+    const fetchMock = mockFetch(() => upstream());
+    const res = await GET(
+      new NextRequest(`http://localhost/api/proxy/registry-a/${path.join('/')}`),
+      ctx('registry-a', path),
+    );
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
