@@ -53,7 +53,7 @@ describe('mock scenarios', () => {
 
 describe('SDK matrix', () => {
   /**
-   * The LOCKED acdp-wasm version — the lock, never `package.json`'s `^0.14.1`
+   * The LOCKED acdp-wasm version — the lock, never `package.json`'s caret
    * range. The range is a floor; the lock is the fact, and it is what a
    * dependabot bump actually changes.
    */
