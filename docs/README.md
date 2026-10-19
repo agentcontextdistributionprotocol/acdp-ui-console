@@ -72,7 +72,7 @@ these are the places to go for the authoritative details:
 | Ecosystem overview | [ecosystem map](https://github.com/agentcontextdistributionprotocol/acdp-docs/blob/main/kb/ecosystem-map.md) · [console knowledge-base entry](https://github.com/agentcontextdistributionprotocol/acdp-docs/blob/main/kb/repos/acdp-ui-console.md) |
 
 These docs were last checked against **`@agentcontextdistributionprotocol/acdp-wasm`
-`^0.14.4`** (the version range in `package.json`). That records what was checked, not
+`^0.15.1`** (the version range in `package.json`). That records what was checked, not
 a compatibility promise. The spec's version matrix is where to check which versions
 work together.
 
