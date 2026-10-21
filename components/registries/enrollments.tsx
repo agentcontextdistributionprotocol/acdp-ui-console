@@ -25,6 +25,25 @@ import type { RegistryEnrollment } from '@/lib/types';
 
 type Editing = { mode: 'create' } | { mode: 'edit'; enrollment: RegistryEnrollment } | null;
 
+/**
+ * The control plane's reserved untenanted sentinel. An enrollment made with no
+ * tenant is stored and LISTED as `tenantId: 'default'`, yet naming `default`
+ * explicitly on `POST /registries/enroll` is refused with 403 `TENANT_RESERVED`
+ * (`assertNotReservedTenant(body.tenantId)`, acdp-control-plane
+ * `src/registries/registries.controller.ts:177`) — so echoing a listed row's
+ * tenant back verbatim made every toggle and edit of an untenanted enrollment
+ * fail (#173). Omitting it is the equivalent request: upstream falls back to the
+ * caller's own tenant (`body.tenantId ?? tenantOf(req)`, `:178`), and the
+ * listing is tenant-scoped (`:48`), so a row this console can list is always the
+ * caller's own tenant.
+ */
+const RESERVED_TENANT = 'default';
+
+/** `tenantId` to echo for an existing row: its real tenant, never the sentinel. */
+function storedTenant(tenantId: string | null | undefined): { tenantId?: string } {
+  return tenantId && tenantId !== RESERVED_TENANT ? { tenantId } : {};
+}
+
 export function Enrollments() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const qc = useQueryClient();
@@ -43,7 +62,7 @@ export function Enrollments() {
       enrollRegistry(
         {
           authority: e.authority,
-          tenantId: e.tenantId,
+          ...storedTenant(e.tenantId),
           baseUrl: e.baseUrl ?? undefined,
           registryDid: e.registryDid ?? undefined,
           enabled: !e.enabled,
@@ -211,7 +230,15 @@ function EnrollForm({
       enrollRegistry(
         {
           authority,
-          ...(tenantId ? { tenantId } : {}),
+          // An edit that leaves a listed `default` untouched must not echo it
+          // (see `RESERVED_TENANT`). A create sends what the operator typed —
+          // if that is `default`, upstream's TENANT_RESERVED is the honest
+          // answer, not a rule this console should restate.
+          ...(existing && tenantId === existing.tenantId
+            ? storedTenant(tenantId)
+            : tenantId
+              ? { tenantId }
+              : {}),
           // Re-enroll is PATCH-like (acdp-control-plane#240): an omitted
           // field keeps the stored value, so blanking a field that was set
           // must send `null` to clear it (#170). Unset-and-still-blank stays
@@ -293,8 +320,9 @@ function EnrollForm({
             // is refused AFTER the admin check passes — so a placeholder
             // suggesting it handed the operator a one-click route to a refusal
             // that has nothing to do with the key they would then go and get
-            // re-scoped. Blank means untenanted, which is what the field
-            // already does: `tenantId` is spread in only when truthy.
+            // re-scoped. Blank means untenanted: a blank `tenantId` is never
+            // sent, and neither is a listed `default` left untouched on edit
+            // (see `RESERVED_TENANT`).
             placeholder="blank = untenanted"
           />
         </div>

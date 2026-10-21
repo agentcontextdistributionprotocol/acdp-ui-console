@@ -126,3 +126,62 @@ describe('EnrollForm — clearing a previously set field (#170)', () => {
     expect(body).toEqual({ authority: 'registry-z.test', enabled: true });
   });
 });
+
+// Issue #173: an untenanted enrollment is LISTED as `tenantId: 'default'`, but
+// naming `default` on `POST /registries/enroll` is a 403 TENANT_RESERVED
+// (acdp-control-plane `registries.controller.ts:177`). Echoing a listed row's
+// tenant verbatim therefore broke every toggle and edit of such a row.
+describe('Enrollments — never echoes the reserved `default` tenant (#173)', () => {
+  const DEFAULT_ROW: RegistryEnrollment = { ...SET, tenantId: 'default' };
+
+  async function toggle(enrollment: RegistryEnrollment): Promise<Record<string, unknown>> {
+    listEnrollments.mockResolvedValue([enrollment]);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /enabled/ }));
+    await waitFor(() => expect(enrollRegistry).toHaveBeenCalledTimes(1));
+    return enrollRegistry.mock.calls[0][0] as Record<string, unknown>;
+  }
+
+  it('a toggle of a `default` row sends no tenantId', async () => {
+    const body = await toggle(DEFAULT_ROW);
+    expect(body).not.toHaveProperty('tenantId');
+    expect(body).toHaveProperty('enabled', false);
+  });
+
+  it('a toggle of a row bound to a real tenant still sends that tenant', async () => {
+    const body = await toggle(SET);
+    expect(body).toHaveProperty('tenantId', 'acme');
+  });
+
+  it('an edit of a `default` row that leaves the tenant untouched sends no tenantId', async () => {
+    await openEdit(DEFAULT_ROW);
+    expect(screen.getByPlaceholderText('blank = untenanted')).toHaveValue('default');
+    const body = await save();
+    expect(body).not.toHaveProperty('tenantId');
+  });
+
+  it('an edit of a row bound to a real tenant sends that tenant', async () => {
+    await openEdit(SET);
+    const body = await save();
+    expect(body).toHaveProperty('tenantId', 'acme');
+  });
+
+  it('an edit that changes the tenant sends the new value (upstream owns the immutability 409)', async () => {
+    await openEdit(DEFAULT_ROW);
+    fireEvent.change(screen.getByPlaceholderText('blank = untenanted'), { target: { value: 'acme' } });
+    const body = await save();
+    expect(body).toHaveProperty('tenantId', 'acme');
+  });
+
+  it('a create with `default` typed still sends it — the refusal is upstream\'s to make', async () => {
+    listEnrollments.mockResolvedValue([SET]);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /^Enroll$/ }));
+    fireEvent.change(screen.getByPlaceholderText('registry-a.example'), {
+      target: { value: 'registry-z.test' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('blank = untenanted'), { target: { value: 'default' } });
+    const body = await save();
+    expect(body).toHaveProperty('tenantId', 'default');
+  });
+});
