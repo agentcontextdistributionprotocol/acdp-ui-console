@@ -39,9 +39,11 @@ import {
   ackStage,
 } from '@/components/registries/log-witness-alerts';
 import {
+  ADMIN_REFUSAL_COPY,
   ADMIN_ROUTE_FORBIDDEN,
   errorDiagnostic,
   operatorErrorMessage,
+  type AdminRefusal,
 } from '@/lib/utils/api-error-messages';
 import {
   ACK_FORBIDDEN_PANEL,
@@ -1201,6 +1203,7 @@ type PinOpts = {
   reason: string;
   diagnostic?: string;
   failedMessage?: string;
+  refusal?: AdminRefusal;
   label?: string;
 };
 
@@ -1936,6 +1939,13 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
 
   /** A 403 the control plane really sent — `isUpstreamForbidden` refuses one this console minted. */
   const ackForbidden = () => new ApiError(403, 'Forbidden', 'control-plane', '/x', true);
+  /**
+   * A 403 the control plane really sent WITH one of its admin-route reason
+   * codes (#173) — `auth.guard.ts` / `registries.controller.ts` upstream. All
+   * four can reach `POST …/ack`.
+   */
+  const ackRefused = (errorCode: string) => () =>
+    new ApiError(403, JSON.stringify({ statusCode: 403, errorCode, message: 'Forbidden' }), 'control-plane', '/x', true);
   /** No `errorCode`, so `operatorErrorMessage` falls through to its status arm. */
   const ack503 = () => new ApiError(503, 'upstream down', 'control-plane', '/x', true);
 
@@ -2018,10 +2028,34 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     none: () => undefined,
     'resolved-404': ack404,
     'forbidden-403': ackForbidden,
+    // #173: one axis value per coded refusal. The panel's copy is a function
+    // of the code, so each must be rendered rather than inferred from the
+    // uncoded one.
+    'forbidden-403-ADMIN_REQUIRED': ackRefused('ADMIN_REQUIRED'),
+    'forbidden-403-TENANT_RESERVED': ackRefused('TENANT_RESERVED'),
+    'forbidden-403-TENANT_REQUIRED': ackRefused('TENANT_REQUIRED'),
+    'forbidden-403-ISSUER_READ_ONLY': ackRefused('ISSUER_READ_ONLY'),
     'other-503': ack503,
     offline: () => new TypeError('Failed to fetch'),
   } as const;
   type ErrKind = keyof typeof ACK_ERRORS;
+
+  /**
+   * Which refusal each 403 kind carries — written from the FIXTURES above,
+   * never by calling `adminRefusal`, for the reason round 8's B5 gives at
+   * `recordEffect`: an expectation computed by the function under test moves
+   * with a mutation of it. Keyed by `AdminRefusal`, so a new refusal fails
+   * `tsc` here until it has an axis value.
+   */
+  const REFUSAL_KIND: Record<AdminRefusal, ErrKind> = {
+    uncoded: 'forbidden-403',
+    ADMIN_REQUIRED: 'forbidden-403-ADMIN_REQUIRED',
+    TENANT_RESERVED: 'forbidden-403-TENANT_RESERVED',
+    TENANT_REQUIRED: 'forbidden-403-TENANT_REQUIRED',
+    ISSUER_READ_ONLY: 'forbidden-403-ISSUER_READ_ONLY',
+  };
+  const refusalOf = (kind: ErrKind): AdminRefusal | undefined =>
+    (Object.keys(REFUSAL_KIND) as AdminRefusal[]).find((r) => REFUSAL_KIND[r] === kind);
 
   type DialogInput = {
     live: 'listed' | 'gone';
@@ -2260,6 +2294,10 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     'reasonLabel',
     'operatorErrorMessage',
     'errorDiagnostic',
+    // #173: the 403 panel's copy, resolved from the refusal's code. Its output
+    // is pinned per refusal by `ACK_FORBIDDEN_PANEL`, and every refusal is an
+    // axis value of `ACK_ERRORS`, so it is structure rather than unmodelled data.
+    'adminRouteForbiddenMessage',
     'onClose',
     'ackStage',
     'ackListingConsequence',
@@ -2273,7 +2311,9 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
    * The third licence class, and it exists because the first run of the
    * structural guard found two names nobody had classified —
    * `ACK_ALREADY_RESOLVED` and `ADMIN_ROUTE_FORBIDDEN` — which is the guard
-   * doing its job on the code as it stands rather than on a mutation.
+   * doing its job on the code as it stands rather than on a mutation. #173
+   * replaced the second with `adminRouteForbiddenMessage` (licensed in
+   * `DIALOG_CALLS`), whose five outputs are pinned by `ACK_FORBIDDEN_PANEL`.
    *
    * A copy constant is safe for a reason the other two classes do not have: it
    * is a fixed string, so it cannot vary with an input, and it is compared
@@ -2283,7 +2323,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
    * spelled in the component (which is how unreviewed copy gets onto a screen)
    * is refused whatever it is called.
    */
-  const DIALOG_COPY = ['ACK_ALREADY_RESOLVED', 'ADMIN_ROUTE_FORBIDDEN'];
+  const DIALOG_COPY = ['ACK_ALREADY_RESOLVED'];
 
   /** Put the dialog into the state `i` describes. */
   async function enterDialog(i: DialogInput) {
@@ -2326,8 +2366,9 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
         await waitFor(() =>
           expect(dialog().textContent).toMatch(/no longer an alert to acknowledge/i),
         );
-      } else if (i.error === 'forbidden-403') {
-        await waitFor(() => expect(dialog().textContent).toContain(ADMIN_ROUTE_FORBIDDEN));
+      } else if (refusalOf(i.error) !== undefined) {
+        const panel = ACK_FORBIDDEN_PANEL[refusalOf(i.error)!];
+        await waitFor(() => expect(dialog().textContent).toContain(panel));
       } else {
         await waitFor(() =>
           expect(dialog().textContent).toMatch(/could not record the acknowledgement/i),
@@ -2470,13 +2511,12 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // nothing unless somebody has also written the string down under `test/`,
     // where it is reviewed as copy rather than as code.
     //
-    // The two members are reached differently and both are checked the same
-    // way. `ADMIN_ROUTE_FORBIDDEN` is imported from `api-error-messages` and is
-    // shared with `/registries`; `ACK_ALREADY_RESOLVED` is declared locally in
-    // the component. A local declaration is not a defect — it is where a
-    // one-surface string belongs — but it IS the shape unreviewed copy takes,
-    // so its value is lifted out of the AST and required to match a hand copy
-    // exactly.
+    // `ACK_ALREADY_RESOLVED` is declared locally in the component. A local
+    // declaration is not a defect — it is where a one-surface string belongs —
+    // but it IS the shape unreviewed copy takes, so its value is lifted out of
+    // the AST and required to match a hand copy exactly. (The 403 panel's copy
+    // left this class in #173: it is `adminRouteForbiddenMessage`'s output,
+    // pinned per refusal by `the 403 panel's copy is the copy someone wrote down`.)
     const proseStrings = new Set(
       Object.values(PROSE as Record<string, unknown>).filter(
         (v): v is string => typeof v === 'string',
@@ -2490,7 +2530,6 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
       }
     }
     const constantValue = (name: string): string | undefined => {
-      if (name === 'ADMIN_ROUTE_FORBIDDEN') return ADMIN_ROUTE_FORBIDDEN;
       let found: string | undefined;
       const findConst = (node: ts.Node): void => {
         if (
@@ -2628,7 +2667,11 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // two. The 24 new tuples are the ones where the live row and the snapshot
     // DISAGREE about acknowledgement, and rewriting the function to read the
     // snapshot alone is red on them and was green on all 72 before.
-    expect(inputs.length, 'the input enumeration collapsed').toBe(96);
+    //
+    // #173 took the input space from 96 to 160 the same way, again without an
+    // arm: four coded 403s are four more error kinds in the `forbidden` arm,
+    // whose copy differs by refusal — covered by `refusalsSeen` below.
+    expect(inputs.length, 'the input enumeration collapsed').toBe(160);
     expect(armsWanted.size, 'the reachable arm space changed shape').toBe(22);
     // The marginals are still asserted, because a product can be the right SIZE
     // while missing a member of one axis — and each set is read off a `Record`
@@ -2650,6 +2693,7 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     ).toEqual(new Set(['stage', 'consequence', 'outcome', 'footer', 'recordEffect']));
 
     const armsSeen = new Set<string>();
+    const refusalsSeen = new Set<AdminRefusal>();
     for (const i of inputs) {
       cleanup();
       acknowledgeLogWitnessAlert.mockReset();
@@ -2665,12 +2709,20 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
           arm.outcome === 'failed'
             ? operatorErrorMessage(error, 'Could not record the acknowledgement')
             : undefined,
+        refusal: arm.outcome === 'forbidden' ? refusalOf(i.error) : undefined,
         label:
           `${armKey(arm)}  [live=${i.live} err=${i.error} ` +
           `pending=${i.pending} showAck=${i.showAcknowledged}]`,
       });
       armsSeen.add(armKey(arm));
+      if (arm.outcome === 'forbidden') refusalsSeen.add(refusalOf(i.error)!);
     }
+    // #173: the refusal is not a member of `Arm` — it changes the panel's
+    // words, not which blocks render — so arm coverage cannot see a refusal
+    // that was never rendered. Asserted against the record's own keys.
+    expect([...refusalsSeen].sort(), 'a refusal was never rendered in the forbidden arm').toEqual(
+      (Object.keys(ACK_FORBIDDEN_PANEL) as AdminRefusal[]).sort(),
+    );
     // Every reachable arm was RENDERED, not merely enumerated. Without this the
     // loop could `continue` past one and the coverage claim would rest on the
     // derivation alone.
@@ -2689,9 +2741,14 @@ describe('witness alert worklist — the confirm dialog’s copy is a closed set
     // tests green with the fabricated sentence in this dialog's 403 panel.
     //
     // The hand copy is the bound, and this is where the two are held together.
-    // Whole-string equality: a word added, removed or reworded anywhere in 500
-    // characters fails here.
-    expect(ADMIN_ROUTE_FORBIDDEN).toBe(ACK_FORBIDDEN_PANEL);
+    // Whole-string equality: a word added, removed or reworded anywhere in an
+    // entry fails here. #173 made it one string per refusal, so it is held
+    // entry for entry, over the same key set.
+    expect(Object.keys(ADMIN_REFUSAL_COPY).sort()).toEqual(Object.keys(ACK_FORBIDDEN_PANEL).sort());
+    for (const r of Object.keys(ACK_FORBIDDEN_PANEL) as AdminRefusal[]) {
+      expect(ADMIN_REFUSAL_COPY[r], r).toBe(ACK_FORBIDDEN_PANEL[r]);
+    }
+    expect(ADMIN_ROUTE_FORBIDDEN).toBe(ACK_FORBIDDEN_PANEL.uncoded);
   });
 
   it('no stylesheet rule can put text in the dialog', () => {

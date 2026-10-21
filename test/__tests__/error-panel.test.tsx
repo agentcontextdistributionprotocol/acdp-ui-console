@@ -137,10 +137,10 @@ describe('ErrorPanel', () => {
 //
 // Extracted from `ErrorPanel` when three surfaces that render their error as
 // inline text (two modal bodies and a panel above a table) needed the same
-// disclosure. They need it MORE than the panels do, in fact: the 403 copy on
-// the admin-gated routes deliberately refuses to diagnose — the control plane
-// has four reasons for a 403 there and sends a code for none of them — and it
-// points the operator at this detail by name.
+// disclosure. They need it MORE than the panels do, in fact: when an
+// admin-gated route's 403 carries no reason code this console recognises, the
+// copy deliberately refuses to diagnose and points the operator at this detail
+// by name.
 //
 // Tested directly as well as through `ErrorPanel`, because it is now a public
 // export with consumers that do not go through the panel at all.
