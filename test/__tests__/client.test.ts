@@ -345,6 +345,17 @@ describe('real-mode proxy paths', () => {
     expect(fetchMock.mock.calls[0][1]?.method).toBe('POST');
   });
 
+  it('enrollRegistry keeps an explicit null on the wire (clears the field upstream, #170)', async () => {
+    const fetchMock = mockFetch(() => jsonResponse({ authority: 'r-a', tenantId: 'default', enabled: true, createdAt: '' }));
+    await enrollRegistry({ authority: 'r-a', baseUrl: null, registryDid: null, enabled: true }, false);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      authority: 'r-a',
+      baseUrl: null,
+      registryDid: null,
+      enabled: true,
+    });
+  });
+
   it('getLineage → /lineages/{id} on the registry', async () => {
     const fetchMock = mockFetch(() => jsonResponse([]));
     await getLineage('lin-cashflow-001', 'a', false);

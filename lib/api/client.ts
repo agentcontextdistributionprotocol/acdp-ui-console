@@ -484,8 +484,9 @@ export async function enrollRegistry(
     if (existing) {
       Object.assign(existing, {
         tenantId: input.tenantId ?? existing.tenantId,
-        baseUrl: input.baseUrl ?? existing.baseUrl,
-        registryDid: input.registryDid ?? existing.registryDid,
+        // PATCH-like, as control-plane#240: undefined keeps, null clears.
+        baseUrl: input.baseUrl !== undefined ? input.baseUrl : existing.baseUrl,
+        registryDid: input.registryDid !== undefined ? input.registryDid : existing.registryDid,
         enabled: input.enabled ?? existing.enabled,
         updatedAt: ts,
       });

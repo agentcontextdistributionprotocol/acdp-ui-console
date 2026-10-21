@@ -470,6 +470,25 @@ describe('enrollRegistry (demo)', () => {
     expect(patched.enabled).toBe(false);
     expect((await listEnrollments(DEMO)).length).toBe(before);
   });
+
+  // #170: demo mirrors control-plane#240's PATCH-like re-enroll — an omitted
+  // nullable field keeps the stored value, an explicit null clears it.
+  it('re-enroll with baseUrl/registryDid: null clears them; omitting them keeps them', async () => {
+    const authority = 'registry-clear.test';
+    await enrollRegistry(
+      { authority, baseUrl: 'https://registry-clear.test', registryDid: 'did:web:registry-clear.test' },
+      DEMO,
+    );
+    const kept = await enrollRegistry({ authority, enabled: true }, DEMO);
+    expect(kept.baseUrl).toBe('https://registry-clear.test');
+    expect(kept.registryDid).toBe('did:web:registry-clear.test');
+    const cleared = await enrollRegistry({ authority, baseUrl: null, registryDid: null }, DEMO);
+    expect(cleared.baseUrl).toBeNull();
+    expect(cleared.registryDid).toBeNull();
+    const row = (await listEnrollments(DEMO)).find((r) => r.authority === authority);
+    expect(row?.baseUrl).toBeNull();
+    expect(row?.registryDid).toBeNull();
+  });
 });
 
 // ── Transparency-log witness ───────────────────────────────────────────

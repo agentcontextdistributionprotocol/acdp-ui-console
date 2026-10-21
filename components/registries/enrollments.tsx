@@ -179,6 +179,15 @@ export function Enrollments() {
   );
 }
 
+function clearableField<K extends 'baseUrl' | 'registryDid'>(
+  key: K,
+  value: string,
+  stored: string | null | undefined,
+): Partial<Record<K, string | null>> {
+  if (value) return { [key]: value } as Record<K, string>;
+  return stored ? ({ [key]: null } as Record<K, null>) : {};
+}
+
 function EnrollForm({
   editing,
   demoMode,
@@ -203,8 +212,12 @@ function EnrollForm({
         {
           authority,
           ...(tenantId ? { tenantId } : {}),
-          ...(baseUrl ? { baseUrl } : {}),
-          ...(registryDid ? { registryDid } : {}),
+          // Re-enroll is PATCH-like (acdp-control-plane#240): an omitted
+          // field keeps the stored value, so blanking a field that was set
+          // must send `null` to clear it (#170). Unset-and-still-blank stays
+          // omitted. The secret is different: blank means "unchanged".
+          ...clearableField('baseUrl', baseUrl, existing?.baseUrl),
+          ...clearableField('registryDid', registryDid, existing?.registryDid),
           ...(secret ? { webhookSecret: secret } : {}),
           enabled: existing?.enabled ?? true,
         },

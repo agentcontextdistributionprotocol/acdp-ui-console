@@ -386,8 +386,10 @@ export interface RegistryEnrollment {
 export interface EnrollRegistryInput {
   authority: string;
   tenantId?: string;
-  baseUrl?: string;
-  registryDid?: string;
+  // Re-enroll is PATCH-like (acdp-control-plane#240): omit to keep the stored
+  // value, `null` to clear it.
+  baseUrl?: string | null;
+  registryDid?: string | null;
   webhookSecret?: string;
   enabled?: boolean;
 }
