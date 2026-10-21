@@ -312,20 +312,18 @@ function EnrollForm({
           <div style={{ fontSize: 11, color: C.warning }}>Webhook secret must be at least 16 characters.</div>
         )}
       </div>
-      {/* No `codes` map, and the reason is narrower than it first looks. The
-          enroll handler
-          (`acdp-control-plane/src/registries/registries.controller.ts:156-185`)
-          raises `ForbiddenException`, `assertNotReservedTenant`'s, and
-          `ValidationPipe`'s — all built-in Nest exceptions, whose default body
-          already carries a STRING under `error`, so `withAcdpEnvelope`
-          (`exception.filter.ts:72`) short-circuits and no `error.code` is
-          minted at all. (It is not, as an earlier version of this comment said,
-          that they default to `INTERNAL_ERROR`; that default applies to the
-          string-bodied throws the filter DOES rewrite — a throttled enroll, or
-          any 500 — which is also the reason "only those three" was wrong.) The
-          upshot is unchanged: the only code this route can emit is
-          `INTERNAL_ERROR`, which says nothing a status does not. Filed as
-          acdp-control-plane#179.
+      {/* No local `codes` map. Every refusal this route makes is now coded
+          (acdp-control-plane#182): `assertAdmin` → `ADMIN_REQUIRED` and
+          `assertNotReservedTenant` → `TENANT_RESERVED` (both 403),
+          re-enrolling under another tenant → `REGISTRY_ENROLLED_ELSEWHERE`
+          (409, `src/registries/registries.controller.ts:207`), and
+          ValidationPipe's 400 → the generic `INVALID_PAYLOAD`. But an upstream
+          403 is caught by the `forbidden` arm before `operatorErrorMessage`
+          runs, so the two 403 codes render as `ADMIN_ROUTE_FORBIDDEN`. The
+          rest go through `CONTROL_PLANE_ERROR_CODES`, which maps
+          `INVALID_PAYLOAD` but not `REGISTRY_ENROLLED_ELSEWHERE` yet, so the
+          409 gets the status copy.
+          Either way the control plane's own sentence is in `ErrorDetail`.
 
           Inline text rather than an `ErrorPanel` — a bordered card with a 20px
           gutter is wrong inside a form — but it gets the same disclosure, for

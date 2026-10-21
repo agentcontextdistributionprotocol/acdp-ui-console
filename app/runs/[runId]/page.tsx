@@ -49,16 +49,16 @@ export default function RunDetailPage({ params }: { params: Promise<{ runId: str
           network `TypeError` — so an operator was sent looking for a run that
           may exist and be perfectly reachable in a minute.
 
-          No `codes` map, despite `RUN_NOT_FOUND` existing in the control
-          plane's enum (`src/errors/error-codes.ts:2`): `GET /runs/:runId` lands
-          in `src/storage/run.repository.ts:145`, which throws a bare
-          `NotFoundException`, and Nest's default object body already carries an
-          `error` key (the string `'Not Found'`), so `withAcdpEnvelope`
-          (`exception.filter.ts:72`) leaves it alone and no `errorCode` is ever
-          minted for this route. A map keyed on a code that
-          cannot arrive would be copy no test could honestly exercise. The 404
-          arm does the work instead, via `notFound`, which keeps the id in the
-          sentence — the one genuinely useful part of the old string. */}
+          No local `codes` map, because none is needed: a missing run now
+          arrives coded. `GET /runs/:runId` throws
+          `AppException(ErrorCode.RUN_NOT_FOUND)`
+          (`src/storage/run.repository.ts:154` in acdp-control-plane), and
+          `operatorErrorMessage` falls back to the shared
+          `CONTROL_PLANE_ERROR_CODES` map, which carries `RUN_NOT_FOUND`. A code
+          beats a status arm, so against a current control plane that sentence
+          renders, not `notFound`. `notFound` stays as the fallback for a 404
+          that carries no code (an older control plane, or a proxy-level 404),
+          and it keeps the id in the sentence. */}
       {error && (
         <ErrorPanel
           message={operatorErrorMessage(error, 'Could not load this run', {
