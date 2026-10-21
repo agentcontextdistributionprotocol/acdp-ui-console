@@ -13,7 +13,7 @@ import { TableScroll } from '@/components/ui/table-scroll';
 import { listEnrollments, enrollRegistry } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import {
-  ADMIN_ROUTE_FORBIDDEN,
+  adminRouteForbiddenMessage,
   errorDiagnostic,
   isUpstreamForbidden,
   operatorErrorMessage,
@@ -89,10 +89,11 @@ export function Enrollments() {
           is `toggleMut.error` with extra steps — and it hid that the two arms
           below are the same condition split, not two independent guards.
 
-          The disclosure is NOT optional on the 403 arm. `ADMIN_ROUTE_FORBIDDEN`
-          deliberately refuses to diagnose — the control plane has four reasons
-          for a 403 here and sends a code for none of them — and it points the
-          operator at this detail by name. A first cut left it off on the theory
+          The disclosure is NOT optional on the 403 arm. A coded refusal
+          (acdp-control-plane#182) gets its own sentence from
+          `adminRouteForbiddenMessage`; an uncoded one gets the fallback, which
+          deliberately refuses to diagnose and points the operator at this
+          detail by name. A first cut left it off on the theory
           that a `<details>` above a table reflows it when opened; that is true,
           it is the operator's own click, and it is a trivial cost next to
           having no path at all to the reason the control plane gave. */}
@@ -101,7 +102,7 @@ export function Enrollments() {
           <ErrorPanel
             message={
               toggleForbidden
-                ? `Enrollment changes are admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`
+                ? `Enrollment changes are admin-gated. ${adminRouteForbiddenMessage(toggleMut.error)}`
                 : operatorErrorMessage(toggleMut.error, 'Could not change this enrollment')
             }
             details={errorDiagnostic(toggleMut.error)}
@@ -355,7 +356,7 @@ function EnrollForm({
       {mut.error && (
         <div style={{ marginTop: 12, fontSize: 11, color: C.danger }}>
           {forbidden
-            ? `Enrollment is admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`
+            ? `Enrollment is admin-gated. ${adminRouteForbiddenMessage(mut.error)}`
             : operatorErrorMessage(mut.error, 'Could not save this enrollment')}
           <ErrorDetail details={errorDiagnostic(mut.error)} />
         </div>

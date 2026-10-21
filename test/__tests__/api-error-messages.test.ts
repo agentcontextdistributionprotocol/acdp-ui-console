@@ -992,8 +992,8 @@ describe('adminRefusal — the closed set of admin-route 403 reasons (#173)', ()
     expect(ADMIN_REFUSAL_COPY.TENANT_REQUIRED).toContain('CONTROL_PLANE_API_KEY');
   });
 
-  it('the uncoded fallback no longer claims the control plane sends no code', () => {
-    expect(ADMIN_ROUTE_FORBIDDEN).not.toContain('sends no code');
+  it('the uncoded fallback no longer claims the control plane is code-less', () => {
+    expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/sends\s+no\s+code/);
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('sent no reason code this console recognises');
   });
 });

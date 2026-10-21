@@ -24,7 +24,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import type { RenderResult } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
-import { ADMIN_KEY_REQUIRED, ADMIN_ROUTE_FORBIDDEN } from '@/lib/utils/api-error-messages';
+import { ADMIN_KEY_REQUIRED, ADMIN_REFUSAL_COPY, ADMIN_ROUTE_FORBIDDEN } from '@/lib/utils/api-error-messages';
 
 const listEnrollments = vi.fn();
 const enrollRegistry = vi.fn();
@@ -210,8 +210,8 @@ describe('the admin-key sentence exists once', () => {
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('likeliest');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('reserved tenant');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('AUTH_REQUIRE_TENANT');
-    // …and no longer claims the control plane sends no code: it does.
-    expect(ADMIN_ROUTE_FORBIDDEN).not.toContain('sends no code');
+    // …and no longer claims the control plane is code-less: it is not.
+    expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/sends\s+no\s+code/);
     // …and it never states the diagnosis as fact.
     expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/requires an admin API key\.|is not an admin key/);
   });
@@ -431,5 +431,49 @@ describe('the enroll form renders the 409 immutability refusal (#173)', () => {
         'tenant holds it.',
     );
     expect(form.textContent).not.toContain('admin-gated');
+  });
+});
+
+// Issue #173: a CODED upstream 403 renders that code's own sentence after the
+// surface's subject, not the uncoded "cannot tell which" fallback. The exact
+// sentences are pinned by hand in api-error-messages.test.ts.
+describe('coded admin-route 403s render their own copy on all three surfaces (#173)', () => {
+  const coded403 = (path: string, errorCode: string, fromUpstream = true) =>
+    new ApiError(
+      403,
+      JSON.stringify({ statusCode: 403, errorCode, message: 'refused' }),
+      'control-plane',
+      path,
+      fromUpstream,
+    );
+  const SURFACES = [
+    ['revocation feed', 'The revocation feed is admin-gated. ', (e: ApiError) => renderFeed403(e), '/auth/revocations'],
+    ['enrollment toggle', 'Enrollment changes are admin-gated. ', (e: ApiError) => renderToggle403(e), '/registries/enroll'],
+    ['enroll form', 'Enrollment is admin-gated. ', (e: ApiError) => renderEnrollForm403(e), '/registries/enroll'],
+  ] as const;
+  const CASES = SURFACES.flatMap(([name, subject, render, path]) =>
+    (['ADMIN_REQUIRED', 'TENANT_RESERVED'] as const).map((code) => [name, code, subject, render, path] as const),
+  );
+
+  it.each(CASES)('%s, %s', async (_name, code, subject, render, path) => {
+    const text = (await render(coded403(path, code))).textContent!;
+    expect(text).toContain(subject + ADMIN_REFUSAL_COPY[code]);
+    expect(text).not.toContain('cannot tell which of its reasons applies');
+    // The control plane's own sentence is still disclosed.
+    expect(text).toContain('refused');
+  });
+
+  // The provenance gate still runs first: a 403 this console minted is never
+  // dressed as an admin-gated refusal, coded body or not. What it renders then
+  // is `operatorErrorMessage`'s call, where a recognised code deliberately
+  // outranks provenance (see that function's own comment).
+  it.each(SURFACES)('%s: an UNSTAMPED coded 403 skips the admin-gated arm', async (_name, subject, render, path) => {
+    const text = (await render(coded403(path, 'ADMIN_REQUIRED', false))).textContent!;
+    expect(text).not.toContain(subject);
+    const lead = {
+      '/auth/revocations': 'Could not load the revocation feed',
+      '/registries/enroll': subject.startsWith('Enrollment changes') ? 'Could not change this enrollment' : 'Could not save this enrollment',
+    }[path];
+    expect(text).toContain(`${lead}. ${ADMIN_REFUSAL_COPY.ADMIN_REQUIRED}`);
   });
 });
