@@ -14,7 +14,7 @@ import { acknowledgeLogWitnessAlert } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { ApiError } from '@/lib/api/fetcher';
 import {
-  ADMIN_ROUTE_FORBIDDEN,
+  adminRouteForbiddenMessage,
   errorDiagnostic,
   isUpstreamForbidden,
   operatorErrorMessage,
@@ -590,10 +590,12 @@ function AcknowledgeDialog({
           <ErrorPanel
             // Acknowledging IS admin-gated upstream (`actorIsAdmin`), unlike
             // reading the worklist. So this is the one place on this card where
-            // the admin-scope copy is the correct advice rather than a wrong
-            // guess — and the copy still refuses to pick a single cause,
-            // because the control plane sends no code to pick one with.
-            message={ADMIN_ROUTE_FORBIDDEN}
+            // admin-scope copy is the correct advice rather than a wrong guess.
+            // The control plane codes the refusal (ADMIN_REQUIRED,
+            // TENANT_RESERVED, TENANT_REQUIRED or ISSUER_READ_ONLY), and the
+            // resolver renders that code's own cause and remedy; only an
+            // uncoded 403 falls back to the copy that refuses to pick one.
+            message={adminRouteForbiddenMessage(mut.error)}
             details={errorDiagnostic(mut.error)}
           />
         )}

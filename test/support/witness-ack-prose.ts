@@ -59,6 +59,9 @@ import type {
   AckOutcome,
   AckRecordEffect,
 } from '@/components/registries/log-witness-alerts';
+// The TYPE only — never a value. A new refusal member fails `tsc` on
+// `ACK_FORBIDDEN_PANEL` below until someone writes its sentence down.
+import type { AdminRefusal } from '@/lib/utils/api-error-messages';
 
 /**
  * Collapse every run of whitespace to one space and trim.
@@ -173,48 +176,67 @@ export const ACK_RESOLVED_PANEL =
 export const ACK_HEADING = (authority: string) => `Acknowledge ${authority}`;
 
 /**
- * The 403 panel's message — a HAND COPY of `ADMIN_ROUTE_FORBIDDEN`.
+ * The 403 panel's message, per refusal — HAND COPIES of `ADMIN_REFUSAL_COPY`.
  *
- * ROUND 5 CORRECTION. This used to import that constant, under a docblock
- * arguing the import was a bounded exception to this file's no-importing rule
- * because "it has its own dedicated pin in `admin-key-parity.test.tsx`
- * (`:214-219`)". The line citation was exact and the conclusion was wrong: that
- * pin is four `toContain` substring assertions plus one `not.toMatch`, and a
- * substring pin cannot bound what ELSE the string says. This file's own opening
- * paragraph names that failure mode — "a substring match cannot see a prefix" —
- * and here it was a SUFFIX. Round 5's gate appended
- * `' The acknowledgement was recorded anyway.'` to the constant in
- * `lib/utils/api-error-messages.ts` and all 1115 tests stayed green, with the
- * fabricated sentence rendering verbatim in this dialog's 403 panel and on the
- * two other surfaces that share the constant.
+ * ROUND 5 CORRECTION (#84). This used to import the constant, under a
+ * docblock arguing the import was a bounded exception to this file's
+ * no-importing rule because it had its own substring pin elsewhere. A
+ * substring pin cannot bound what ELSE the string says: round 5's gate
+ * appended `' The acknowledgement was recorded anyway.'` to the constant in
+ * `lib/utils/api-error-messages.ts` and the whole suite stayed green, with the
+ * fabricated sentence rendering verbatim in this dialog's 403 panel.
  *
- * So it is written out. The rule has no exceptions after all: the 500
- * characters are the cost of the bound, and `the 403 panel's copy is the copy
- * someone wrote down` in the test file asserts the constant still equals this —
- * which is the assertion the import made impossible.
+ * So every entry is written out, and `the 403 panel's copy is the copy
+ * someone wrote down` in the test file asserts the component's record still
+ * equals this one, entry for entry. #173 widened it from one string to one per
+ * `AdminRefusal`: the control plane DOES code its admin-route refusals, and
+ * all four coded ones can reach `POST …/ack`. Keyed by the imported TYPE, so a
+ * fifth refusal fails `tsc` here before it can render unpinned copy.
  *
- * The nesting is flattened deliberately: upstream composes it from
+ * The nesting is flattened deliberately: upstream composes these from
  * `CP_KEY_PREAMBLE` and `ADMIN_KEY_REQUIRED`, and a pin that reused those
  * pieces would re-open exactly the hole this closes.
  */
-export const ACK_FORBIDDEN_PANEL =
-  'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
-  'sends no code for any of them — so the reason it gave is in the detail below. The likeliest is ' +
-  'an under-scoped key: The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ' +
-  'ask whoever deployed this console to grant it admin scope. The others are about tenancy: a ' +
-  'request may not name the reserved tenant `default`, and under AUTH_REQUIRE_TENANT a key that is ' +
-  'not bound to a tenant is refused outright. Read the detail before changing any key.';
+export const ACK_FORBIDDEN_PANEL: Record<AdminRefusal, string> = {
+  ADMIN_REQUIRED:
+    'The control plane says the key this console holds is not admin-scoped. Admin routes accept only an ' +
+    "API key listed in the control plane's AUTH_ADMIN_API_KEYS — a token is never admin. The " +
+    'control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this ' +
+    'console to use an admin API key.',
+  TENANT_RESERVED:
+    'The control plane refused it because the request named the reserved tenant `default` — as the ' +
+    "enrollment's tenant, or as the tenant claim of the token this console holds. `default` means " +
+    'untenanted, and is reached by naming no tenant at all.',
+  TENANT_REQUIRED:
+    'The control plane requires every request to resolve to a tenant (AUTH_REQUIRE_TENANT), and this one ' +
+    'resolved to none: the key this console holds is not bound to a tenant in TENANT_API_KEYS, or is a ' +
+    'token with no tenant claim, or the control plane has no API keys configured. The control-plane key ' +
+    'is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this console to use a key ' +
+    'bound to a tenant.',
+  ISSUER_READ_ONLY:
+    'The key this console holds is a token from an issuer the control plane trusts for reads only, so it ' +
+    'cannot make changes. The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask ' +
+    'whoever deployed this console to use an admin API key.',
+  uncoded:
+    'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
+    'sent no reason code this console recognises — so the reason it gave is in the detail below. The ' +
+    'likeliest is an under-scoped key: The control-plane key is configured server-side ' +
+    '(CONTROL_PLANE_API_KEY) — ask whoever deployed this console to grant it admin scope. The others ' +
+    'are about tenancy: a request may not name the reserved tenant `default`, and under ' +
+    'AUTH_REQUIRE_TENANT a key that is not bound to a tenant is refused outright. Read the detail ' +
+    'before changing any key.',
+};
 
 /**
- * The outcome panel's message, per arm.
+ * The outcome panel's message, for the one arm whose message is constant.
  *
- * `failed` has no entry because its message is `operatorErrorMessage(error,
- * 'Could not record the acknowledgement')`, a function of the error code. The
- * caller passes the expected string; there is nothing constant to table.
+ * `forbidden` has no entry because its message is a function of the refusal —
+ * see `ACK_FORBIDDEN_PANEL`. `failed` has none because its message is
+ * `operatorErrorMessage(error, 'Could not record the acknowledgement')`, a
+ * function of the error code; the caller passes the expected string.
  */
-export const ACK_PANEL_MESSAGE: Record<'already-resolved' | 'forbidden', string> = {
+export const ACK_PANEL_MESSAGE: Record<'already-resolved', string> = {
   'already-resolved': ACK_RESOLVED_PANEL,
-  forbidden: ACK_FORBIDDEN_PANEL,
 };
 
 /**
@@ -510,6 +532,8 @@ export function expectedDialogBlocks(opts: {
    * constant form — see `ACK_PANEL_MESSAGE`.
    */
   failedMessage?: string;
+  /** Which refusal the `forbidden` arm's 403 carried. Absent means `uncoded`. */
+  refusal?: AdminRefusal;
 }): string[] {
   const parts = [
     ACK_HEADING(opts.authority),
@@ -524,7 +548,7 @@ export function expectedDialogBlocks(opts: {
     parts.push(ackPanelBlock(ACK_PANEL_MESSAGE['already-resolved']));
   }
   if (opts.outcome === 'forbidden') {
-    parts.push(ackPanelBlock(ACK_PANEL_MESSAGE.forbidden, opts.diagnostic));
+    parts.push(ackPanelBlock(ACK_FORBIDDEN_PANEL[opts.refusal ?? 'uncoded'], opts.diagnostic));
   }
   if (opts.outcome === 'failed') {
     parts.push(ackPanelBlock(opts.failedMessage ?? '', opts.diagnostic));

@@ -36,8 +36,9 @@ const ROW = { padding: 20, display: 'flex', alignItems: 'center', gap: 10 } as c
  * Three sites render their error as inline text inside a modal or above a
  * table, where `ErrorPanel`'s card chrome (20px padding, a border, an icon)
  * would be out of place — but they need the upstream's own bytes reachable
- * just as much, and on the 403 arms they need it MORE: `ADMIN_ROUTE_FORBIDDEN`
- * deliberately refuses to diagnose and points at this disclosure by name.
+ * just as much, and on the 403 arms they need it MORE: the uncoded fallback
+ * (`ADMIN_ROUTE_FORBIDDEN`) deliberately refuses to diagnose and points at this
+ * disclosure by name.
  *
  * Extracted rather than copied so the bound (`max-height` + `overflow` on
  * `.error-detail > pre`) and the a11y shape stay in one place. Renders nothing

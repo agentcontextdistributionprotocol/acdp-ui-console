@@ -13,7 +13,7 @@ import { TableScroll } from '@/components/ui/table-scroll';
 import { listEnrollments, enrollRegistry } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import {
-  ADMIN_ROUTE_FORBIDDEN,
+  adminRouteForbiddenMessage,
   errorDiagnostic,
   isUpstreamForbidden,
   operatorErrorMessage,
@@ -24,6 +24,25 @@ import { C } from '@/lib/colors';
 import type { RegistryEnrollment } from '@/lib/types';
 
 type Editing = { mode: 'create' } | { mode: 'edit'; enrollment: RegistryEnrollment } | null;
+
+/**
+ * The control plane's reserved untenanted sentinel. An enrollment made with no
+ * tenant is stored and LISTED as `tenantId: 'default'`, yet naming `default`
+ * explicitly on `POST /registries/enroll` is refused with 403 `TENANT_RESERVED`
+ * (`assertNotReservedTenant(body.tenantId)`, acdp-control-plane
+ * `src/registries/registries.controller.ts:177`) — so echoing a listed row's
+ * tenant back verbatim made every toggle and edit of an untenanted enrollment
+ * fail (#173). Omitting it is the equivalent request: upstream falls back to the
+ * caller's own tenant (`body.tenantId ?? tenantOf(req)`, `:178`), and the
+ * listing is tenant-scoped (`:48`), so a row this console can list is always the
+ * caller's own tenant.
+ */
+const RESERVED_TENANT = 'default';
+
+/** `tenantId` to echo for an existing row: its real tenant, never the sentinel. */
+function storedTenant(tenantId: string | null | undefined): { tenantId?: string } {
+  return tenantId && tenantId !== RESERVED_TENANT ? { tenantId } : {};
+}
 
 export function Enrollments() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
@@ -43,7 +62,7 @@ export function Enrollments() {
       enrollRegistry(
         {
           authority: e.authority,
-          tenantId: e.tenantId,
+          ...storedTenant(e.tenantId),
           baseUrl: e.baseUrl ?? undefined,
           registryDid: e.registryDid ?? undefined,
           enabled: !e.enabled,
@@ -70,10 +89,11 @@ export function Enrollments() {
           is `toggleMut.error` with extra steps — and it hid that the two arms
           below are the same condition split, not two independent guards.
 
-          The disclosure is NOT optional on the 403 arm. `ADMIN_ROUTE_FORBIDDEN`
-          deliberately refuses to diagnose — the control plane has four reasons
-          for a 403 here and sends a code for none of them — and it points the
-          operator at this detail by name. A first cut left it off on the theory
+          The disclosure is NOT optional on the 403 arm. A coded refusal
+          (acdp-control-plane#182) gets its own sentence from
+          `adminRouteForbiddenMessage`; an uncoded one gets the fallback, which
+          deliberately refuses to diagnose and points the operator at this
+          detail by name. A first cut left it off on the theory
           that a `<details>` above a table reflows it when opened; that is true,
           it is the operator's own click, and it is a trivial cost next to
           having no path at all to the reason the control plane gave. */}
@@ -82,7 +102,7 @@ export function Enrollments() {
           <ErrorPanel
             message={
               toggleForbidden
-                ? `Enrollment changes are admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`
+                ? `Enrollment changes are admin-gated. ${adminRouteForbiddenMessage(toggleMut.error)}`
                 : operatorErrorMessage(toggleMut.error, 'Could not change this enrollment')
             }
             details={errorDiagnostic(toggleMut.error)}
@@ -211,7 +231,15 @@ function EnrollForm({
       enrollRegistry(
         {
           authority,
-          ...(tenantId ? { tenantId } : {}),
+          // An edit that leaves a listed `default` untouched must not echo it
+          // (see `RESERVED_TENANT`). A create sends what the operator typed —
+          // if that is `default`, upstream's TENANT_RESERVED is the honest
+          // answer, not a rule this console should restate.
+          ...(existing && tenantId === existing.tenantId
+            ? storedTenant(tenantId)
+            : tenantId
+              ? { tenantId }
+              : {}),
           // Re-enroll is PATCH-like (acdp-control-plane#240): an omitted
           // field keeps the stored value, so blanking a field that was set
           // must send `null` to clear it (#170). Unset-and-still-blank stays
@@ -293,8 +321,9 @@ function EnrollForm({
             // is refused AFTER the admin check passes — so a placeholder
             // suggesting it handed the operator a one-click route to a refusal
             // that has nothing to do with the key they would then go and get
-            // re-scoped. Blank means untenanted, which is what the field
-            // already does: `tenantId` is spread in only when truthy.
+            // re-scoped. Blank means untenanted: a blank `tenantId` is never
+            // sent, and neither is a listed `default` left untouched on edit
+            // (see `RESERVED_TENANT`).
             placeholder="blank = untenanted"
           />
         </div>
@@ -312,17 +341,13 @@ function EnrollForm({
           <div style={{ fontSize: 11, color: C.warning }}>Webhook secret must be at least 16 characters.</div>
         )}
       </div>
-      {/* No local `codes` map. Every refusal this route makes is now coded
+      {/* No local `codes` map. Every refusal this route makes is coded
           (acdp-control-plane#182): `assertAdmin` → `ADMIN_REQUIRED` and
           `assertNotReservedTenant` → `TENANT_RESERVED` (both 403),
           re-enrolling under another tenant → `REGISTRY_ENROLLED_ELSEWHERE`
-          (409, `src/registries/registries.controller.ts:207`), and
-          ValidationPipe's 400 → the generic `INVALID_PAYLOAD`. But an upstream
-          403 is caught by the `forbidden` arm before `operatorErrorMessage`
-          runs, so the two 403 codes render as `ADMIN_ROUTE_FORBIDDEN`. The
-          rest go through `CONTROL_PLANE_ERROR_CODES`, which maps
-          `INVALID_PAYLOAD` but not `REGISTRY_ENROLLED_ELSEWHERE` yet, so the
-          409 gets the status copy.
+          (409), and ValidationPipe's 400 → `INVALID_PAYLOAD`. An upstream 403
+          is caught by the `forbidden` arm first; everything else goes through
+          `CONTROL_PLANE_ERROR_CODES`, which has copy for the 409 and the 400.
           Either way the control plane's own sentence is in `ErrorDetail`.
 
           Inline text rather than an `ErrorPanel` — a bordered card with a 20px
@@ -331,7 +356,7 @@ function EnrollForm({
       {mut.error && (
         <div style={{ marginTop: 12, fontSize: 11, color: C.danger }}>
           {forbidden
-            ? `Enrollment is admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`
+            ? `Enrollment is admin-gated. ${adminRouteForbiddenMessage(mut.error)}`
             : operatorErrorMessage(mut.error, 'Could not save this enrollment')}
           <ErrorDetail details={errorDiagnostic(mut.error)} />
         </div>

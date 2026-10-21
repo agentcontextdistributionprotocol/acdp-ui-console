@@ -17,7 +17,12 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '@/lib/api/fetcher';
 import {
+  ADMIN_REFUSAL_COPY,
+  ADMIN_ROUTE_FORBIDDEN,
+  adminRefusal,
+  adminRouteForbiddenMessage,
   CONTEXT_ERROR_MESSAGES,
+  CONTROL_PLANE_ERROR_CODES,
   contextErrorFallback,
   contextErrorMessage,
   crashDiagnostic,
@@ -920,5 +925,103 @@ describe('operatorErrorMessage — control-plane labelled 4xx codes (#157)', () 
   it('a caller\'s own codes map wins', () => {
     const own = new Map([['RATE_LIMITED', 'custom.']]);
     expect(operatorErrorMessage(code('RATE_LIMITED', 429), 'x', { codes: own })).toBe('x. custom.');
+  });
+});
+
+// Issue #173: since acdp-control-plane#182 every refusal on the admin-gated
+// routes is coded. Expected copy is WRITTEN OUT here, never composed from the
+// module's own pieces, so a reworded or appended sentence fails.
+const PREAMBLE =
+  'The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed this console to ';
+const EXPECTED_REFUSAL_COPY = {
+  ADMIN_REQUIRED:
+    'The control plane says the key this console holds is not admin-scoped. Admin routes accept only an ' +
+    "API key listed in the control plane's AUTH_ADMIN_API_KEYS — a token is never admin. " +
+    PREAMBLE + 'use an admin API key.',
+  TENANT_RESERVED:
+    'The control plane refused it because the request named the reserved tenant `default` — as the ' +
+    "enrollment's tenant, or as the tenant claim of the token this console holds. `default` means " +
+    'untenanted, and is reached by naming no tenant at all.',
+  TENANT_REQUIRED:
+    'The control plane requires every request to resolve to a tenant (AUTH_REQUIRE_TENANT), and this one ' +
+    'resolved to none: the key this console holds is not bound to a tenant in TENANT_API_KEYS, or is a ' +
+    'token with no tenant claim, or the control plane has no API keys configured. ' +
+    PREAMBLE + 'use a key bound to a tenant.',
+  ISSUER_READ_ONLY:
+    'The key this console holds is a token from an issuer the control plane trusts for reads only, so it ' +
+    'cannot make changes. ' + PREAMBLE + 'use an admin API key.',
+} as const;
+const EXPECTED_ENROLLED_ELSEWHERE =
+  "That authority is already enrolled under a different tenant, and an enrollment's tenant cannot " +
+  'change, so nothing was saved. The control plane does not say which tenant holds it.';
+const EXPECTED_DRAINING = 'The control-plane instance that answered is shutting down. Retry in a moment.';
+const REFUSAL_CODES = Object.keys(EXPECTED_REFUSAL_COPY) as (keyof typeof EXPECTED_REFUSAL_COPY)[];
+
+describe('adminRefusal — the closed set of admin-route 403 reasons (#173)', () => {
+  const coded = (c: string, service: ProxyService = 'control-plane') =>
+    new ApiError(403, JSON.stringify({ statusCode: 403, errorCode: c }), service, '/registries/enroll', true);
+
+  it.each(REFUSAL_CODES)('returns %s for that control-plane code', (c) => {
+    expect(adminRefusal(coded(c))).toBe(c);
+  });
+
+  it.each([
+    ['no code', apiError(403, { message: 'Forbidden' })],
+    ['generic FORBIDDEN', coded('FORBIDDEN')],
+    ['an unreachable header code', coded('TENANT_MISMATCH')],
+    ['a lowercased code', coded('admin_required')],
+    ['a prototype key', coded('constructor')],
+    ['a mapped code on a registry error', coded('ADMIN_REQUIRED', 'registry-a')],
+    ['a non-ApiError', new TypeError('Failed to fetch')],
+    ['undefined', undefined],
+  ])('returns uncoded for %s', (_label, e) => {
+    expect(adminRefusal(e)).toBe('uncoded');
+  });
+
+  it('adminRouteForbiddenMessage renders the coded copy, or the uncoded fallback', () => {
+    for (const c of REFUSAL_CODES) expect(adminRouteForbiddenMessage(coded(c))).toBe(EXPECTED_REFUSAL_COPY[c]);
+    expect(adminRouteForbiddenMessage(coded('FORBIDDEN'))).toBe(ADMIN_ROUTE_FORBIDDEN);
+    expect(ADMIN_REFUSAL_COPY.uncoded).toBe(ADMIN_ROUTE_FORBIDDEN);
+  });
+
+  it('each coded sentence names its remedy, and TENANT_RESERVED gives no "instead" instruction', () => {
+    expect(ADMIN_REFUSAL_COPY.ADMIN_REQUIRED).toContain('AUTH_ADMIN_API_KEYS');
+    expect(ADMIN_REFUSAL_COPY.ADMIN_REQUIRED).toContain('CONTROL_PLANE_API_KEY');
+    expect(ADMIN_REFUSAL_COPY.TENANT_RESERVED).not.toContain('instead');
+    expect(ADMIN_REFUSAL_COPY.TENANT_REQUIRED).toContain('AUTH_REQUIRE_TENANT');
+    expect(ADMIN_REFUSAL_COPY.TENANT_REQUIRED).toContain('CONTROL_PLANE_API_KEY');
+  });
+
+  it('the uncoded fallback no longer claims the control plane is code-less', () => {
+    expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/sends\s+no\s+code/);
+    expect(ADMIN_ROUTE_FORBIDDEN).toContain('sent no reason code this console recognises');
+  });
+});
+
+describe('CONTROL_PLANE_ERROR_CODES — the codes #173 adds', () => {
+  it('takes the four refusal entries from ADMIN_REFUSAL_COPY, so the two paths cannot disagree', () => {
+    for (const c of REFUSAL_CODES) expect(CONTROL_PLANE_ERROR_CODES.get(c)).toBe(ADMIN_REFUSAL_COPY[c]);
+  });
+
+  it('has copy for REGISTRY_ENROLLED_ELSEWHERE and SERVICE_DRAINING', () => {
+    expect(CONTROL_PLANE_ERROR_CODES.has('REGISTRY_ENROLLED_ELSEWHERE')).toBe(true);
+    expect(CONTROL_PLANE_ERROR_CODES.has('SERVICE_DRAINING')).toBe(true);
+  });
+
+  it('has no copy for the three codes this console cannot provoke', () => {
+    for (const c of ['TENANT_MISMATCH', 'TENANT_HEADER_UNTRUSTED', 'DEPENDENCY_UNAVAILABLE']) {
+      expect(CONTROL_PLANE_ERROR_CODES.has(c)).toBe(false);
+    }
+  });
+
+  it.each([
+    ['ADMIN_REQUIRED', 403, EXPECTED_REFUSAL_COPY.ADMIN_REQUIRED],
+    ['TENANT_RESERVED', 403, EXPECTED_REFUSAL_COPY.TENANT_RESERVED],
+    ['TENANT_REQUIRED', 403, EXPECTED_REFUSAL_COPY.TENANT_REQUIRED],
+    ['ISSUER_READ_ONLY', 403, EXPECTED_REFUSAL_COPY.ISSUER_READ_ONLY],
+    ['REGISTRY_ENROLLED_ELSEWHERE', 409, EXPECTED_ENROLLED_ELSEWHERE],
+    ['SERVICE_DRAINING', 503, EXPECTED_DRAINING],
+  ])('operatorErrorMessage renders %s exactly', (c, status, copy) => {
+    expect(operatorErrorMessage(apiError(status, { statusCode: status, errorCode: c }), 'L')).toBe(`L. ${copy}`);
   });
 });

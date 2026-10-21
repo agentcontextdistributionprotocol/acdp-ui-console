@@ -13,7 +13,7 @@ import { useRevocations, useRegistryJwks } from '@/lib/hooks/use-security';
 import { useRegistries } from '@/lib/hooks/use-registries';
 import { useDashboard } from '@/lib/hooks/use-dashboard';
 import {
-  ADMIN_ROUTE_FORBIDDEN,
+  adminRouteForbiddenMessage,
   errorDiagnostic,
   isUpstreamForbidden,
   operatorErrorMessage,
@@ -70,7 +70,7 @@ function RevocationFeed() {
         {revs.isLoading && <LoadingSkeleton rows={4} height={36} />}
         {/* This page's 403 copy used to be a third, differently-worded
             near-copy of the sentence `enrollments.tsx` held twice. All three
-            now compose the ONE exported constant with their own subject, so a
+            now compose the ONE exported resolver with their own subject, so a
             correction to the shared half can no longer land on two of three
             surfaces. `/security` adopts the enrollments phrasing, which is the
             more specific of the two.
@@ -82,7 +82,7 @@ function RevocationFeed() {
             time that the console has no field for it. */}
         {forbidden && (
           <ErrorPanel
-            message={`The revocation feed is admin-gated. ${ADMIN_ROUTE_FORBIDDEN}`}
+            message={`The revocation feed is admin-gated. ${adminRouteForbiddenMessage(revs.error)}`}
             details={errorDiagnostic(revs.error)}
           />
         )}

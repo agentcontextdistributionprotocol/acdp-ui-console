@@ -24,7 +24,7 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import type { RenderResult } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ApiError } from '@/lib/api/fetcher';
-import { ADMIN_KEY_REQUIRED, ADMIN_ROUTE_FORBIDDEN } from '@/lib/utils/api-error-messages';
+import { ADMIN_KEY_REQUIRED, ADMIN_REFUSAL_COPY, ADMIN_ROUTE_FORBIDDEN } from '@/lib/utils/api-error-messages';
 
 const listEnrollments = vi.fn();
 const enrollRegistry = vi.fn();
@@ -198,23 +198,20 @@ describe('the admin-key sentence exists once', () => {
     expect(feed).not.toContain('is not an admin key');
   });
 
-  it('does NOT assert that the key lacks admin scope — it is one of four reasons', () => {
-    // The control plane answers 403 on these routes from four places and sends
-    // a code for none of them (acdp-control-plane#179), so this console cannot
-    // tell them apart. Three have nothing to do with admin scope:
-    //
-    //   registries.controller.ts:174  assertNotReservedTenant(body.tenantId)
-    //                                 — AFTER the admin check at :168 passes
-    //   auth.guard.ts:170 / :179      X-Tenant-Id reserved, or mismatched
-    //                                 (and that header IS in FORWARD_HEADERS)
-    //   auth.guard.ts:184             unbound key under AUTH_REQUIRE_TENANT
-    //
-    // The first is a click away: the enrollment form has a Tenant field, and
-    // its placeholder used to suggest `default` — the reserved sentinel.
+  it('does NOT assert that the key lacks admin scope when no recognised code says so', () => {
+    // This is the UNCODED fallback (#173). Since acdp-control-plane#182 every
+    // refusal on these routes is coded and gets its own sentence via
+    // `adminRouteForbiddenMessage`; this one is what a pre-#182 control plane,
+    // or a code this console has not learnt yet, falls back to. There it still
+    // cannot tell the reasons apart, and three of them have nothing to do with
+    // admin scope (`assertNotReservedTenant` on the enrollment's tenant, a
+    // reserved tenant claim, an unbound key under AUTH_REQUIRE_TENANT).
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('cannot tell which of its reasons applies');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('likeliest');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('reserved tenant');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('AUTH_REQUIRE_TENANT');
+    // …and no longer claims the control plane is code-less: it is not.
+    expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/sends\s+no\s+code/);
     // …and it never states the diagnosis as fact.
     expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/requires an admin API key\.|is not an admin key/);
   });
@@ -416,4 +413,71 @@ describe('the seven non-403 arms render a sentence, not a response body', () => 
     await waitFor(() => expect(r.container.textContent).toContain('Could not change'));
     return r;
   }
+});
+
+describe('the enroll form renders the 409 immutability refusal (#173)', () => {
+  it('REGISTRY_ENROLLED_ELSEWHERE gets its own sentence, with the detail', async () => {
+    const e = new ApiError(
+      409,
+      JSON.stringify({ statusCode: 409, errorCode: 'REGISTRY_ENROLLED_ELSEWHERE', message: 'already enrolled' }),
+      'control-plane',
+      '/registries/enroll',
+      true,
+    );
+    const form = await renderEnrollForm403(e);
+    expect(form.textContent).toContain(
+      'Could not save this enrollment. That authority is already enrolled under a different tenant, and ' +
+        "an enrollment's tenant cannot change, so nothing was saved. The control plane does not say which " +
+        'tenant holds it.',
+    );
+    expect(form.textContent).not.toContain('admin-gated');
+  });
+});
+
+// Issue #173: a CODED upstream 403 renders that code's own sentence after the
+// surface's subject, not the uncoded "cannot tell which" fallback. The exact
+// sentences are pinned by hand in api-error-messages.test.ts.
+describe('coded admin-route 403s render their own copy on all three surfaces (#173)', () => {
+  const coded403 = (path: string, errorCode: string, fromUpstream = true) =>
+    new ApiError(
+      403,
+      JSON.stringify({ statusCode: 403, errorCode, message: 'upstream-own-sentence-173' }),
+      'control-plane',
+      path,
+      fromUpstream,
+    );
+  const SURFACES = [
+    ['revocation feed', 'The revocation feed is admin-gated. ', (e: ApiError) => renderFeed403(e), '/auth/revocations'],
+    ['enrollment toggle', 'Enrollment changes are admin-gated. ', (e: ApiError) => renderToggle403(e), '/registries/enroll'],
+    ['enroll form', 'Enrollment is admin-gated. ', (e: ApiError) => renderEnrollForm403(e), '/registries/enroll'],
+  ] as const;
+  const CASES = SURFACES.flatMap(([name, subject, render, path]) =>
+    (['ADMIN_REQUIRED', 'TENANT_RESERVED'] as const).map((code) => [name, code, subject, render, path] as const),
+  );
+
+  it.each(CASES)('%s, %s', async (_name, code, subject, render, path) => {
+    const container = await render(coded403(path, code));
+    const text = container.textContent!;
+    expect(text).toContain(subject + ADMIN_REFUSAL_COPY[code]);
+    expect(text).not.toContain('cannot tell which of its reasons applies');
+    // The control plane's own sentence is still disclosed — in the detail, and
+    // with a marker no copy contains, so the check cannot pass on the copy.
+    const det = container.querySelector('details.error-detail');
+    expect(det).not.toBeNull();
+    expect(det!.textContent).toContain('upstream-own-sentence-173');
+  });
+
+  // The provenance gate still runs first: a 403 this console minted is never
+  // dressed as an admin-gated refusal, coded body or not. What it renders then
+  // is `operatorErrorMessage`'s call, where a recognised code deliberately
+  // outranks provenance (see that function's own comment).
+  it.each(SURFACES)('%s: an UNSTAMPED coded 403 skips the admin-gated arm', async (_name, subject, render, path) => {
+    const text = (await render(coded403(path, 'ADMIN_REQUIRED', false))).textContent!;
+    expect(text).not.toContain(subject);
+    const lead = {
+      '/auth/revocations': 'Could not load the revocation feed',
+      '/registries/enroll': subject.startsWith('Enrollment changes') ? 'Could not change this enrollment' : 'Could not save this enrollment',
+    }[path];
+    expect(text).toContain(`${lead}. ${ADMIN_REFUSAL_COPY.ADMIN_REQUIRED}`);
+  });
 });
