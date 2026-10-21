@@ -198,23 +198,20 @@ describe('the admin-key sentence exists once', () => {
     expect(feed).not.toContain('is not an admin key');
   });
 
-  it('does NOT assert that the key lacks admin scope — it is one of four reasons', () => {
-    // The control plane answers 403 on these routes from four places and sends
-    // a code for none of them (acdp-control-plane#179), so this console cannot
-    // tell them apart. Three have nothing to do with admin scope:
-    //
-    //   registries.controller.ts:174  assertNotReservedTenant(body.tenantId)
-    //                                 — AFTER the admin check at :168 passes
-    //   auth.guard.ts:170 / :179      X-Tenant-Id reserved, or mismatched
-    //                                 (and that header IS in FORWARD_HEADERS)
-    //   auth.guard.ts:184             unbound key under AUTH_REQUIRE_TENANT
-    //
-    // The first is a click away: the enrollment form has a Tenant field, and
-    // its placeholder used to suggest `default` — the reserved sentinel.
+  it('does NOT assert that the key lacks admin scope when no recognised code says so', () => {
+    // This is the UNCODED fallback (#173). Since acdp-control-plane#182 every
+    // refusal on these routes is coded and gets its own sentence via
+    // `adminRouteForbiddenMessage`; this one is what a pre-#182 control plane,
+    // or a code this console has not learnt yet, falls back to. There it still
+    // cannot tell the reasons apart, and three of them have nothing to do with
+    // admin scope (`assertNotReservedTenant` on the enrollment's tenant, a
+    // reserved tenant claim, an unbound key under AUTH_REQUIRE_TENANT).
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('cannot tell which of its reasons applies');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('likeliest');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('reserved tenant');
     expect(ADMIN_ROUTE_FORBIDDEN).toContain('AUTH_REQUIRE_TENANT');
+    // …and no longer claims the control plane sends no code: it does.
+    expect(ADMIN_ROUTE_FORBIDDEN).not.toContain('sends no code');
     // …and it never states the diagnosis as fact.
     expect(ADMIN_ROUTE_FORBIDDEN).not.toMatch(/requires an admin API key\.|is not an admin key/);
   });
@@ -416,4 +413,23 @@ describe('the seven non-403 arms render a sentence, not a response body', () => 
     await waitFor(() => expect(r.container.textContent).toContain('Could not change'));
     return r;
   }
+});
+
+describe('the enroll form renders the 409 immutability refusal (#173)', () => {
+  it('REGISTRY_ENROLLED_ELSEWHERE gets its own sentence, with the detail', async () => {
+    const e = new ApiError(
+      409,
+      JSON.stringify({ statusCode: 409, errorCode: 'REGISTRY_ENROLLED_ELSEWHERE', message: 'already enrolled' }),
+      'control-plane',
+      '/registries/enroll',
+      true,
+    );
+    const form = await renderEnrollForm403(e);
+    expect(form.textContent).toContain(
+      'Could not save this enrollment. That authority is already enrolled under a different tenant, and ' +
+        "an enrollment's tenant cannot change, so nothing was saved. The control plane does not say which " +
+        'tenant holds it.',
+    );
+    expect(form.textContent).not.toContain('admin-gated');
+  });
 });

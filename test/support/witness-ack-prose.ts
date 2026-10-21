@@ -199,11 +199,12 @@ export const ACK_HEADING = (authority: string) => `Acknowledge ${authority}`;
  */
 export const ACK_FORBIDDEN_PANEL =
   'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
-  'sends no code for any of them — so the reason it gave is in the detail below. The likeliest is ' +
-  'an under-scoped key: The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ' +
-  'ask whoever deployed this console to grant it admin scope. The others are about tenancy: a ' +
-  'request may not name the reserved tenant `default`, and under AUTH_REQUIRE_TENANT a key that is ' +
-  'not bound to a tenant is refused outright. Read the detail before changing any key.';
+  'sent no reason code this console recognises — so the reason it gave is in the detail below. The ' +
+  'likeliest is an under-scoped key: The control-plane key is configured server-side ' +
+  '(CONTROL_PLANE_API_KEY) — ask whoever deployed this console to grant it admin scope. The others ' +
+  'are about tenancy: a request may not name the reserved tenant `default`, and under ' +
+  'AUTH_REQUIRE_TENANT a key that is not bound to a tenant is refused outright. Read the detail ' +
+  'before changing any key.';
 
 /**
  * The outcome panel's message, per arm.

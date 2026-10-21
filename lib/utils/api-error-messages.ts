@@ -94,19 +94,175 @@ export const CONTEXT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * `CONTROL_PLANE_API_KEY` is injected server-side by the proxy and never
+ * reaches the browser, so an operator refused by the control plane has no way
+ * to discover that the key exists at all. Naming the variable is the only
+ * actionable thing this console can say.
+ *
+ * **Two sentences, because 401 and 403 have different remedies** and splicing
+ * one onto both prescribes an action that cannot resolve half the cases — the
+ * fault this module exists to remove, committed by the module itself. A 401 is
+ * an authentication failure: the key is missing, wrong, or rotated, and
+ * granting it admin scope fixes nothing. A 403 is an authorisation failure: the
+ * key authenticated fine and lacks the scope. An earlier cut used the
+ * admin-scope wording for both, and closing the gap by rewriting the docstring
+ * rather than the string would have left the inaccuracy in the operator's face.
+ */
+const CP_KEY_PREAMBLE =
+  'The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed ' +
+  'this console to ';
+
+/** For a 401: the key did not authenticate. */
+export const CONTROL_PLANE_KEY_REJECTED = `${CP_KEY_PREAMBLE}check that it is set and current.`;
+
+/**
+ * For a 403: the key authenticated but lacks the scope. The remedy half of
+ * `ADMIN_ROUTE_FORBIDDEN`'s likeliest cause; exported so the parity suite can
+ * assert every admin-gated surface renders it rather than a near-copy.
+ */
+export const ADMIN_KEY_REQUIRED = `${CP_KEY_PREAMBLE}grant it admin scope.`;
+
+/**
+ * What an operator is told when an admin-gated control-plane route answers 403
+ * with no reason code this console recognises — the `'uncoded'` arm of
+ * `adminRefusal` below.
+ *
+ * Since acdp-control-plane#182 every refusal on these routes carries an
+ * `errorCode`, so a current control plane never reaches this: its four codes
+ * get their own sentence via `ADMIN_REFUSAL_COPY`. This is what a pre-#182
+ * control plane gets, or one that grows a fifth code before this console
+ * learns it. It therefore still refuses to diagnose: the likeliest cause is
+ * named as likely, the tenancy causes are named as possible, and the operator
+ * is pointed at the control plane's own sentence. Which makes the disclosure
+ * load-bearing rather than decorative: every site rendering this string MUST
+ * also render `errorDiagnostic`, and the tests assert that.
+ *
+ * The first version of this said flatly that the key lacked admin scope, and
+ * on the enrollment form it was reachable by naming the reserved tenant
+ * `default` from a key that WAS admin-scoped — the reason it stopped claiming a
+ * diagnosis it could not make.
+ *
+ * Rendered only via `adminRouteForbiddenMessage` (as `ADMIN_REFUSAL_COPY.uncoded`)
+ * — by `app/security/page.tsx`, both arms of `components/registries/enrollments.tsx`
+ * and the ack dialog in `components/registries/log-witness-alerts.tsx`.
+ */
+export const ADMIN_ROUTE_FORBIDDEN =
+  'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
+  'sent no reason code this console recognises — so the reason it gave is in the detail below. The ' +
+  `likeliest is an under-scoped key: ${ADMIN_KEY_REQUIRED} The others are about tenancy: a request may ` +
+  'not name the reserved tenant `default`, and under AUTH_REQUIRE_TENANT a key that is not bound to a ' +
+  'tenant is refused outright. Read the detail before changing any key.';
+
+/**
+ * Every reason the control plane gives for a 403 on the admin-gated routes this
+ * console calls (`GET /auth/revocations`, `POST /registries/enroll`, the
+ * log-witness ack), plus `'uncoded'` for anything else. Checked against
+ * acdp-control-plane `origin/main` 9c6943c:
+ *
+ *  - `ADMIN_REQUIRED` — the handler's `assertAdmin`. Only an API key listed in
+ *    `AUTH_ADMIN_API_KEYS` is admin; a token never is (`auth.guard.ts:97`).
+ *  - `TENANT_RESERVED` — `default` named explicitly: as an enrollment's
+ *    `tenantId` (`registries.controller.ts:177`) or as a token's tenant claim
+ *    (`auth.guard.ts:127`).
+ *  - `TENANT_REQUIRED` — `AUTH_REQUIRE_TENANT` with no tenant resolved: an
+ *    unbound API key (`:244-250`), a token with no claim (`:144-150`), or no
+ *    API keys configured at all (`:196-203`).
+ *  - `ISSUER_READ_ONLY` — a read-only trusted issuer's token on a non-GET
+ *    (`:178-190`).
+ *
+ * The copy is surface-neutral on purpose: on `/security` (a GET) the
+ * enrollment source of `TENANT_RESERVED` and `ISSUER_READ_ONLY` cannot occur,
+ * and a sentence naming both possible sources is still true there.
+ *
+ * A closed union rather than `string` so the ack dialog's exact-prose table
+ * (`test/support/witness-ack-prose.ts`) can key a `Record` on it: a new member
+ * fails `tsc` there before it can render uncovered copy.
+ */
+export type AdminRefusal =
+  | 'ADMIN_REQUIRED'
+  | 'TENANT_RESERVED'
+  | 'TENANT_REQUIRED'
+  | 'ISSUER_READ_ONLY'
+  | 'uncoded';
+
+/** What each `AdminRefusal` tells the operator. The single source of these sentences. */
+export const ADMIN_REFUSAL_COPY: Readonly<Record<AdminRefusal, string>> = Object.freeze({
+  ADMIN_REQUIRED:
+    'The control plane says the key this console holds is not admin-scoped. Admin routes accept only an ' +
+    "API key listed in the control plane's AUTH_ADMIN_API_KEYS — a token is never admin. " +
+    `${CP_KEY_PREAMBLE}use an admin API key.`,
+  TENANT_RESERVED:
+    'The control plane refused it because the request named the reserved tenant `default` — as the ' +
+    "enrollment's tenant, or as the tenant claim of the token this console holds. `default` means " +
+    'untenanted, and is reached by naming no tenant at all.',
+  TENANT_REQUIRED:
+    'The control plane requires every request to resolve to a tenant (AUTH_REQUIRE_TENANT), and this one ' +
+    'resolved to none: the key this console holds is not bound to a tenant in TENANT_API_KEYS, or is a ' +
+    'token with no tenant claim, or the control plane has no API keys configured. ' +
+    `${CP_KEY_PREAMBLE}use a key bound to a tenant.`,
+  ISSUER_READ_ONLY:
+    'The key this console holds is a token from an issuer the control plane trusts for reads only, so it ' +
+    `cannot make changes. ${CP_KEY_PREAMBLE}use an admin API key.`,
+  uncoded: ADMIN_ROUTE_FORBIDDEN,
+});
+
+const ADMIN_REFUSAL_CODES: ReadonlySet<string> = new Set<AdminRefusal>([
+  'ADMIN_REQUIRED',
+  'TENANT_RESERVED',
+  'TENANT_REQUIRED',
+  'ISSUER_READ_ONLY',
+]);
+
+/**
+ * Which of the control plane's admin-route refusals this error is.
+ *
+ * Exact, case-sensitive membership in a closed set, gated on the
+ * control-plane service — `errorCode` is upstream-supplied input, and a
+ * registry's lowercase vocabulary must not be read as a control-plane reason.
+ * Does NOT re-check provenance: callers gate on `isUpstreamForbidden` first, so
+ * a 403 this console minted never gets here. Never throws.
+ */
+export function adminRefusal(error: unknown): AdminRefusal {
+  if (!(error instanceof ApiError) || error.service !== 'control-plane') return 'uncoded';
+  const code = error.errorCode;
+  return code !== undefined && ADMIN_REFUSAL_CODES.has(code) ? (code as AdminRefusal) : 'uncoded';
+}
+
+/** The sentence for an upstream 403 on an admin-gated route: the coded copy, or the uncoded fallback. */
+export function adminRouteForbiddenMessage(error: unknown): string {
+  return ADMIN_REFUSAL_COPY[adminRefusal(error)];
+}
+
+/**
  * The control plane's labelled 4xx vocabulary (acdp-control-plane #182; the
  * table in its `docs/API.md`). SCREAMING_SNAKE and looked up exactly, so it
  * cannot collide with the registry's lowercase vocabulary below.
  *
  * Only codes whose meaning the bare status arm cannot convey are here. The
  * generic `UNAUTHORIZED` / `FORBIDDEN` / `NOT_FOUND` are deliberately absent:
- * the status arms already say that, with provenance. `ADMIN_REQUIRED` is the
- * one 403 that is now distinguishable from a validation failure, so it names the
- * fix. Applied by `operatorErrorMessage` AFTER a caller's own `codes`, so a
- * surface with sharper copy still wins.
+ * the status arms already say that, with provenance. The four admin-route 403s
+ * take their copy FROM `ADMIN_REFUSAL_COPY`, so a surface that resolves a 403
+ * through `adminRouteForbiddenMessage` and one that falls through to
+ * `operatorErrorMessage` cannot disagree. Applied by `operatorErrorMessage`
+ * AFTER a caller's own `codes`, so a surface with sharper copy still wins.
+ *
+ * Same rule as `REGISTRY_ERROR_CODES` below: no copy for a code this console
+ * cannot provoke. Three of upstream's are absent for that reason —
+ * `TENANT_MISMATCH` and `TENANT_HEADER_UNTRUSTED` are raised only on an
+ * `X-Tenant-Id` header, which the proxy never forwards (#161); and
+ * `DEPENDENCY_UNAVAILABLE` only by `/readyz`, which this console never probes.
  */
 export const CONTROL_PLANE_ERROR_CODES: ReadonlyMap<string, string> = new Map([
-  ['ADMIN_REQUIRED', 'This action needs an admin-scoped control-plane key, and the one this console holds is not.'],
+  ['ADMIN_REQUIRED', ADMIN_REFUSAL_COPY.ADMIN_REQUIRED],
+  ['TENANT_RESERVED', ADMIN_REFUSAL_COPY.TENANT_RESERVED],
+  ['TENANT_REQUIRED', ADMIN_REFUSAL_COPY.TENANT_REQUIRED],
+  ['ISSUER_READ_ONLY', ADMIN_REFUSAL_COPY.ISSUER_READ_ONLY],
+  [
+    'REGISTRY_ENROLLED_ELSEWHERE',
+    "That authority is already enrolled under a different tenant, and an enrollment's tenant cannot " +
+      'change, so nothing was saved. The control plane does not say which tenant holds it.',
+  ],
+  ['SERVICE_DRAINING', 'The control-plane instance that answered is shutting down. Retry in a moment.'],
   ['INVALID_PAYLOAD', 'The control plane rejected the request as malformed. Check the values entered and retry.'],
   ['PAYLOAD_TOO_LARGE', 'The control plane refused the request because it is too large.'],
   ['RATE_LIMITED', 'The control plane is rate limiting this console. Wait a moment and retry.'],
@@ -244,70 +400,6 @@ const GENERIC = 'Could not load context.';
 const CONSOLE_FAULT =
   'This console could not complete the request — it looks misconfigured or signed out. ' +
   'Check the deployment configuration, or sign in again.';
-
-/**
- * `CONTROL_PLANE_API_KEY` is injected server-side by the proxy and never
- * reaches the browser, so an operator refused by the control plane has no way
- * to discover that the key exists at all. Naming the variable is the only
- * actionable thing this console can say.
- *
- * **Two sentences, because 401 and 403 have different remedies** and splicing
- * one onto both prescribes an action that cannot resolve half the cases — the
- * fault this module exists to remove, committed by the module itself. A 401 is
- * an authentication failure: the key is missing, wrong, or rotated, and
- * granting it admin scope fixes nothing. A 403 is an authorisation failure: the
- * key authenticated fine and lacks the scope. An earlier cut used the
- * admin-scope wording for both, and closing the gap by rewriting the docstring
- * rather than the string would have left the inaccuracy in the operator's face.
- */
-const CP_KEY_PREAMBLE =
-  'The control-plane key is configured server-side (CONTROL_PLANE_API_KEY) — ask whoever deployed ' +
-  'this console to ';
-
-/** For a 401: the key did not authenticate. */
-export const CONTROL_PLANE_KEY_REJECTED = `${CP_KEY_PREAMBLE}check that it is set and current.`;
-
-/**
- * For a 403: the key authenticated but lacks the scope.
- *
- * Exported ahead of a consumer on purpose: three admin-gated surfaces
- * (`app/security/page.tsx` and two in `components/registries/enrollments.tsx`)
- * each carry their own hand-written near-copy of this sentence, and the phase
- * that consolidates them onto this constant is the point of the export.
- */
-export const ADMIN_KEY_REQUIRED = `${CP_KEY_PREAMBLE}grant it admin scope.`;
-
-/**
- * What an operator is told when an admin-gated control-plane route answers 403.
- *
- * **It does not diagnose, and the first version of it did.** That version said
- * flatly that the key lacked admin scope, which is only one of the control
- * plane's reasons for a 403 on these routes — and on the enrollment form it was
- * reachable by typing the value the field's own placeholder suggested:
- *
- *  - `registries.controller.ts:174` runs `assertNotReservedTenant(body.tenantId)`
- *    **after** the admin check at `:168` has already passed, so naming the
- *    reserved tenant `default` yields a 403 from a key that is admin-scoped.
- *  - `auth.guard.ts:170` refuses a `default` assertion in `X-Tenant-Id` — and
- *    that header IS relayed (it is in the proxy's `FORWARD_HEADERS`).
- *  - `auth.guard.ts:179` refuses a header naming a tenant other than the key's.
- *  - `auth.guard.ts:184` refuses an unbound key outright under
- *    `AUTH_REQUIRE_TENANT`. This one hits every admin route, the revocation
- *    feed included.
- *
- * None of the four carries an `errorCode` — that is filed as
- * acdp-control-plane#179 — so this console genuinely cannot tell them apart.
- * The honest answer is therefore to name the likeliest cause as likely, say so,
- * and hand the operator the control plane's own sentence. Which makes the
- * disclosure load-bearing rather than decorative: every site rendering this
- * string MUST also render `errorDiagnostic`, and the tests assert that.
- */
-export const ADMIN_ROUTE_FORBIDDEN =
-  'The control plane refused it. This console cannot tell which of its reasons applies, because it ' +
-  'sends no code for any of them — so the reason it gave is in the detail below. The likeliest is an ' +
-  `under-scoped key: ${ADMIN_KEY_REQUIRED} The others are about tenancy: a request may not name the ` +
-  'reserved tenant `default`, and under AUTH_REQUIRE_TENANT a key that is not bound to a tenant is ' +
-  'refused outright. Read the detail before changing any key.';
 
 /**
  * Is this the control plane refusing an admin-gated route — as opposed to this

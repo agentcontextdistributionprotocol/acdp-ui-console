@@ -340,17 +340,13 @@ function EnrollForm({
           <div style={{ fontSize: 11, color: C.warning }}>Webhook secret must be at least 16 characters.</div>
         )}
       </div>
-      {/* No local `codes` map. Every refusal this route makes is now coded
+      {/* No local `codes` map. Every refusal this route makes is coded
           (acdp-control-plane#182): `assertAdmin` → `ADMIN_REQUIRED` and
           `assertNotReservedTenant` → `TENANT_RESERVED` (both 403),
           re-enrolling under another tenant → `REGISTRY_ENROLLED_ELSEWHERE`
-          (409, `src/registries/registries.controller.ts:207`), and
-          ValidationPipe's 400 → the generic `INVALID_PAYLOAD`. But an upstream
-          403 is caught by the `forbidden` arm before `operatorErrorMessage`
-          runs, so the two 403 codes render as `ADMIN_ROUTE_FORBIDDEN`. The
-          rest go through `CONTROL_PLANE_ERROR_CODES`, which maps
-          `INVALID_PAYLOAD` but not `REGISTRY_ENROLLED_ELSEWHERE` yet, so the
-          409 gets the status copy.
+          (409), and ValidationPipe's 400 → `INVALID_PAYLOAD`. An upstream 403
+          is caught by the `forbidden` arm first; everything else goes through
+          `CONTROL_PLANE_ERROR_CODES`, which has copy for the 409 and the 400.
           Either way the control plane's own sentence is in `ErrorDetail`.
 
           Inline text rather than an `ErrorPanel` — a bordered card with a 20px
