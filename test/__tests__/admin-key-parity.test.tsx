@@ -441,7 +441,7 @@ describe('coded admin-route 403s render their own copy on all three surfaces (#1
   const coded403 = (path: string, errorCode: string, fromUpstream = true) =>
     new ApiError(
       403,
-      JSON.stringify({ statusCode: 403, errorCode, message: 'refused' }),
+      JSON.stringify({ statusCode: 403, errorCode, message: 'upstream-own-sentence-173' }),
       'control-plane',
       path,
       fromUpstream,
@@ -456,11 +456,15 @@ describe('coded admin-route 403s render their own copy on all three surfaces (#1
   );
 
   it.each(CASES)('%s, %s', async (_name, code, subject, render, path) => {
-    const text = (await render(coded403(path, code))).textContent!;
+    const container = await render(coded403(path, code));
+    const text = container.textContent!;
     expect(text).toContain(subject + ADMIN_REFUSAL_COPY[code]);
     expect(text).not.toContain('cannot tell which of its reasons applies');
-    // The control plane's own sentence is still disclosed.
-    expect(text).toContain('refused');
+    // The control plane's own sentence is still disclosed — in the detail, and
+    // with a marker no copy contains, so the check cannot pass on the copy.
+    const det = container.querySelector('details.error-detail');
+    expect(det).not.toBeNull();
+    expect(det!.textContent).toContain('upstream-own-sentence-173');
   });
 
   // The provenance gate still runs first: a 403 this console minted is never
