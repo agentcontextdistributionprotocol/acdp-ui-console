@@ -208,6 +208,22 @@ function clearableField<K extends 'baseUrl' | 'registryDid'>(
   return stored ? ({ [key]: null } as Record<K, null>) : {};
 }
 
+/**
+ * What to send for a free-text field: trimmed if the operator typed it, but
+ * byte-for-byte if it still equals the stored value — an edit must never
+ * silently rewrite a stored row (#175). Upstream stores `authority`, `tenantId`
+ * and `registryDid` verbatim (acdp-control-plane `enroll-registry.dto.ts`), and
+ * the tenant binding is immutable with no delete route, so a stray space typed
+ * into one of them is permanent; key→tenant bindings are trimmed
+ * (`tenant-context.ts:45`), so a padded tenant is one no key can ever reach.
+ */
+function typed(raw: string, stored: string | null | undefined): string {
+  return raw === (stored ?? '') ? raw : raw.trim();
+}
+
+/** Inner whitespace can't be valid in an authority or tenant; refuse rather than guess. */
+const HAS_WHITESPACE = /\s/;
+
 function EnrollForm({
   editing,
   demoMode,
@@ -226,26 +242,35 @@ function EnrollForm({
   const [tenantId, setTenantId] = useState(existing?.tenantId ?? '');
   const [secret, setSecret] = useState('');
 
+  // On edit the authority is the upsert key (and its input is disabled), so it
+  // is always sent exactly as stored; only a create's typed value is trimmed.
+  const sentAuthority = existing ? existing.authority : authority.trim();
+  const tenantChanged = !existing || tenantId !== existing.tenantId;
+  const sentTenant = typed(tenantId, existing?.tenantId);
+  const authorityInvalid = !existing && HAS_WHITESPACE.test(sentAuthority);
+  const tenantInvalid = tenantChanged && HAS_WHITESPACE.test(sentTenant);
+
   const mut = useMutation({
     mutationFn: () =>
       enrollRegistry(
         {
-          authority,
+          authority: sentAuthority,
           // An edit that leaves a listed `default` untouched must not echo it
           // (see `RESERVED_TENANT`). A create sends what the operator typed —
-          // if that is `default`, upstream's TENANT_RESERVED is the honest
-          // answer, not a rule this console should restate.
-          ...(existing && tenantId === existing.tenantId
-            ? storedTenant(tenantId)
-            : tenantId
-              ? { tenantId }
+          // if that is `default` (after trimming), upstream's TENANT_RESERVED
+          // is the honest answer, not a rule this console should restate.
+          ...(!tenantChanged
+            ? storedTenant(existing?.tenantId)
+            : sentTenant
+              ? { tenantId: sentTenant }
               : {}),
           // Re-enroll is PATCH-like (acdp-control-plane#240): an omitted
           // field keeps the stored value, so blanking a field that was set
           // must send `null` to clear it (#170). Unset-and-still-blank stays
-          // omitted. The secret is different: blank means "unchanged".
-          ...clearableField('baseUrl', baseUrl, existing?.baseUrl),
-          ...clearableField('registryDid', registryDid, existing?.registryDid),
+          // omitted. The secret is different: blank means "unchanged", and it
+          // is opaque, so it is never trimmed.
+          ...clearableField('baseUrl', typed(baseUrl, existing?.baseUrl), existing?.baseUrl),
+          ...clearableField('registryDid', typed(registryDid, existing?.registryDid), existing?.registryDid),
           ...(secret ? { webhookSecret: secret } : {}),
           enabled: existing?.enabled ?? true,
         },
@@ -273,7 +298,7 @@ function EnrollForm({
           <Button
             variant="primary"
             onClick={() => mut.mutate()}
-            disabled={mut.isPending || !authority || secretTooShort}
+            disabled={mut.isPending || !sentAuthority || authorityInvalid || tenantInvalid || secretTooShort}
           >
             {mut.isPending ? 'Saving…' : 'Save'}
           </Button>
@@ -337,6 +362,12 @@ function EnrollForm({
             placeholder={existing ? 'unchanged' : 'min 16 chars (HMAC)'}
           />
         </div>
+        {authorityInvalid && (
+          <div style={{ fontSize: 11, color: C.warning }}>Authority cannot contain whitespace.</div>
+        )}
+        {tenantInvalid && (
+          <div style={{ fontSize: 11, color: C.warning }}>Tenant cannot contain whitespace.</div>
+        )}
         {secretTooShort && (
           <div style={{ fontSize: 11, color: C.warning }}>Webhook secret must be at least 16 characters.</div>
         )}

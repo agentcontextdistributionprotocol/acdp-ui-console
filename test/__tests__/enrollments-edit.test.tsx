@@ -185,3 +185,109 @@ describe('Enrollments — never echoes the reserved `default` tenant (#173)', ()
     expect(body).toHaveProperty('tenantId', 'default');
   });
 });
+
+// Issue #175: upstream stores authority/tenantId/registryDid verbatim, the
+// tenant binding is immutable and there is no delete route, so a stray space
+// typed into the form strands the authority for good. The form trims what the
+// operator typed, refuses inner whitespace in an authority or tenant, and
+// never rewrites a stored value the operator left alone.
+describe('EnrollForm — normalises typed identity fields (#175)', () => {
+  const authorityInput = () => screen.getByPlaceholderText('registry-a.example');
+  const tenantInput = () => screen.getByPlaceholderText('blank = untenanted');
+  const saveButton = () => screen.getByRole('button', { name: 'Save' });
+
+  async function openCreate() {
+    listEnrollments.mockResolvedValue([SET]);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /^Enroll$/ }));
+  }
+
+  it('a create trims the typed authority and tenant', async () => {
+    await openCreate();
+    fireEvent.change(authorityInput(), { target: { value: '  registry-z.test ' } });
+    fireEvent.change(tenantInput(), { target: { value: ' acme ' } });
+    const body = await save();
+    expect(body).toEqual({ authority: 'registry-z.test', tenantId: 'acme', enabled: true });
+  });
+
+  it('a whitespace-only tenant on create is omitted, not sent', async () => {
+    await openCreate();
+    fireEvent.change(authorityInput(), { target: { value: 'registry-z.test' } });
+    fireEvent.change(tenantInput(), { target: { value: '   ' } });
+    const body = await save();
+    expect(body).not.toHaveProperty('tenantId');
+  });
+
+  it('a whitespace-only authority keeps Save disabled', async () => {
+    await openCreate();
+    fireEvent.change(authorityInput(), { target: { value: '   ' } });
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it('an edit trims changed baseUrl and registryDid', async () => {
+    await openEdit(SET);
+    fireEvent.change(urlInput(), { target: { value: '  https://registry-z.test  ' } });
+    fireEvent.change(didInput(), { target: { value: ' did:web:registry-z.test\n' } });
+    const body = await save();
+    expect(body).toHaveProperty('baseUrl', 'https://registry-z.test');
+    expect(body).toHaveProperty('registryDid', 'did:web:registry-z.test');
+  });
+
+  it('an edit that blanks a stored baseUrl to whitespace clears it with null', async () => {
+    await openEdit(SET);
+    fireEvent.change(urlInput(), { target: { value: '   ' } });
+    const body = await save();
+    expect(body).toHaveProperty('baseUrl', null);
+  });
+
+  it('refuses inner whitespace in a typed authority, with visible copy', async () => {
+    await openCreate();
+    fireEvent.change(authorityInput(), { target: { value: 'reg istry.test' } });
+    expect(screen.getByText('Authority cannot contain whitespace.')).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+    fireEvent.click(saveButton());
+    expect(enrollRegistry).not.toHaveBeenCalled();
+  });
+
+  it('refuses inner whitespace in a typed tenant, with visible copy', async () => {
+    await openEdit(SET);
+    fireEvent.change(tenantInput(), { target: { value: 'ac me' } });
+    expect(screen.getByText('Tenant cannot contain whitespace.')).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+    fireEvent.click(saveButton());
+    expect(enrollRegistry).not.toHaveBeenCalled();
+  });
+
+  it('sends the webhook secret byte-for-byte, never trimmed', async () => {
+    await openCreate();
+    fireEvent.change(authorityInput(), { target: { value: 'registry-z.test' } });
+    fireEvent.change(screen.getByPlaceholderText('min 16 chars (HMAC)'), {
+      target: { value: '  sixteen-chars-secret  ' },
+    });
+    const body = await save();
+    expect(body).toHaveProperty('webhookSecret', '  sixteen-chars-secret  ');
+  });
+
+  it('an edit sends a stored padded authority byte-for-byte (it is the upsert key)', async () => {
+    listEnrollments.mockResolvedValue([{ ...SET, authority: ' registry-z.test' }]);
+    mount();
+    // An accessible name is whitespace-normalised, so match without the pad.
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit enrollment registry-z.test' }));
+    const body = await save();
+    expect(body).toHaveProperty('authority', ' registry-z.test');
+  });
+
+  it('an untouched stored tenant is sent as stored and does not block Save', async () => {
+    await openEdit({ ...SET, tenantId: 'ac me' });
+    expect(screen.queryByText('Tenant cannot contain whitespace.')).not.toBeInTheDocument();
+    const body = await save();
+    expect(body).toHaveProperty('tenantId', 'ac me');
+  });
+
+  it('untouched stored padded baseUrl and registryDid are sent verbatim', async () => {
+    await openEdit({ ...SET, baseUrl: ' http://localhost:8100 ', registryDid: 'did:web:x ' });
+    const body = await save();
+    expect(body).toHaveProperty('baseUrl', ' http://localhost:8100 ');
+    expect(body).toHaveProperty('registryDid', 'did:web:x ');
+  });
+});
