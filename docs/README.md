@@ -71,10 +71,11 @@ these are the places to go for the authoritative details:
 | Protocol error codes and version matrix | [error-codes.md](https://github.com/agentcontextdistributionprotocol/agentcontextdistributionprotocol/blob/main/registries/error-codes.md) · [version-matrix.md](https://github.com/agentcontextdistributionprotocol/agentcontextdistributionprotocol/blob/main/docs/version-matrix.md) |
 | Ecosystem overview | [ecosystem map](https://github.com/agentcontextdistributionprotocol/acdp-docs/blob/main/kb/ecosystem-map.md) · [console knowledge-base entry](https://github.com/agentcontextdistributionprotocol/acdp-docs/blob/main/kb/repos/acdp-ui-console.md) |
 
-These docs were last checked against **`@agentcontextdistributionprotocol/acdp-wasm`
-`^0.15.1`** (the version range in `package.json`). That records what was checked, not
-a compatibility promise. The spec's version matrix is where to check which versions
-work together.
+These docs describe the console built against the
+**`@agentcontextdistributionprotocol/acdp-wasm`** version range in
+[`package.json`](../package.json). That range is the single source; it is not repeated
+here so it cannot go stale. It is not a compatibility promise either. The spec's version
+matrix is where to check which versions work together.
 
 ## Repo links
 
