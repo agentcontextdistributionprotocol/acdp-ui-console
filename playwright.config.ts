@@ -13,16 +13,16 @@ const BASE_URL = `http://localhost:${PORT}`;
 // Matches acdp-playground/docker-compose.full.yml's defaults exactly, so a
 // stack booted with no .env overrides just works. Override via env if a
 // developer's stack uses different values.
-const PLAYGROUND_URL = process.env.PLAYGROUND_URL ?? 'http://localhost:8000';
-const CONTROL_PLANE_URL = process.env.CONTROL_PLANE_URL ?? 'http://localhost:3001';
-const REGISTRY_A_URL = process.env.REGISTRY_A_URL ?? 'http://localhost:8100';
-const REGISTRY_B_URL = process.env.REGISTRY_B_URL ?? 'http://localhost:8200';
+export const PLAYGROUND_URL = process.env.PLAYGROUND_URL ?? 'http://localhost:8000';
+export const CONTROL_PLANE_URL = process.env.CONTROL_PLANE_URL ?? 'http://localhost:3001';
+export const REGISTRY_A_URL = process.env.REGISTRY_A_URL ?? 'http://localhost:8100';
+export const REGISTRY_B_URL = process.env.REGISTRY_B_URL ?? 'http://localhost:8200';
 // `playground-cp-admin` is docker-compose.full.yml's CONTROL_PLANE_ADMIN_TOKEN
 // default, which is ALSO listed in the CP's AUTH_API_KEYS — so this one token
 // authenticates every proxied control-plane call, admin routes included
 // (the revocation feed, enrollment admin actions), giving the suite the
 // fullest real surface to assert against instead of exercising the 403 path.
-const CONTROL_PLANE_API_KEY = process.env.CONTROL_PLANE_API_KEY ?? 'playground-cp-admin';
+export const CONTROL_PLANE_API_KEY = process.env.CONTROL_PLANE_API_KEY ?? 'playground-cp-admin';
 export const ACDP_UI_CONSOLE_PASSWORD =
   process.env.ACDP_UI_CONSOLE_PASSWORD ?? 'acdp-ui-console-integration-test-passphrase';
 

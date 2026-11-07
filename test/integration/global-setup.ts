@@ -10,7 +10,7 @@ const REGISTRY_B_URL = process.env.REGISTRY_B_URL ?? 'http://localhost:8200';
 
 const AUTH_FILE = path.join(__dirname, '.auth', 'session.json');
 
-// Scenarios chosen to give the three spec files (dashboard/registries/
+// Scenarios chosen to give the original three spec files (dashboard/registries/
 // security) real, non-empty data on every surface they assert against:
 // s1 (plain publish → dashboard KPI/recent-runs), s5 (cross-registry → both
 // registry-a AND registry-b get traffic, so both RegistryCards + both JWKS
