@@ -196,6 +196,22 @@ describe('CRITERION 4: the fallbacks', () => {
     expect(contextErrorMessage(oddball)).toBe(CONTEXT_ERROR_MESSAGES.get('CONTEXT_NOT_FOUND'));
   });
 
+  it('REGISTRY_NOT_FOUND (a 404 raised before any lookup) does not claim the body is missing', () => {
+    // Found live against acdp-playground's full stack: registries there
+    // forward no webhooks, so the control plane observes none, and its
+    // federation proxy answers every `GET /contexts/:id` with
+    // `404 REGISTRY_NOT_FOUND` — "no context was looked up" (upstream
+    // contexts.controller.ts). The 404 fallback read that as "No context body
+    // was returned for this id", a claim about a lookup that never happened.
+    const unknownRegistry = apiError(404, { errorCode: 'REGISTRY_NOT_FOUND' });
+    const msg = contextErrorMessage(unknownRegistry);
+    expect(msg).toBe(CONTEXT_ERROR_MESSAGES.get('REGISTRY_NOT_FOUND'));
+    expect(msg).not.toBe(contextErrorMessage(apiError(404, { errorCode: 'CONTEXT_NOT_FOUND' })));
+    expect(msg).not.toMatch(/no context body was returned/i);
+    expect(msg).toMatch(/never looked up/);
+    expect(msg).toMatch(/nothing here has failed verification/i);
+  });
+
   it("demo mode's own 404 producer lands on the mapped message", async () => {
     // Driven through the REAL demo producer rather than a hand-copied shape:
     // `lib/api/client.ts`'s demo `getContext` throws this for a search hit with

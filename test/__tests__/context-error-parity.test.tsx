@@ -132,6 +132,7 @@ describe('CRITERION 5: /contexts and the run inspector render the same message',
     ['an unknown code', apiError(502, { errorCode: 'NEVER_SEEN_BEFORE' })],
     ['no code at all', apiError(502, '<html>502</html>')],
     ['a 404', apiError(404, { errorCode: 'CONTEXT_NOT_FOUND' })],
+    ['REGISTRY_NOT_FOUND (a 404 before any lookup)', apiError(404, { errorCode: 'REGISTRY_NOT_FOUND' })],
   ];
 
   for (const [label, error] of cases) {
@@ -179,6 +180,21 @@ describe('CRITERION 5: /contexts and the run inspector render the same message',
       `The registry index lists this context. ${contextErrorMessage(notFound)}`,
     );
     expect(dialog.textContent).not.toContain('Could not load context.');
+  });
+
+  it('REGISTRY_NOT_FOUND keeps the neutral affordance but names the real cause', async () => {
+    // Still a 404, still not a verification failure — so still the EmptyState,
+    // not a red panel. But the sentence must be the unknown-registry one: the
+    // registry was never asked, so "no body was returned" would be false.
+    const unknownRegistry = apiError(404, { errorCode: 'REGISTRY_NOT_FOUND' });
+    const dialog = modal(await renderPageModal(unknownRegistry));
+    expect(hasEmptyState(dialog)).toBe(true);
+    expect(dialog.textContent).toContain(
+      `The registry index lists this context. ${contextErrorMessage(unknownRegistry)}`,
+    );
+    expect(dialog.textContent).not.toContain(
+      contextErrorMessage(apiError(404, { errorCode: 'CONTEXT_NOT_FOUND' })),
+    );
   });
 
   // ── The branches are mutually exclusive, and that has to be asserted ────

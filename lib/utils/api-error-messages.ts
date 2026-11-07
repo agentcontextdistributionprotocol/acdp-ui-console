@@ -91,6 +91,19 @@ export const CONTEXT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
     'CONTEXT_NOT_FOUND',
     'No context body was returned for this id. Nothing here has failed verification — there is simply nothing to verify.',
   ],
+  [
+    // Also a 404, and NOT the same claim as `CONTEXT_NOT_FOUND`: the federation
+    // proxy raises it before any lookup, when the ctx_id's authority is not an
+    // observed registry (with a base URL) in the caller's tenant — upstream
+    // `src/contexts/contexts.controller.ts`, "no context was looked up" (#182).
+    // Falling through to the 404 fallback told the operator the registry had no
+    // body for an id the registry was never asked about; in a stack whose
+    // registries forward no webhooks, that was every search hit.
+    'REGISTRY_NOT_FOUND',
+    "The control plane does not know this context's registry, so the context was never looked up — " +
+      'this is not a statement that the registry lacks it. Nothing here has failed verification. ' +
+      'A body is fetched only through a registry the control plane has observed.',
+  ],
 ]);
 
 /**
