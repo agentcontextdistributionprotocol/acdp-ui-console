@@ -150,9 +150,9 @@ describe('SDK matrix', () => {
     );
   });
 
-  it('the ACDP spec row is 0.4.0 Final (RFC-ACDP-0015 promoted 2026-08-28)', () => {
+  it('the ACDP spec row is 0.5.0 Final (acdp/0.5.0 promoted 2026-11-06)', () => {
     const specRow = MOCK_SDK_MATRIX.find((r) => r.component === 'ACDP spec');
-    expect(specRow?.version).toBe('0.4.0 Final');
+    expect(specRow?.version).toBe('0.5.0 Final');
   });
 
   it('every row has a non-empty component and version, and carries no status', () => {
