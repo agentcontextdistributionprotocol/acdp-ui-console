@@ -1,54 +1,28 @@
 #!/usr/bin/env node
-// Post-deploy smoke check: fetch every top-level route and fail on any non-200.
-// Zero dependencies — uses the global fetch in Node 18+. Point it anywhere with
+// Post-deploy smoke check. Fails on:
+//   - any top-level page route that doesn't return 200, and
+//   - a misconfigured session gate: an anonymous GET of a gated proxy/stream
+//     path must answer 401 (configured), not 503 (ACDP_UI_CONSOLE_PASSWORD
+//     unset) or 2xx (gate open). No secret, no login — see scripts/smoke-checks.mjs.
+// Zero dependencies — uses the global fetch. Point it anywhere with
 // SMOKE_BASE_URL; defaults to the production console.
 //
 //   SMOKE_BASE_URL=http://localhost:3000 node scripts/smoke-routes.mjs
+//
+// A `next dev` server without ACDP_UI_CONSOLE_PASSWORD fails the gate probes
+// by design (development fail-open); set the variable to smoke a local server.
+
+import { GATE_PROBES, PAGE_ROUTES, runSmoke } from './smoke-checks.mjs';
 
 const base = (process.env.SMOKE_BASE_URL ?? 'https://console.agentcontextdistributionprotocol.io').replace(
   /\/$/,
   '',
 );
 
-// The static top-level pages. /runs/[runId] is intentionally omitted — it needs
-// a concrete run id and is exercised by the run workbench, not this crawl.
-const routes = [
-  '/',
-  '/dashboard',
-  '/scenarios',
-  '/runs',
-  '/events',
-  '/contexts',
-  '/lineage',
-  '/trust',
-  '/security',
-  '/registries',
-  '/agents',
-  '/observability',
-  '/config',
-];
-
-console.log(`Smoke-checking ${routes.length} routes against ${base}\n`);
-
-let failures = 0;
-for (const route of routes) {
-  const url = base + route;
-  try {
-    const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(15_000) });
-    if (res.status !== 200) {
-      failures++;
-      console.error(`FAIL  ${route} -> ${res.status}`);
-    } else {
-      console.log(`ok    ${route}`);
-    }
-  } catch (err) {
-    failures++;
-    console.error(`FAIL  ${route} -> ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
+const total = PAGE_ROUTES.length + GATE_PROBES.length;
+const failures = await runSmoke(base);
 if (failures > 0) {
-  console.error(`\n${failures}/${routes.length} routes failed`);
+  console.error(`\n${failures}/${total} checks failed`);
   process.exit(1);
 }
-console.log(`\nAll ${routes.length} routes returned 200`);
+console.log(`\nAll ${total} checks passed`);
