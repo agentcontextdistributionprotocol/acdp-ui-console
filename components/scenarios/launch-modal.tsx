@@ -120,14 +120,15 @@ export function LaunchModal({ scenario, onClose }: { scenario: ScenarioDef | nul
           successful `startRun` — because the operator needs the message beside
           the form they submitted.
 
-          No `codes` map, and none is possible: this is the only playground
-          mutation, and FastAPI's `HTTPException(404, "unknown scenario: …")`
-          (`acdp-playground/playground/api/runs.py:30`) serialises as
-          `{"detail": …}`, which `parseErrorCode` (`fetcher.ts:10-20`) does not
-          read — it looks for `errorCode` and `error.code`. Every arm this
-          surface can reach is a status arm, so the lead carries all of the
-          specificity, and a 404 gets the one thing the status alone cannot
-          say: it is a deployment mismatch, not a transient.
+          No `codes` map: FastAPI's `HTTPException(404, "unknown scenario: …")`
+          (`acdp-playground/playground/api/runs.py`) serialises as
+          `{"detail": "<string>"}`, which carries no code, so a 404 is a status
+          arm and gets the one thing the status alone cannot say: it is a
+          deployment mismatch, not a transient. The playground's run limiter
+          (429 `{"detail": {"code": "run_rate_limited" | "max_concurrent_runs",
+          …}}`) and the console's own public-mode 429 do carry codes, and
+          `operatorErrorMessage` renders them (`rateLimitMessage`) with the
+          limit and retry time.
 
           Both halves are derived at render from the stored value — the message
           and the diagnostic. The disclosure is bounded by `.error-detail > pre`

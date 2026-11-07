@@ -196,7 +196,15 @@ operator-only routes stay behind the passphrase.
   in every mode. The limit is skipped when the client IP is unknown, so a
   shared bucket can't lock the operator out.
 - **`GET /api/auth/session`** returns `{publicMode, signedIn}` and nothing
-  else, ungated, for the UI chrome.
+  else, ungated, for the UI chrome: the sidebar shows **Sign in** for
+  `{publicMode: true, signedIn: false}` and **Sign out** otherwise (including
+  while loading or if the read fails).
+- **What the visitor sees.** `operatorErrorMessage` renders the console 429
+  ("Too many requests from your network. Try again in N s."), the anonymous
+  admin 403 ("This action needs the operator sign-in. Sign in at /login."), and
+  the playground's own launch 429s (`run_rate_limited`, `max_concurrent_runs`)
+  with their limit and retry time. A health probe the console throttled reads
+  `rate limited`, not `unreachable`.
 - **Logging.** Each console 403, 429 or 503 is logged with the service,
   method, path, reason and an `ipTag`: a truncated HMAC of the IP under a key
   derived from the passphrase, never the IP itself.

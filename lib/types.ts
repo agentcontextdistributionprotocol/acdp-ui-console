@@ -871,6 +871,9 @@ export const REGISTRY_LABELS: Record<RegistryAuthority, string> = {
  */
 export type CapabilityAuthority = RegistryAuthority;
 
+/** The words a failed health probe may report. See `HealthResult.detail`. */
+export type HealthFailureWord = 'degraded' | 'unreachable' | 'rate limited';
+
 export interface HealthResult {
   /**
    * Whether the service is serving, NOT whether the request succeeded.
@@ -903,8 +906,12 @@ export interface HealthResult {
    *
    * A union rather than a free string because two surfaces render it verbatim
    * to operators; a typo would reach the screen as a label.
+   *
+   * `'rate limited'`: the console's own public-mode limiter refused the probe
+   * (an unstamped 429 `CONSOLE_RATE_LIMITED`), so nothing about the service is
+   * known — saying `unreachable` would assert it is down.
    */
-  detail?: 'degraded' | 'unreachable';
+  detail?: HealthFailureWord;
   /**
    * The service's own `/healthz` version string, when the response carried one
    * and could be parsed (registry-rs/control-plane/playground all now expose

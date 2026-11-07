@@ -104,7 +104,8 @@ What you see depends on whether `ACDP_UI_CONSOLE_PASSWORD` is set:
 
 After a successful sign-in, `POST /api/auth/login` sets a session cookie valid for
 about 12 hours (`lib/server/session.ts`), and the browser is sent to `/`. Sign out
-from the sidebar. [Authentication](authentication.md) explains how the gate works.
+from the sidebar. With `ACDP_UI_PUBLIC_MODE` on, an anonymous visitor sees
+**Sign in** there instead, which opens `/login`. [Authentication](authentication.md) explains how the gate works.
 
 ## Sanity checks
 

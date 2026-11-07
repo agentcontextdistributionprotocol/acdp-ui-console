@@ -8,16 +8,64 @@ import type { ProxyService } from '@/lib/types';
 // fallback. Most call sites' bodies aren't JSON at all (plain text, an upstream's
 // own error page), so a parse failure is expected, not exceptional — never let it
 // mask the original HTTP error by throwing here.
-function parseErrorCode(body: string): string | undefined {
+//
+// The playground (FastAPI) wraps its structured errors as
+// `{"detail": {"code", ...}}` — its run limiter's 429 is
+// `{"detail": {"code": "run_rate_limited" | "max_concurrent_runs", "limit",
+// "retry_after", "detail"}}` — so `detail.code` is read as a third fallback.
+// A plain-string `detail` (FastAPI's default `HTTPException`) carries no code.
+interface ErrorEnvelope {
+  errorCode?: unknown;
+  error?: { code?: unknown };
+  detail?: { code?: unknown; limit?: unknown; retry_after?: unknown } | string;
+  retryAfterSeconds?: unknown;
+  limit?: unknown;
+}
+
+function parseEnvelope(body: string): ErrorEnvelope | undefined {
   if (!body) return undefined;
   try {
-    const parsed = JSON.parse(body) as { errorCode?: unknown; error?: { code?: unknown } };
-    if (typeof parsed.errorCode === 'string') return parsed.errorCode;
-    if (typeof parsed.error?.code === 'string') return parsed.error.code;
-    return undefined;
+    const parsed: unknown = JSON.parse(body);
+    return parsed && typeof parsed === 'object' ? (parsed as ErrorEnvelope) : undefined;
   } catch {
     return undefined;
   }
+}
+
+function parseErrorCode(env: ErrorEnvelope | undefined): string | undefined {
+  if (!env) return undefined;
+  if (typeof env.errorCode === 'string') return env.errorCode;
+  if (typeof env.error?.code === 'string') return env.error.code;
+  if (typeof env.detail === 'object' && env.detail !== null && typeof env.detail.code === 'string') return env.detail.code;
+  return undefined;
+}
+
+function detailObject(env: ErrorEnvelope | undefined) {
+  return env && typeof env.detail === 'object' && env.detail !== null ? env.detail : undefined;
+}
+
+function positiveInt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.ceil(value) : undefined;
+}
+
+/**
+ * Seconds until a retry may succeed, from a `Retry-After` header (delta-seconds
+ * or an HTTP-date, RFC 9110 §10.2.3), else from the body — the console's own
+ * 429 (`retryAfterSeconds`) or the playground's (`detail.retry_after`).
+ * `undefined` when none is usable, so copy omits the time rather than invent one.
+ */
+export function parseRetryAfter(
+  header: string | null | undefined,
+  env: ErrorEnvelope | undefined,
+  now: number = Date.now(),
+): number | undefined {
+  const raw = header?.trim();
+  if (raw) {
+    if (/^\d+$/.test(raw)) return Number(raw);
+    const at = Date.parse(raw);
+    if (!Number.isNaN(at) && /[a-z]/i.test(raw)) return Math.max(0, Math.ceil((at - now) / 1000));
+  }
+  return positiveInt(env?.retryAfterSeconds) ?? positiveInt(detailObject(env)?.retry_after);
 }
 
 export class ApiError extends Error {
@@ -78,7 +126,26 @@ export class ApiError extends Error {
    */
   readonly fromUpstream: boolean;
 
-  constructor(status: number, body: string, service: ProxyService, path: string, fromUpstream = false) {
+  /**
+   * Seconds until a retry may succeed (see `parseRetryAfter`), for a 429 or
+   * 503. `undefined` when the response gave no usable value.
+   */
+  readonly retryAfterSeconds?: number;
+
+  /**
+   * The limit a 429 reported: the console's `limit`, or the playground's
+   * `detail.limit` (runs per window, or concurrent runs).
+   */
+  readonly limit?: number;
+
+  constructor(
+    status: number,
+    body: string,
+    service: ProxyService,
+    path: string,
+    fromUpstream = false,
+    retryAfterHeader?: string | null,
+  ) {
     super(body || `Request failed with status ${status}`);
     this.name = 'ApiError';
     this.status = status;
@@ -86,7 +153,10 @@ export class ApiError extends Error {
     this.path = path;
     this.body = body;
     this.fromUpstream = fromUpstream;
-    this.errorCode = parseErrorCode(body);
+    const env = parseEnvelope(body);
+    this.errorCode = parseErrorCode(env);
+    this.retryAfterSeconds = parseRetryAfter(retryAfterHeader, env);
+    this.limit = positiveInt(env?.limit) ?? positiveInt(detailObject(env)?.limit);
   }
 
   get isNotFound() {
@@ -217,7 +287,7 @@ export async function fetchJson<T>(service: ProxyService, path: string, init?: R
     // not disagree but would invite one that does.
     const fromUpstream = cameFromUpstream(response, service);
     redirectToLoginOn401(response.status, fromUpstream);
-    throw new ApiError(response.status, message, service, path, fromUpstream);
+    throw new ApiError(response.status, message, service, path, fromUpstream, response.headers.get('retry-after'));
   }
   warnOnUnstampedSuccess(response, service, path);
   if (response.status === 204) return undefined as unknown as T;
@@ -230,7 +300,7 @@ export async function fetchText(service: ProxyService, path: string): Promise<st
     const message = await response.text().catch(() => '');
     const fromUpstream = cameFromUpstream(response, service);
     redirectToLoginOn401(response.status, fromUpstream);
-    throw new ApiError(response.status, message, service, path, fromUpstream);
+    throw new ApiError(response.status, message, service, path, fromUpstream, response.headers.get('retry-after'));
   }
   // Both success paths, not just fetchJson's: fetchText is an independent
   // reader of the same boundary (`/metrics`), and a detector wired into only

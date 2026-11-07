@@ -165,7 +165,7 @@ status.
   - **Cards.** One `RegistryCard` per *observed* registry
     (`listRegistries`). The header shows the result of the
     `/.well-known/acdp.json` capabilities probe, labelled by
-    `registryProbeView`: `responding`, `degraded`/`unreachable`,
+    `registryProbeView`: `responding`, `degraded`/`unreachable`/`rate limited`,
     `checking…` or `not probed`. It is never a hard-coded "healthy".
   - **Profile glossary.** Each card has a keyboard-reachable
     `<details>` "Profile glossary".

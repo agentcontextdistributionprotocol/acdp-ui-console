@@ -121,7 +121,8 @@ export function SdkMatrix() {
         A failed row says which kind of failure it was. <code>degraded</code> means something beyond
         this console answered and the answer was not a healthy one — the service itself, or anything
         in front of it. <code>unreachable</code> means nothing beyond this console answered at all,
-        which includes this console refusing its own request.
+        which includes this console refusing its own request. <code>rate limited</code> means this
+        console&apos;s own per-visitor limit refused the check, so nothing is known about the service.
       </p>
     </Card>
   );

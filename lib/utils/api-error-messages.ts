@@ -535,6 +535,8 @@ export function operatorErrorMessage(
     const mapped = opts.codes.get(error.errorCode);
     if (mapped) return `${lead}. ${mapped}`;
   }
+  const limited = rateLimitMessage(error);
+  if (limited) return `${lead}. ${limited}`;
   if (error.errorCode && error.service === 'control-plane') {
     const mapped = CONTROL_PLANE_ERROR_CODES.get(error.errorCode);
     if (mapped) return `${lead}. ${mapped}`;
@@ -569,6 +571,47 @@ export function operatorErrorMessage(
     return `${lead} — ${svc} is unavailable or rate limiting right now. Wait and retry.`;
   if (status >= 500) return `${lead} — ${svc} did not answer successfully (${status}).`;
   return `${lead} — ${svc} answered ${status}.`;
+}
+
+/**
+ * Public-mode refusals and the playground's run limiter (ACDP_UI_PUBLIC_MODE,
+ * `lib/server/access.ts`; playground `rate_limit.py`).
+ *
+ * The two console codes are only honoured on an UNSTAMPED response: the console
+ * minted them, and an upstream echoing the same string is not this console's
+ * statement. The playground codes are honoured only on a STAMPED playground 429,
+ * for the mirror reason. A time phrase appears only when the response gave a
+ * usable `Retry-After` (header or body); a limit only when it reported one.
+ */
+export const CONSOLE_RATE_LIMITED = 'CONSOLE_RATE_LIMITED';
+export const CONSOLE_OPERATOR_SESSION_REQUIRED = 'CONSOLE_OPERATOR_SESSION_REQUIRED';
+export const OPERATOR_SIGN_IN_REQUIRED = 'This action needs the operator sign-in. Sign in at /login.';
+
+function retryPhrase(error: ApiError): string {
+  if (error.retryAfterSeconds === undefined) return '';
+  return error.retryAfterSeconds > 0 ? ` Try again in ${error.retryAfterSeconds} s.` : ' Try again now.';
+}
+
+export function rateLimitMessage(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  if (!error.fromUpstream) {
+    if (error.errorCode === CONSOLE_RATE_LIMITED) return `Too many requests from your network.${retryPhrase(error)}`;
+    if (error.errorCode === CONSOLE_OPERATOR_SESSION_REQUIRED) return OPERATOR_SIGN_IN_REQUIRED;
+    return undefined;
+  }
+  if (error.service !== 'playground' || error.status !== 429) return undefined;
+  if (error.errorCode === 'run_rate_limited') {
+    const limit = error.limit !== undefined ? ` (${error.limit} per window)` : '';
+    return `Run launch limit reached${limit}.${retryPhrase(error)}`;
+  }
+  if (error.errorCode === 'max_concurrent_runs') {
+    const running =
+      error.limit !== undefined
+        ? `The playground is already running ${error.limit} scenarios.`
+        : 'The playground is already running as many scenarios as it allows.';
+    return `${running}${retryPhrase(error)}`;
+  }
+  return undefined;
 }
 
 /**
