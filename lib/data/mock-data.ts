@@ -348,7 +348,7 @@ export const MOCK_SCENARIOS: ScenarioDef[] = [
     framework: 'langchain',
     default_inputs: { topic: 'revoked producer key' },
   },
-  // ── RFC-ACDP-0016 external anchors (0.5.0 line, Draft) ──────────────
+  // ── RFC-ACDP-0016 external anchors (0.5.0 line, Final) ──────────────
   {
     id: 's33_anchors',
     name: 'External Anchors',
@@ -1771,10 +1771,10 @@ export const MOCK_WEBHOOKS: Webhook[] = [
 // could hold `'ok'` here while computing `'reference'`, and a future reader
 // would have no way to know which one the UI honours.
 export const MOCK_SDK_MATRIX = [
-  { component: 'ACDP spec', version: '0.4.0 Final' },
-  { component: 'acdp-rs library', version: '0.21.3' },
-  { component: 'acdp-py binding', version: '0.21.3' },
-  { component: 'acdp-node binding', version: '0.21.3' },
+  { component: 'ACDP spec', version: '0.5.0 Final' },
+  { component: 'acdp-rs library', version: '0.21.4' },
+  { component: 'acdp-py binding', version: '0.21.4' },
+  { component: 'acdp-node binding', version: '0.21.4' },
   // Label must match SDK_MATRIX_ROW_SERVICE's key exactly; see the note there.
   // 0.5.0, matching what the real registry advertises and what
   // MOCK_CAPABILITIES.a now says — see the note there. The parenthetical names

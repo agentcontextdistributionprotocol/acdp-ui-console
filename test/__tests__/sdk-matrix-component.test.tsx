@@ -100,7 +100,7 @@ describe('SdkMatrix version column', () => {
     // before this phase THIS is the row that carried the annotation.
     const specRow = rowFor('ACDP spec');
     expect(markerIn(specRow)).toBeNull();
-    expect(specRow.textContent).toContain('0.4.0 Final');
+    expect(specRow.textContent).toContain('0.5.0 Final');
   });
 
   it('gives the marker an accessible name a browser will actually honour', async () => {
