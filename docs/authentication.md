@@ -132,6 +132,78 @@ sequenceDiagram
   `x-acdp-ui-proxy`, so the browser can tell them apart from an upstream's own
   401, 403 or 503 ([Architecture → The provenance stamp](architecture.md#the-provenance-stamp)).
 
+## Public mode (`ACDP_UI_PUBLIC_MODE`)
+
+With `ACDP_UI_PUBLIC_MODE` off (the default), everything above applies and
+nothing below does. Only `on`, `true` or `1` turn it on. Any other value is
+treated as off and logged as a warning, so a typo fails toward the password
+gate (`lib/server/public-mode.ts`).
+
+With it on, anonymous visitors can use the console's **public** routes, and the
+operator-only routes stay behind the passphrase.
+
+- **Who decides.** `middleware.ts` keeps the CSRF check but lets a request
+  with no session through. The route handler decides, in
+  `lib/server/access.ts`, after its own traversal guards and allow-list match.
+  It is the only place that sees the decoded path, so an encoded variant
+  can't be classified one way and fetched another. The handler also
+  re-checks the session for admin routes, and for every route when the flag
+  is off, so a mismatch between the edge and Node reads of the env can't open
+  anything.
+- **Access classes.** Every entry in `lib/server/proxy-allowlist.ts` carries
+  `access: 'public' | 'admin'`. There are nine admin routes, all on the
+  control plane:
+  - `GET /registries/enrollments`
+  - `POST /registries/enroll`
+  - `POST /registries/:authority/log-witness/ack`
+  - `GET /webhooks` and `POST /webhooks`
+  - `PATCH /webhooks/:id` and `DELETE /webhooks/:id`
+  - `GET /metrics`
+  - `GET /auth/revocations`
+
+  Everything else on the allow-list is public, including both SSE relays and
+  playground `POST /runs`. A route that isn't on the list is still 403.
+- **403, not 401.** An anonymous admin request gets
+  `403 {errorCode: 'CONSOLE_OPERATOR_SESSION_REQUIRED'}`. It is not a 401,
+  because the browser redirects an unstamped 401 to `/login`, and that would
+  bounce public visitors off pages they are allowed to see.
+- **Per-IP limits.** Limits are kept in memory per instance
+  (`lib/server/rate-limit.ts`) and apply to the operator too:
+  - 300 reads a minute.
+  - Playground `POST /runs`: 5 per 10 minutes.
+  - Anonymous control-plane requests: 30 a minute per IP, and 150 a minute per
+    instance.
+  - Each SSE open takes a read token and a stream slot: 4 concurrent per IP,
+    200 per instance.
+
+  A refused request gets `429 {errorCode: 'CONSOLE_RATE_LIMITED',
+  retryAfterSeconds}` plus a `Retry-After` header. A request the access check
+  or the limiter refuses consumes nothing; a stream open refused only because
+  its IP already holds 4 streams has already spent its read token. The durable limits (LLM quota, concurrent runs, the per-IP run
+  limit) are the playground's, charged to the forwarded `X-ACDP-Client-IP`.
+- **Control-plane key.** The operator uses `CONTROL_PLANE_API_KEY` and an
+  anonymous visitor uses `CONTROL_PLANE_READ_API_KEY`, a non-admin key. If the
+  read key is unset, or the control plane answers it with 401, the console
+  falls back to the admin key and logs that (throttled). This keeps the
+  console working before the read key is registered in the control plane's
+  `AUTH_API_KEYS`.
+- **`GET /registries`.** For anonymous callers, `baseUrl` is stripped from the
+  observed-registry list (it is an internal address).
+- **No passphrase in production.** Public routes still work and admin routes
+  answer `503 CONSOLE_AUTH_NOT_CONFIGURED`. With the flag off, every route is
+  503, as before.
+- **Login.** `POST /api/auth/login` allows 10 attempts per IP per 10 minutes,
+  in every mode. The limit is skipped when the client IP is unknown, so a
+  shared bucket can't lock the operator out.
+- **`GET /api/auth/session`** returns `{publicMode, signedIn}` and nothing
+  else, ungated, for the UI chrome.
+- **Logging.** Each console 403, 429 or 503 is logged with the service,
+  method, path, reason and an `ipTag`: a truncated HMAC of the IP under a key
+  derived from the passphrase, never the IP itself.
+- **Rollback.** Turning the flag off restores the password gate, but not the
+  pre-public-mode upstream wiring (the registry passthrough, the playground
+  key and the client IP).
+
 ## When a session expires mid-use
 
 ```mermaid

@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
 import { buildUpstreamUrl, upstreamAuthHeaders } from '@/lib/server/integrations';
-import { getClientIp } from '@/lib/server/client-ip';
-import { relayEventStream } from '@/lib/server/sse-relay';
+import { relayEventStream, releaseWhenClosed } from '@/lib/server/sse-relay';
+import { decideAccess, rateLimitedResponse } from '@/lib/server/access';
+import { consoleStreamGate, rateLimitKey } from '@/lib/server/rate-limit';
 
 export const dynamic = 'force-dynamic';
 // Keep the SSE relay alive past Vercel's default function timeout. Only
@@ -14,7 +15,19 @@ export const maxDuration = 60;
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ runId: string }> }) {
   const { runId } = await context.params;
-  const upstreamUrl = buildUpstreamUrl('playground', `/runs/${encodeURIComponent(runId)}/events`);
+  const path = `/runs/${encodeURIComponent(runId)}/events`;
+  // Public in public mode (one `read` token per open, plus a concurrent
+  // stream slot); the operator session with the flag off. See
+  // `lib/server/access.ts`.
+  const decision = await decideAccess(request, { service: 'playground', method: 'GET', path, access: 'public', limit: 'read' });
+  if (!decision.ok) return decision.response;
+  let release = () => {};
+  if (decision.publicMode) {
+    const slot = consoleStreamGate.acquire(rateLimitKey(decision.clientIp));
+    if (!slot.allowed) return rateLimitedResponse(slot.retryAfterSeconds, slot.limit);
+    release = slot.release;
+  }
+  const upstreamUrl = buildUpstreamUrl('playground', path);
 
   try {
     const upstream = await fetch(upstreamUrl, {
@@ -22,7 +35,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ run
       // through the proxy route; never inherited from the client.
       headers: {
         accept: 'text/event-stream',
-        ...upstreamAuthHeaders('playground', { clientIp: getClientIp(request.headers) }),
+        ...upstreamAuthHeaders('playground', { clientIp: decision.clientIp }),
       },
       cache: 'no-store',
       signal: request.signal,
@@ -39,8 +52,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ run
     // see the longer note there for why that arm exists and why the whole 3xx
     // range, 304 included, is refused. `relayEventStream` also refuses a 200
     // whose content-type is not `text/event-stream` — see its own doc.
-    return relayEventStream('playground', upstreamUrl, upstream);
+    return releaseWhenClosed(relayEventStream('playground', upstreamUrl, upstream), release, request.signal);
   } catch (err) {
+    release();
     return new Response(`stream relay failed: ${String(err)}`, { status: 502 });
   }
 }

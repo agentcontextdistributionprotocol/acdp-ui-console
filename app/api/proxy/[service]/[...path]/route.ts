@@ -3,9 +3,11 @@ import {
   buildUpstreamUrl,
   isProxyService,
   upstreamAuthHeaders,
+  type ControlPlaneCredential,
   type ProxyService,
 } from '@/lib/server/integrations';
-import { getClientIp } from '@/lib/server/client-ip';
+import { matchRoute } from '@/lib/server/proxy-allowlist';
+import { controlPlaneCredential, decideAccess, logCredentialFallback } from '@/lib/server/access';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,128 +26,29 @@ const FORWARD_HEADERS = new Set([
   'x-acdp-event-id',
 ]);
 
-// The console has no user authentication of its own, so this route is the
-// entire perimeter around a privileged upstream (control-plane requests carry
-// the server-side bearer token below). It is deliberately NOT a generic
-// reverse proxy: each service only forwards the exact (method, path) pairs
-// `lib/api/client.ts` actually issues. Anything else — including paths that
-// happen to exist upstream but the console never calls — is rejected before a
-// request is ever sent out, so a leaked/guessed URL can't reach arbitrary
-// upstream surface with the injected credential attached.
-interface RouteMatcher {
-  method: string;
-  pattern: RegExp;
-}
+// The allow-list itself (exact method + path per service, and each route's
+// public/admin access) lives in `lib/server/proxy-allowlist.ts`.
 
-const REGISTRY_ROUTES: RouteMatcher[] = [
-  { method: 'GET', pattern: /^\/healthz$/ },
-  { method: 'GET', pattern: /^\/contexts\/search$/ },
-  { method: 'GET', pattern: /^\/lineages\/[^/]+$/ },
-  { method: 'GET', pattern: /^\/lineages\/[^/]+\/current$/ },
-  { method: 'GET', pattern: /^\/\.well-known\/acdp\.json$/ },
-  { method: 'GET', pattern: /^\/\.well-known\/jwks\.json$/ },
-  // The registry's OWN did:web DID document (its receipt / checkpoint keys),
-  // read by `getRegistryDidDocument` and accepted only by
-  // `lib/verify/did-docs.ts`. A fixed literal on the configured registry base
-  // URL — deliberately no route here (or on any service) takes a DID or host
-  // to fetch, which would turn this proxy into an SSRF primitive. Producer and
-  // witness DID documents on other hosts are therefore never fetched.
-  { method: 'GET', pattern: /^\/\.well-known\/did\.json$/ },
-];
-
-const ALLOWED_ROUTES: Record<ProxyService, RouteMatcher[]> = {
-  playground: [
-    { method: 'GET', pattern: /^\/healthz$/ },
-    { method: 'GET', pattern: /^\/scenarios$/ },
-    { method: 'POST', pattern: /^\/runs$/ },
-    { method: 'GET', pattern: /^\/runs\/[^/]+$/ },
-  ],
-  'control-plane': [
-    { method: 'GET', pattern: /^\/healthz$/ },
-    { method: 'GET', pattern: /^\/dashboard\/overview$/ },
-    { method: 'GET', pattern: /^\/runs$/ },
-    { method: 'GET', pattern: /^\/runs\/[^/]+$/ },
-    { method: 'GET', pattern: /^\/runs\/[^/]+\/lineage$/ },
-    { method: 'GET', pattern: /^\/runs\/[^/]+\/events$/ },
-    { method: 'GET', pattern: /^\/events$/ },
-    { method: 'GET', pattern: /^\/agents$/ },
-    { method: 'GET', pattern: /^\/registries$/ },
-    { method: 'GET', pattern: /^\/registries\/enrollments$/ },
-    { method: 'POST', pattern: /^\/registries\/enroll$/ },
-    // Transparency-log witness state, read-only, in two shapes that look
-    // alike and are not: per-authority state, and the collection-level alert
-    // worklist. Neither pattern can admit the other's shape, because they
-    // differ in the segment that is fixed:
-    //
-    //   /registries/:authority/log-witness   — `log-witness` is segment THREE
-    //   /registries/log-witness/alerts       — `log-witness` is segment TWO
-    //
-    // so the per-authority pattern only matches a path ENDING in
-    // `/log-witness`, which `.../alerts` does not, and the collection pattern
-    // is a fixed three-segment literal with no variable part at all.
-    //
-    // `[^/]+` IS right for the authority: it is a DNS name, which contains
-    // dots but never slashes — the opposite of the ctx_id case below. Both
-    // patterns are `$`-anchored, which is what stops either from growing a
-    // tail — including growing into the admin `:authority/log-witness/ack`
-    // sibling, which is allow-listed separately below as a POST and must not
-    // become reachable by GET.
-    //
-    // Upstream declares `log-witness/alerts` BEFORE `:authority/log-witness`
-    // (`registries.controller.ts:51` and `:117`). ROUND 7's N11: an earlier
-    // version of this comment said that ordering "is why Nest does not swallow
-    // `log-witness` as an `:authority` there", and that causal claim is wrong.
-    // The two routes are DISJOINT whatever order they are declared in:
-    // `:authority/log-witness` requires the segment after the authority to be
-    // the literal `log-witness`, and in `/registries/log-witness/alerts` that
-    // segment is `alerts`. Declaration order decides nothing here, so an
-    // upstream refactor that reorders them changes nothing — which is a
-    // stronger statement than the one it replaces, and it is the one this file
-    // should have been making. (Order-dependence between those two WOULD
-    // matter for a hypothetical `GET :authority/log-witness/alerts`; upstream
-    // serves no such route, which is the next paragraph's point.)
-    // Our own matching is order-independent regardless (`some` at
-    // `isAllowedRoute`) — but do not "simplify" these two into one pattern on
-    // the strength of any of that. There is no per-authority `alerts` route upstream, so
-    // widening the collection pattern's middle segment to `[^/]+` would admit
-    // a shape the control plane does not serve; the route test asserts that
-    // case by name, alongside three other widenings, and four adjacent shapes
-    // around the per-authority pattern.
-    // (`/registries/enrollments` needs no such guard — it is allow-listed on
-    // its own line above, so neither pattern can admit or deny it.)
-    { method: 'GET', pattern: /^\/registries\/[^/]+\/log-witness$/ },
-    { method: 'GET', pattern: /^\/registries\/log-witness\/alerts$/ },
-    // Acknowledging one authority's alert (#84). One of five patterns in this
-    // file with a variable segment in the MIDDLE (`/lineages/[^/]+/current`,
-    // `/runs/[^/]+/lineage`, `/runs/[^/]+/events`, the per-authority read
-    // above, and this), so it carries the same over-reach risk and gets the
-    // same treatment: `[^/]+` for a DNS authority, `$`-anchored, and the route
-    // test asserts the adjacent shapes out — a multi-segment authority, a
-    // tail, GET on this path, and each of the two literal segments widened to
-    // `[^/]+` in turn.
-    //
-    // POST, and the ONLY write this console issues under `/registries/` other
-    // than `enroll`. It carries no body: upstream takes no `@Body()` and
-    // derives the acknowledger server-side from the caller's own token, so
-    // there is nothing for a client to send and nothing for this route to
-    // forward beyond the path itself.
-    { method: 'POST', pattern: /^\/registries\/[^/]+\/log-witness\/ack$/ },
-    { method: 'GET', pattern: /^\/metrics$/ },
-    { method: 'GET', pattern: /^\/webhooks$/ },
-    { method: 'POST', pattern: /^\/webhooks$/ },
-    { method: 'PATCH', pattern: /^\/webhooks\/[^/]+$/ },
-    { method: 'DELETE', pattern: /^\/webhooks\/[^/]+$/ },
-    // ctx_id is an `acdp://authority/uuid` URI (see lib/api/client.ts's
-    // getContext) — it contains slashes, so this must NOT be `[^/]+`.
-    { method: 'GET', pattern: /^\/contexts\/.+$/ },
-    { method: 'GET', pattern: /^\/auth\/revocations$/ },
-  ],
-  'registry-a': REGISTRY_ROUTES,
-  'registry-b': REGISTRY_ROUTES,
-};
-
-function isAllowedRoute(service: ProxyService, method: string, pathname: string): boolean {
-  return ALLOWED_ROUTES[service].some((r) => r.method === method && r.pattern.test(pathname));
+/** Removes every `baseUrl` key from a JSON document; `undefined` if it is not JSON. */
+function stripBaseUrls(text: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const strip = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(strip);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => key !== 'baseUrl')
+          .map(([key, v]) => [key, strip(v)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(strip(parsed));
 }
 
 function isPlaygroundRegistryUnreachable(text: string): boolean {
@@ -208,17 +111,30 @@ async function forward(
       headers: { 'content-type': 'application/json' },
     });
   }
-  if (!isAllowedRoute(service, method, pathname)) {
+  const route = matchRoute(service, method, pathname);
+  if (!route) {
     return new Response(
       JSON.stringify({ error: `Forbidden: ${method} ${pathname} is not an allowed proxy route for '${service}'` }),
       { status: 403, headers: { 'content-type': 'application/json' } },
     );
   }
+  // Who may call it (operator session, public mode, per-IP limits), decided
+  // on the same decoded path the allow-list just matched. Refusals are the
+  // console's own and unstamped. See `lib/server/access.ts`.
+  const decision = await decideAccess(request, {
+    service,
+    method,
+    path: pathname,
+    access: route.access,
+    limit: route.limit,
+  });
+  if (!decision.ok) return decision.response;
+  const anonymous = decision.publicMode && !decision.operator;
   const upstreamUrl = buildUpstreamUrl(service, pathname, request.nextUrl.search);
 
-  const headers = new Headers();
+  const baseHeaders = new Headers();
   request.headers.forEach((value, key) => {
-    if (FORWARD_HEADERS.has(key.toLowerCase())) headers.set(key, value);
+    if (FORWARD_HEADERS.has(key.toLowerCase())) baseHeaders.set(key, value);
   });
 
   // Credentials are set deterministically per service — never inherited from
@@ -228,18 +144,27 @@ async function forward(
   // the playground's passthrough) get the playground key plus the end user's
   // IP from a trusted header, so the playground charges its per-IP limits to
   // the visitor rather than to this console.
-  for (const [name, value] of Object.entries(
-    upstreamAuthHeaders(service, { credential: 'admin', clientIp: getClientIp(request.headers) }),
-  )) {
-    headers.set(name, value);
-  }
+  //
+  // The control plane gets the admin key for the operator (and for every
+  // caller with the flag off), the non-admin read key for an anonymous
+  // public-mode visitor (`controlPlaneCredential`).
+  const headersFor = (credential: ControlPlaneCredential) => {
+    const headers = new Headers(baseHeaders);
+    for (const [name, value] of Object.entries(
+      upstreamAuthHeaders(service, { credential, clientIp: decision.clientIp }),
+    )) {
+      headers.set(name, value);
+    }
+    return headers;
+  };
+  const credential: ControlPlaneCredential = service === 'control-plane' ? controlPlaneCredential(!anonymous) : 'admin';
 
   const body = ['GET', 'HEAD'].includes(method) ? undefined : await request.text();
 
-  try {
-    const response = await fetch(upstreamUrl, {
+  const send = (credential: ControlPlaneCredential) =>
+    fetch(upstreamUrl, {
       method,
-      headers,
+      headers: headersFor(credential),
       body,
       // Pinned by `proxy-route.test.ts`, and load-bearing together with the
       // 3xx rejection immediately below. 'manual' is what stops undici from
@@ -264,6 +189,18 @@ async function forward(
       redirect: 'manual',
       cache: 'no-store',
     });
+
+  try {
+    let response = await send(credential);
+    // The read key may not be registered with the control plane yet. A 401 to
+    // it is retried once with the admin key and logged, so anonymous reads
+    // keep working before and after that rollout. Only GETs are public on the
+    // control plane, so the retry never repeats a write.
+    if (credential === 'read' && response.status === 401) {
+      await response.body?.cancel().catch(() => undefined);
+      logCredentialFallback('rejected');
+      response = await send('admin');
+    }
 
     // A 3xx is never relayed.
     //
@@ -328,6 +265,22 @@ async function forward(
         );
       }
       relayBody = text;
+    }
+
+    // The control plane fills each observed registry's `baseUrl` from ingest,
+    // and once registries are private that is an internal address. An
+    // anonymous public-mode visitor gets the list without it; the operator,
+    // and every caller with the flag off, get the bytes untouched. A 2xx we
+    // cannot parse is not relayed to an anonymous caller at all.
+    if (anonymous && service === 'control-plane' && pathname === '/registries' && response.ok) {
+      const stripped = stripBaseUrls(await response.text());
+      if (stripped === undefined) {
+        return new Response(
+          JSON.stringify({ error: `Upstream '${service}' answered an unreadable registry list` }),
+          { status: 502, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      relayBody = stripped;
     }
 
     const responseHeaders = new Headers(response.headers);
