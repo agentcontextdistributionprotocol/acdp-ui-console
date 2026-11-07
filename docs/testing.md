@@ -150,8 +150,15 @@ SMOKE_BASE_URL=http://localhost:3000 node scripts/run-scenarios.mjs
 ```
 
 - `smoke-routes.mjs` fetches every top-level page route (from `/` to `/config`,
-  leaving out `/runs/[runId]`) and fails on anything other than 200. `smoke.yml`
-  runs it every night.
+  leaving out `/runs/[runId]`) and fails on anything other than 200. Pages are
+  client-rendered and answer 200 even when every data call behind them fails, so
+  it also probes `/api/proxy/control-plane/healthz` and `/api/stream/events`
+  anonymously and requires the session gate's own 401 JSON body: 503 (gate
+  unconfigured), 2xx (gate open), 3xx or any other status fails. No secret or
+  login is involved, and the middleware answers before any upstream is
+  contacted. The logic lives in `scripts/smoke-checks.mjs`, tested by
+  `test/__tests__/smoke-checks.test.ts` against the real `middleware.ts`.
+  `smoke.yml` runs it every night.
 - `run-scenarios.mjs` runs every scenario in the playground catalog through the
   console's proxy (`/api/proxy/playground/...`) and fails on any run that doesn't
   reach `complete`, exiting non-zero in that case. It sends no session cookie, so

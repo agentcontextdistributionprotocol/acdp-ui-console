@@ -114,7 +114,11 @@ SMOKE_BASE_URL=http://localhost:3000 node scripts/smoke-routes.mjs
 ```
 
 `scripts/smoke-routes.mjs` fetches every top-level page route and fails on any
-non-200. It checks pages only, so it passes in demo mode. If you omit
+non-200. It also sends an anonymous `GET` to `/api/proxy/control-plane/healthz`
+and `/api/stream/events` and requires the session gate's 401: a 503 (no
+`ACDP_UI_CONSOLE_PASSWORD` in production) or a 2xx (gate open) fails it. Against
+a `next dev` server, set `ACDP_UI_CONSOLE_PASSWORD`, or the two gate probes fail
+by design. If you omit
 `SMOKE_BASE_URL`, it targets the deployed console at
 `https://console.agentcontextdistributionprotocol.io`. [Testing](testing.md)
 describes the full suite.
