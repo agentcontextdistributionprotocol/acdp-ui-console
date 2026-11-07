@@ -129,6 +129,21 @@ const CP_KEY_PREAMBLE =
 export const CONTROL_PLANE_KEY_REJECTED = `${CP_KEY_PREAMBLE}check that it is set and current.`;
 
 /**
+ * For a 401 from the playground family: the playground (which also fronts both
+ * registries through its passthrough) rejected the `x-api-key` this console
+ * injects server-side, or got none because `PLAYGROUND_API_KEY` is unset while
+ * the playground enforces its key. Same remedy shape as the control plane's.
+ */
+export const PLAYGROUND_KEY_REJECTED =
+  "The key is server-side (PLAYGROUND_API_KEY in this console's deployment), so the browser can't see it: check that it is set and matches the playground's PLAYGROUND_API_KEY.";
+
+function playgroundKeyRejected(service: ProxyService): string {
+  return service === 'playground'
+    ? `the playground rejected this console's key. ${PLAYGROUND_KEY_REJECTED}`
+    : `the playground, which relays ${SERVICE_LABEL[service]}, rejected this console's key. ${PLAYGROUND_KEY_REJECTED}`;
+}
+
+/**
  * For a 403: the key authenticated but lacks the scope. The remedy half of
  * `ADMIN_ROUTE_FORBIDDEN`'s likeliest cause; exported so the parity suite can
  * assert every admin-gated surface renders it rather than a near-copy.
@@ -531,22 +546,22 @@ export function operatorErrorMessage(
   const svc = SERVICE_LABEL[error.service];
 
   if (status === 401) {
-    // Only the control plane carries an injected credential: `integrations.ts`
-    // returns auth material for that service alone, and the proxy injects a
-    // bearer only when that config is present — the browser's own cookie and
-    // `authorization` are stripped by the header allow-list.
-    //
-    // So the two branches are not the same sentence with a hint bolted on, and
-    // an earlier version of this code got that wrong: it told an operator that
-    // `registry A rejected this console's credentials`, which is false in both
-    // halves — nothing was presented, so nothing was rejected — and it implied
-    // a fix (repair the console's registry credential) that does not exist in
-    // this product. That is this module's own documented defect class: blaming
-    // a service for refusing something it was never offered.
+    // Two different credentials, injected server-side by `integrations.ts`
+    // (the browser's own cookie and `authorization` are stripped by the header
+    // allow-list): the control plane's bearer, and the playground's `x-api-key`,
+    // which also covers both registries because they are reached through the
+    // playground's passthrough. Name the one that was refused and where it is
+    // configured. An earlier version blamed a registry for rejecting a
+    // credential it was never offered; the registry branch below names the
+    // playground, which is what actually checked the key.
     if (error.service === 'control-plane') {
       return `${lead} — the control plane rejected this console's credentials. ${CONTROL_PLANE_KEY_REJECTED}`;
     }
-    return `${lead} — ${svc} requires credentials this console does not send.`;
+    // Every other service is the playground family: the registries are reached
+    // through the playground's key-gated passthrough, so this console now does
+    // present a credential (`x-api-key`), and a 401 means the playground
+    // refused it.
+    return `${lead} — ${playgroundKeyRejected(error.service)}`;
   }
   if (status === 403) return `${lead} — not authorized by ${svc}.`;
   if (status === 404) return `${lead} — ${opts?.notFound ?? `${svc} has no record of it.`}`;
@@ -655,7 +670,8 @@ export function contextErrorFallback(error: ApiError): string {
   if (status === 401) {
     if (error.service === 'control-plane')
       return `The control plane rejected this console's credentials. ${CONTROL_PLANE_KEY_REJECTED}`;
-    return `${SERVICE_LABEL[error.service]} requires credentials this console does not send.`;
+    const sentence = playgroundKeyRejected(error.service);
+    return sentence.charAt(0).toUpperCase() + sentence.slice(1);
   }
   if (status === 403) return 'Not authorized to read this context.';
   // 429 is the registry answering this console directly; 503 is the control

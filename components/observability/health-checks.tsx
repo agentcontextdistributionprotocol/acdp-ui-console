@@ -6,8 +6,8 @@ import type { ProxyService } from '@/lib/types';
 const SERVICES: { service: ProxyService; name: string; port: string }[] = [
   { service: 'playground', name: 'Playground', port: ':8000' },
   { service: 'control-plane', name: 'Control Plane', port: ':3001' },
-  { service: 'registry-a', name: 'Registry A', port: ':8100' },
-  { service: 'registry-b', name: 'Registry B', port: ':8200' },
+  { service: 'registry-a', name: 'Registry A', port: 'via playground' },
+  { service: 'registry-b', name: 'Registry B', port: 'via playground' },
 ];
 
 function HealthCard({ service, name, port }: { service: ProxyService; name: string; port: string }) {

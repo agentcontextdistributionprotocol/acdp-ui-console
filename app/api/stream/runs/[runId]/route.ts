@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { buildUpstreamUrl } from '@/lib/server/integrations';
+import { buildUpstreamUrl, upstreamAuthHeaders } from '@/lib/server/integrations';
+import { getClientIp } from '@/lib/server/client-ip';
 import { relayEventStream } from '@/lib/server/sse-relay';
 
 export const dynamic = 'force-dynamic';
@@ -17,14 +18,18 @@ export async function GET(request: NextRequest, context: { params: Promise<{ run
 
   try {
     const upstream = await fetch(upstreamUrl, {
-      headers: { accept: 'text/event-stream' },
+      // The playground key and the end user's IP, like every playground call
+      // through the proxy route; never inherited from the client.
+      headers: {
+        accept: 'text/event-stream',
+        ...upstreamAuthHeaders('playground', { clientIp: getClientIp(request.headers) }),
+      },
       cache: 'no-store',
       signal: request.signal,
-      // This relay injects no bearer today, so its exposure is not a credential
-      // leak but the other half of the same defect: the redirect target's bytes
-      // relayed to the browser as though the playground had sent them. Pinned
-      // here anyway, and deliberately identical to the control-plane relay —
-      // the asymmetry would be a trap for whoever adds auth to the playground.
+      // This relay now carries the playground key, so following a same-origin
+      // redirect would hand it to a path the playground chose; and any
+      // redirect would relay the target's bytes as though the playground had
+      // sent them. Deliberately identical to the control-plane relay.
       redirect: 'manual',
     });
 

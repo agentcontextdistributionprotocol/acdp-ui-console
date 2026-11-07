@@ -53,7 +53,9 @@ describe('ContextDetail — live registry DID-document disclosure', () => {
   it('real mode with an accepted document renders the disclosure as visible text', () => {
     const text = renderIn(false, LIVE).container.textContent ?? '';
     expect(text).toContain(`Registry key material: the DID document for ${DID} was fetched from Registry A`);
-    expect(text).toContain('the registry this console is configured to use (REGISTRY_A_BASE_URL)');
+    expect(text).toContain(
+      "the registry this console is configured to use (reached through the playground's registry passthrough, at the playground's REGISTRY_A_URL)",
+    );
     expect(text).toContain('checked against the authority named in this ctx_id');
     expect(text).toContain(
       "It is consistent with that registry; it was not looked up from the authority's own domain over DNS/TLS.",

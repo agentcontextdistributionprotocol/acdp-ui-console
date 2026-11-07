@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { buildUpstreamUrl, getIntegrationConfig } from '@/lib/server/integrations';
+import { buildUpstreamUrl, upstreamAuthHeaders } from '@/lib/server/integrations';
 import { relayEventStream } from '@/lib/server/sse-relay';
 
 export const dynamic = 'force-dynamic';
@@ -13,11 +13,10 @@ export async function GET(request: NextRequest) {
 
   // The control-plane firehose is auth-guarded; inject the server-side bearer
   // token the same way the proxy route does (never inherited from the client).
-  const config = getIntegrationConfig('control-plane');
-  const headers: Record<string, string> = { accept: 'text/event-stream' };
-  if (config.authHeaderName === 'authorization' && config.authToken) {
-    headers.authorization = `Bearer ${config.authToken}`;
-  }
+  const headers: Record<string, string> = {
+    accept: 'text/event-stream',
+    ...upstreamAuthHeaders('control-plane', { credential: 'admin' }),
+  };
 
   try {
     const upstream = await fetch(upstreamUrl, {

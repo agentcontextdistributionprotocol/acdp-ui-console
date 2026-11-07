@@ -39,10 +39,14 @@ The value is only the **initial** default of a persisted per-browser preference.
 |----------|--------------|-------|
 | `PLAYGROUND_BASE_URL` | `http://localhost:8000` | Playground: scenarios, runs, run SSE |
 | `CONTROL_PLANE_BASE_URL` | `http://localhost:3001` | Control plane: runs, events, dashboard, revocations, registries |
-| `REGISTRY_A_BASE_URL` | `http://localhost:8100` | Registry A |
-| `REGISTRY_B_BASE_URL` | `http://localhost:8200` | Registry B |
 
-These are server-side runtime variables. All four are resolved in
+Registry A and registry B have no variable of their own any more: the console
+reaches them through the playground's key-gated registry passthrough, at
+`${PLAYGROUND_BASE_URL}/registries/a` and `/registries/b`. Which registry each
+one is is decided by the playground's own `REGISTRY_A_URL`/`REGISTRY_B_URL`.
+`REGISTRY_A_BASE_URL`/`REGISTRY_B_BASE_URL` are no longer read.
+
+These are server-side runtime variables. Both are resolved in
 `lib/server/integrations.ts` (`resolveBaseUrl`):
 
 - **Outside production**, an unset variable falls back to the localhost URL above.
@@ -69,7 +73,9 @@ What each upstream route does is documented by the service that owns it. See
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `CONTROL_PLANE_API_KEY` | *(empty)* | Server-side. Sent as `authorization: Bearer <key>` on proxied **control-plane** requests and on the control-plane events relay, and **never** on calls for the other three services (`getIntegrationConfig`). When it's empty, no `authorization` header is sent. The browser never sees it: the proxy forwards only an allow-list of client request headers, so no client-supplied `authorization` gets through |
+| `CONTROL_PLANE_API_KEY` | *(empty)* | Server-side. Sent as `authorization: Bearer <key>` on proxied **control-plane** requests and on the control-plane events relay, and **never** on calls for the other three services, which carry `PLAYGROUND_API_KEY` instead (`getIntegrationConfig`). When it's empty, no `authorization` header is sent. The browser never sees it: the proxy forwards only an allow-list of client request headers, so no client-supplied `authorization` gets through |
+| `PLAYGROUND_API_KEY` | *(empty)* | Server-side. Sent as `x-api-key` on every playground request: proxied playground calls, the run SSE relay, and both registries (which go through the playground's passthrough). It must equal the playground's `PLAYGROUND_API_KEY`. Empty sends no key, which only works while the playground doesn't require one (`PLAYGROUND_REQUIRE_API_KEY`). A playground 401 names this variable |
+| `ACDP_UI_CLIENT_IP_HEADER` | *(empty)* | Server-side, self-hosted only. The one request header your reverse proxy overwrites with the client address (e.g. `x-real-ip`; the rightmost entry of a list is used). On Vercel (`VERCEL=1`) it is ignored and Vercel's edge headers are used. The address is forwarded to the playground as `X-ACDP-Client-IP`, which charges its per-IP limits to it once the key is valid. Unset off Vercel, no client IP is trusted or forwarded (`lib/server/client-ip.ts`) |
 | `ACDP_UI_CONSOLE_PASSWORD` | *(empty)* | Server-side. The operator passphrase behind the `/api/proxy/*` and `/api/stream/*` gate. It is a different secret from `CONTROL_PLANE_API_KEY` |
 
 ### `ACDP_UI_CONSOLE_PASSWORD` behaviour

@@ -558,6 +558,108 @@ describe('proxy route — request header hygiene', () => {
   });
 });
 
+describe('proxy route — playground key and client IP (playground family)', () => {
+  it.each([
+    ['playground', ['scenarios']],
+    ['registry-a', ['contexts', 'search']],
+    ['registry-b', ['healthz']],
+  ] as const)('%s carries x-api-key and one trusted client IP, never a bearer', async (service, path) => {
+    vi.stubEnv('PLAYGROUND_API_KEY', 'pg-key');
+    vi.stubEnv('CONTROL_PLANE_API_KEY', 'cp-secret');
+    vi.stubEnv('VERCEL', '1');
+    const fetchMock = mockFetch(() => upstream());
+    const req = new NextRequest(`http://localhost/api/proxy/${service}/${path.join('/')}`, {
+      headers: { 'x-real-ip': '203.0.113.9', 'x-forwarded-for': '10.0.0.1, 203.0.113.9' },
+    });
+    await GET(req, ctx(service, [...path]));
+    const sent = fetchMock.mock.calls[0][1].headers as Headers;
+    expect(sent.get('x-api-key')).toBe('pg-key');
+    expect(sent.get('x-acdp-client-ip')).toBe('203.0.113.9');
+    expect(sent.get('authorization')).toBeNull();
+  });
+
+  it('never relays a client-sent x-api-key or x-acdp-client-ip', async () => {
+    vi.stubEnv('PLAYGROUND_API_KEY', '');
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('ACDP_UI_CLIENT_IP_HEADER', '');
+    const fetchMock = mockFetch(() => upstream());
+    const req = new NextRequest('http://localhost/api/proxy/playground/runs', {
+      method: 'POST',
+      body: '{}',
+      headers: { 'x-api-key': 'visitor-guess', 'x-acdp-client-ip': '198.51.100.1', 'x-real-ip': '198.51.100.2' },
+    });
+    await POST(req, ctx('playground', ['runs']));
+    const sent = fetchMock.mock.calls[0][1].headers as Headers;
+    expect(sent.get('x-api-key')).toBeNull();
+    // Not on Vercel and no trusted header named: there is no client IP to send.
+    expect(sent.get('x-acdp-client-ip')).toBeNull();
+  });
+
+  it('the control plane never receives the playground key or a client IP', async () => {
+    vi.stubEnv('PLAYGROUND_API_KEY', 'pg-key');
+    vi.stubEnv('CONTROL_PLANE_API_KEY', 'cp-secret');
+    vi.stubEnv('VERCEL', '1');
+    const fetchMock = mockFetch(() => upstream());
+    const req = new NextRequest('http://localhost/api/proxy/control-plane/runs', {
+      headers: { 'x-real-ip': '203.0.113.9' },
+    });
+    await GET(req, ctx('control-plane', ['runs']));
+    const sent = fetchMock.mock.calls[0][1].headers as Headers;
+    expect(sent.get('authorization')).toBe('Bearer cp-secret');
+    expect(sent.get('x-api-key')).toBeNull();
+    expect(sent.get('x-acdp-client-ip')).toBeNull();
+  });
+});
+
+// A registry reached through the playground passthrough: "registry down" is
+// the PLAYGROUND's own 502, not the registry answering. It must not be stamped,
+// or `pingHealth` would call an unreached registry `degraded`.
+describe('proxy route — playground registry_unreachable', () => {
+  function textUpstream(status: number, text: string, headers = new Headers()): Response {
+    return { status, statusText: '', headers, body: null, text: () => Promise.resolve(text) } as unknown as Response;
+  }
+
+  it.each(['registry-a', 'registry-b'] as const)('maps %s registry_unreachable to an unstamped 502', async (service) => {
+    mockFetch(() =>
+      textUpstream(
+        502,
+        JSON.stringify({ detail: { code: 'registry_unreachable', registry: 'a', detail: 'ConnectError' } }),
+        new Headers({ 'content-type': 'application/json' }),
+      ),
+    );
+    const res = await GET(new NextRequest(`http://localhost/api/proxy/${service}/healthz`), ctx(service, ['healthz']));
+    expect(res.status).toBe(502);
+    expect(res.headers.get('x-acdp-ui-proxy')).toBeNull();
+    const body = await res.json();
+    expect(body.error).toBe(`Upstream '${service}' unreachable`);
+    expect(body.detail).toContain('registry_unreachable');
+  });
+
+  it('relays any other registry 502 byte-for-byte, stamped', async () => {
+    const raw = '{"error":"bad gateway from the registry itself"}';
+    mockFetch(() => textUpstream(502, raw));
+    const res = await GET(new NextRequest('http://localhost/api/proxy/registry-a/healthz'), ctx('registry-a', ['healthz']));
+    expect(res.status).toBe(502);
+    expect(res.headers.get('x-acdp-ui-proxy')).toBe('registry-a');
+    expect(await res.text()).toBe(raw);
+  });
+
+  it('relays a non-JSON registry 502 stamped, not mapped', async () => {
+    mockFetch(() => textUpstream(502, '<html>bad gateway</html>'));
+    const res = await GET(new NextRequest('http://localhost/api/proxy/registry-b/healthz'), ctx('registry-b', ['healthz']));
+    expect(res.headers.get('x-acdp-ui-proxy')).toBe('registry-b');
+    expect(await res.text()).toBe('<html>bad gateway</html>');
+  });
+
+  it('a playground 502 with the same body is relayed stamped (only registries are mapped)', async () => {
+    const raw = JSON.stringify({ detail: { code: 'registry_unreachable' } });
+    mockFetch(() => ({ ...textUpstream(502, raw), body: raw }) as unknown as Response);
+    const res = await GET(new NextRequest('http://localhost/api/proxy/playground/scenarios'), ctx('playground', ['scenarios']));
+    expect(res.status).toBe(502);
+    expect(res.headers.get('x-acdp-ui-proxy')).toBe('playground');
+  });
+});
+
 describe('proxy route — body & fetch options', () => {
   it('passes a POST body through and pins the fetch options', async () => {
     const fetchMock = mockFetch(() => upstream());
@@ -611,7 +713,7 @@ describe('proxy route — an upstream redirect is refused, not relayed', () => {
           headers: new Headers({ location: 'https://registry-a.example.com/healthz' }),
         }),
       );
-      vi.stubEnv('REGISTRY_A_BASE_URL', 'http://registry-a.example.com');
+      vi.stubEnv('PLAYGROUND_BASE_URL', 'http://pg.example.com');
       const res = await GET(
         new NextRequest('http://localhost/api/proxy/registry-a/healthz'),
         ctx('registry-a', ['healthz']),
@@ -624,7 +726,7 @@ describe('proxy route — an upstream redirect is refused, not relayed', () => {
       // The operator's whole diagnosis is in here: where we asked, where it
       // pointed, and the fix. A generic "fetch threw" would not have told them
       // a redirect was involved at all.
-      expect(body.detail).toContain('http://registry-a.example.com/healthz');
+      expect(body.detail).toContain('http://pg.example.com/registries/a/healthz');
       expect(body.detail).toContain('https://registry-a.example.com/healthz');
       expect(body.detail).toContain('*_BASE_URL');
       // The load-bearing half: this envelope is the CONSOLE's, so it must not
@@ -956,8 +1058,7 @@ describe('proxy route — registry did.json', () => {
   const url = (service: string) => `http://localhost/api/proxy/${service}/${PATH.join('/')}`;
 
   it.each(['registry-a', 'registry-b'])('allows GET on %s, stamped, cache-control rewritten to no-store', async (service) => {
-    vi.stubEnv('REGISTRY_A_BASE_URL', 'http://registry-a:8100');
-    vi.stubEnv('REGISTRY_B_BASE_URL', 'http://registry-b:8200');
+    vi.stubEnv('PLAYGROUND_BASE_URL', 'http://playground:8000');
     const fetchMock = mockFetch(() =>
       upstream({ headers: new Headers({ 'cache-control': 'public, max-age=3600', 'content-type': 'application/json' }) }),
     );
@@ -965,7 +1066,7 @@ describe('proxy route — registry did.json', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      `${service === 'registry-a' ? 'http://registry-a:8100' : 'http://registry-b:8200'}/.well-known/did.json`,
+      `http://playground:8000/registries/${service === 'registry-a' ? 'a' : 'b'}/.well-known/did.json`,
     );
     expect(res.headers.get('cache-control')).toBe('no-store, no-transform');
     expect(res.headers.get('x-acdp-ui-proxy')).toBe(service);

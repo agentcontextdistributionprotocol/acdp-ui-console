@@ -137,9 +137,9 @@ docker build --build-arg NEXT_PUBLIC_ACDP_UI_DEMO_MODE=false -t acdp-ui-console:
 docker run -p 3000:3000 \
   -e PLAYGROUND_BASE_URL=https://playground.example \
   -e CONTROL_PLANE_BASE_URL=https://cp.example \
-  -e REGISTRY_A_BASE_URL=https://registry-a.example \
-  -e REGISTRY_B_BASE_URL=https://registry-b.example \
   -e CONTROL_PLANE_API_KEY=... \
+  -e PLAYGROUND_API_KEY=... \
+  -e ACDP_UI_CLIENT_IP_HEADER=x-real-ip \
   -e ACDP_UI_CONSOLE_PASSWORD=... \
   acdp-ui-console:real
 ```

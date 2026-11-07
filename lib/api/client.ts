@@ -814,7 +814,7 @@ export async function getRegistryJwks(authority: RegistryAuthority, demoMode: bo
 
 /**
  * A registry's OWN did:web DID document (`GET /.well-known/did.json` on the
- * registry this console is configured to use — `REGISTRY_*_BASE_URL`), which
+ * registry this console is configured to use, via the playground's registry passthrough), which
  * carries its receipt / checkpoint verification keys.
  *
  * Returned as `unknown` on purpose: these are registry-controlled bytes, and the

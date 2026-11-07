@@ -1,10 +1,11 @@
 import { NextRequest } from 'next/server';
 import {
   buildUpstreamUrl,
-  getIntegrationConfig,
   isProxyService,
+  upstreamAuthHeaders,
   type ProxyService,
 } from '@/lib/server/integrations';
+import { getClientIp } from '@/lib/server/client-ip';
 
 export const dynamic = 'force-dynamic';
 
@@ -147,6 +148,18 @@ function isAllowedRoute(service: ProxyService, method: string, pathname: string)
   return ALLOWED_ROUTES[service].some((r) => r.method === method && r.pattern.test(pathname));
 }
 
+function isPlaygroundRegistryUnreachable(text: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const detail = (parsed as { detail?: unknown } | null)?.detail;
+    return (
+      typeof detail === 'object' && detail !== null && (detail as { code?: unknown }).code === 'registry_unreachable'
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function forward(
   request: NextRequest,
   context: { params: Promise<{ service: string; path?: string[] }> },
@@ -201,7 +214,6 @@ async function forward(
       { status: 403, headers: { 'content-type': 'application/json' } },
     );
   }
-  const config = getIntegrationConfig(service);
   const upstreamUrl = buildUpstreamUrl(service, pathname, request.nextUrl.search);
 
   const headers = new Headers();
@@ -209,10 +221,17 @@ async function forward(
     if (FORWARD_HEADERS.has(key.toLowerCase())) headers.set(key, value);
   });
 
-  // Authorization is set deterministically per service — never inherited from
-  // the client. Only the control-plane gets the server-side bearer token.
-  if (config.authHeaderName === 'authorization' && config.authToken) {
-    headers.set('authorization', `Bearer ${config.authToken}`);
+  // Credentials are set deterministically per service — never inherited from
+  // the client (FORWARD_HEADERS already dropped any client-sent
+  // `authorization`, `x-api-key` or `x-acdp-client-ip`). The control plane gets
+  // its server-side bearer; the playground and the registries (reached through
+  // the playground's passthrough) get the playground key plus the end user's
+  // IP from a trusted header, so the playground charges its per-IP limits to
+  // the visitor rather than to this console.
+  for (const [name, value] of Object.entries(
+    upstreamAuthHeaders(service, { credential: 'admin', clientIp: getClientIp(request.headers) }),
+  )) {
+    headers.set(name, value);
   }
 
   const body = ['GET', 'HEAD'].includes(method) ? undefined : await request.text();
@@ -290,6 +309,27 @@ async function forward(
       );
     }
 
+    // A registry is reached through the playground, so "the registry is down"
+    // arrives as the PLAYGROUND's own 502 `registry_unreachable` — an answer
+    // from beyond our boundary, but not from the registry. Stamping it would
+    // make `pingHealth` call a registry nobody reached `degraded`; answer with
+    // our own unstamped 502 instead, the same envelope as the catch below. Only
+    // a registry 502 is buffered to look; every other response streams as is.
+    let relayBody: BodyInit | null = response.body;
+    if (service !== 'playground' && service !== 'control-plane' && response.status === 502) {
+      const text = await response.text();
+      if (isPlaygroundRegistryUnreachable(text)) {
+        return new Response(
+          JSON.stringify({
+            error: `Upstream '${service}' unreachable`,
+            detail: `the playground could not reach ${service} (registry_unreachable)`,
+          }),
+          { status: 502, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      relayBody = text;
+    }
+
     const responseHeaders = new Headers(response.headers);
     // LOAD-BEARING, not a debugging aid: this stamp is the only evidence the
     // browser gets that these bytes came from beyond our own boundary.
@@ -325,7 +365,7 @@ async function forward(
     responseHeaders.delete('content-length');
     responseHeaders.delete('transfer-encoding');
 
-    return new Response(response.body, {
+    return new Response(relayBody, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeaders,
