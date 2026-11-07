@@ -93,6 +93,16 @@ route returns, see that service's own docs ([links below](#upstream-reference)).
   summary), the live `EventFeed`, a lineage DAG (`@xyflow/react`, lazy-loaded
   through `lineage-dag-lazy.tsx`) and a `ContextInspector`. Clicking an event
   or a DAG node selects the context to inspect.
+- **LLM quota badge.** When the playground's LLM quota refused a real model
+  call, the run carried on with mock LLM responses, and `RunSummary` shows the
+  chip "LLM quota reached: mock responses (resets <time>)", or "(quota store
+  unavailable)" when the playground could not check the quota. The chip is
+  text on the page, not a tooltip. `runLlmQuota` (`lib/utils/acdp.ts`) checks
+  these sources in order: the control plane's `result.summary` (the only source
+  for a finished run), the playground's replay frame, `run.complete`, then the
+  mid-run `llm.quota_exceeded` event, which makes the chip appear while the run
+  is still going. A replay frame (a finished run's `RunResult`, which has no
+  `type`) is read as summary data and never added to the feed as an event.
 - **Lineage graph source.** The DAG uses the first of these that is available:
   the `lineage_graph` carried on stream frames, then the stored
   `getRunLineageGraph` result, then a minimal graph built from the

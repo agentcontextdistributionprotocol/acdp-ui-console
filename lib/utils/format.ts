@@ -60,6 +60,16 @@ export function formatPgTimestamp(value: string): string {
   return d.toLocaleString();
 }
 
+/**
+ * An RFC 3339 instant in the viewer's locale, date and time. A value that does
+ * not parse is returned as is: showing the raw string beats hiding a reset
+ * time the operator may still be able to read.
+ */
+export function formatInstant(value: string): string {
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+}
+
 /** Format an integer with thousands separators. */
 export function formatNumber(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return '0';

@@ -25,7 +25,7 @@ import type {
   StepEvent,
   Webhook,
 } from '@/lib/types';
-import type { LineageHeadReceipt, LogInclusion, RegistryReceipt } from '@/lib/types';
+import type { LineageHeadReceipt, LlmQuotaWire, LogInclusion, RegistryReceipt } from '@/lib/types';
 import { DID_KEY_PRODUCER, LIN_ATTESTED, MOCK_CRYPTO } from '@/lib/data/mock-crypto';
 export { MOCK_DID_DOCS } from '@/lib/data/mock-crypto';
 
@@ -449,6 +449,12 @@ export const MOCK_LINEAGE: Record<string, LineageGraph> = {
 };
 
 // ── Step events (per run, used for live replay + history) ─────────────
+// A UTC midnight, as the playground's daily window resets. A fixed literal,
+// not derived from Date.now(), so `mock-data.test.ts` can pin this run's
+// `result` by digest.
+const DEMO_QUOTA_RESETS_AT = '2026-11-08T00:00:00Z';
+const DEMO_LLM_QUOTA: LlmQuotaWire = { quota: 'per_ip_daily', limit: 20, resets_at: DEMO_QUOTA_RESETS_AT };
+
 export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
   [LIVE_RUN_ID]: [
     { type: 'run.started', run_id: LIVE_RUN_ID, ts: iso(24), scenario_id: 's5_cross_registry', title: 's5_cross_registry · run-7f3c9a1b' },
@@ -520,9 +526,13 @@ export const MOCK_RUN_EVENTS: Record<string, StepEvent[]> = {
   [COMPLETED_RUN_ID]: [
     { type: 'run.started', run_id: COMPLETED_RUN_ID, ts: iso(280), scenario_id: 's1_single_publish' },
     { type: 'agent.started', run_id: COMPLETED_RUN_ID, ts: iso(279), agent_id: DID_SOLO },
+    // The demo run that hit the playground's daily per-IP LLM quota: the call
+    // was answered by the mock LLM and the run carried on (playground
+    // `quota.py`), so the run view shows the quota badge.
+    { type: 'llm.quota_exceeded', run_id: COMPLETED_RUN_ID, ts: iso(278), error: 'LLM quota exceeded (per_ip_daily); this run continues on the mock LLM', llm_quota_exceeded: true, quota: 'per_ip_daily', limit: 20, resets_at: DEMO_QUOTA_RESETS_AT },
     { type: 'llm.thinking', run_id: COMPLETED_RUN_ID, ts: iso(277), agent_id: DID_SOLO, preview: 'Summarizing quarterly cash flow…' },
     { type: 'acdp.publish', run_id: COMPLETED_RUN_ID, ts: iso(272), agent_id: DID_SOLO, ctx_id: `acdp://${AUTH_A}/94a58a84-b576-47d7-a73e-d04edf9c95de`, title: 'Quarterly cash flow snapshot', registry_authority: AUTH_A, contexts_produced: 1 },
-    { type: 'run.complete', run_id: COMPLETED_RUN_ID, ts: iso(271), scenario_id: 's1_single_publish', contexts_produced: 1 },
+    { type: 'run.complete', run_id: COMPLETED_RUN_ID, ts: iso(271), scenario_id: 's1_single_publish', contexts_produced: 1, status: 'complete', llm_quota_exceeded: true, llm_quota: DEMO_LLM_QUOTA, llm_calls_on_mock: 1 },
   ],
   [FAILED_RUN_ID]: [
     { type: 'run.started', run_id: FAILED_RUN_ID, ts: iso(1320), scenario_id: 's15_supersession_lineage' },
@@ -600,6 +610,9 @@ export const MOCK_RUNS: CpRun[] = [
     registries: [AUTH_A],
     inputs: { topic: 'quarterly cash flow' },
     trust: { audited: 1, verified: 1, verifiedHistorical: 0, structural: 0, noReceipt: 0, errors: 0, flagged: [] },
+    // The playground's RunResult.summary for a run that fell back to the mock
+    // LLM — the durable source the run view reads once the run is over.
+    result: { summary: { llm_quota_exceeded: true, llm_quota: DEMO_LLM_QUOTA, llm_calls_on_mock: 1 } },
   },
   {
     runId: 'run-c4d5e6f7',

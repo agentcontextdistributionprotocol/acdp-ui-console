@@ -2,11 +2,24 @@
 
 import { useEffect, useState } from 'react';
 import { StatusBadge } from '@/components/ui/badge';
-import { elapsed } from '@/lib/utils/format';
-import { shortAuthority, isRunDegraded } from '@/lib/utils/acdp';
+import { elapsed, formatInstant } from '@/lib/utils/format';
+import { shortAuthority, isRunDegraded, type LlmQuota } from '@/lib/utils/acdp';
 import { C } from '@/lib/colors';
 import type { CpRun } from '@/lib/types';
 import type { LiveStatus } from '@/lib/hooks/use-live-run';
+
+/**
+ * The badge text for a run that fell back to mock LLM responses. Always says
+ * why there is no reset time rather than dropping the parenthesis.
+ */
+export function llmQuotaChipText(q: LlmQuota): string {
+  const when = q.resetsAt
+    ? `resets ${formatInstant(q.resetsAt)}`
+    : q.quota === 'quota_store_unavailable'
+      ? 'quota store unavailable'
+      : 'reset time not reported';
+  return `LLM quota reached: mock responses (${when})`;
+}
 
 export function RunSummary({
   run,
@@ -14,6 +27,7 @@ export function RunSummary({
   liveStatus,
   contextsCount,
   unobservedLabel,
+  llmQuota,
 }: {
   run: CpRun;
   scenarioName: string;
@@ -21,6 +35,8 @@ export function RunSummary({
   contextsCount: number;
   /** #197: replaces the count when nothing was observed but the run reported contexts. */
   unobservedLabel?: string | null;
+  /** `runLlmQuota(...)`: the run hit the playground's LLM quota. */
+  llmQuota?: LlmQuota | null;
 }) {
   const running = run.status === 'running' && liveStatus !== 'complete' && liveStatus !== 'error';
   const [, tick] = useState(0);
@@ -53,6 +69,14 @@ export function RunSummary({
         </div>
       </div>
       <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        {/* Text in the DOM, never a tooltip: the run's outputs came from the
+            mock LLM, and an operator reading them must be told so. */}
+        {llmQuota && (
+          <span className="chip warn" role="status">
+            {llmQuotaChipText(llmQuota)}
+            {llmQuota.callsOnMock !== undefined && ` · ${llmQuota.callsOnMock} call${llmQuota.callsOnMock === 1 ? '' : 's'} on mock`}
+          </span>
+        )}
         {degraded && (
           <span
             className="chip warn"

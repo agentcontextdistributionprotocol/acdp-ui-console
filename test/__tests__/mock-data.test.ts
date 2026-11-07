@@ -954,7 +954,10 @@ const RUNS_BEFORE_REORDER: Record<
 > = {
   [LIVE_RUN_ID]: { scenarioId: 's5_cross_registry', status: 'running', startedAfterAnchor: 0, completedAfterAnchor: null, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local,registry-b.playground.local', inputs: '12322baff342', trust: ABSENT, result: ABSENT },
   'run-historical-1': { scenarioId: 's24_historical_key', status: 'completed', startedAfterAnchor: 126, completedAfterAnchor: 114, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '2ff7435f503c', trust: 'd20bb0a63bf5', result: ABSENT },
-  'run-a1b2c3d4': { scenarioId: 's1_single_publish', status: 'completed', startedAfterAnchor: 256, completedAfterAnchor: 247, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: 'a002ce23cc3b', trust: 'e396627b2727', result: ABSENT },
+  'run-a1b2c3d4': { scenarioId: 's1_single_publish', status: 'completed', startedAfterAnchor: 256, completedAfterAnchor: 247, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: 'a002ce23cc3b', trust: 'e396627b2727',
+    // Public live mode (2e): the one demo run that hit the LLM quota now carries
+    // the playground's RunResult.summary. A deliberate content change, not a move.
+    result: '57e281a35ec3' },
   'run-c4d5e6f7': { scenarioId: 's10_tenant_isolation', status: 'completed', startedAfterAnchor: 696, completedAfterAnchor: 686, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '9915c01592d2', trust: 'b476f4c4514c', result: '7b28676d3dc2' },
   'run-9d8e7f6a': { scenarioId: 's15_supersession_lineage', status: 'failed', startedAfterAnchor: 1296, completedAfterAnchor: 1286, contextsCount: 1, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '02cb67ee5095', trust: '49faf1d6eead', result: ABSENT },
   'run-revoked-1': { scenarioId: 's32_key_revocation', status: 'completed', startedAfterAnchor: 1876, completedAfterAnchor: 1826, contextsCount: 3, tenantId: 'default', registries: 'registry-a.playground.local', inputs: '3d66fa1d6152', trust: '56312ec9329b', result: ABSENT },
