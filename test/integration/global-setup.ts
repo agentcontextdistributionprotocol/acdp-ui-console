@@ -1,7 +1,7 @@
 import { chromium, type FullConfig } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { ACDP_UI_CONSOLE_PASSWORD } from '../../playwright.config';
+import { ACDP_UI_CONSOLE_PASSWORD, PLAYGROUND_API_KEY } from '../../playwright.config';
 
 const PLAYGROUND_URL = process.env.PLAYGROUND_URL ?? 'http://localhost:8000';
 const CONTROL_PLANE_URL = process.env.CONTROL_PLANE_URL ?? 'http://localhost:3001';
@@ -37,11 +37,32 @@ async function requireReachable(name: string, url: string): Promise<void> {
   }
 }
 
+// The stack runs with PLAYGROUND_REQUIRE_API_KEY=true, so seeding is keyed.
+// A random X-ACDP-Client-IP per run keeps seeding out of any per-IP bucket a
+// previous run (or the specs) filled; the playground honours it only with a
+// valid key.
+const SEED_CLIENT_IP = `198.19.${Math.floor(Math.random() * 256)}.${1 + Math.floor(Math.random() * 254)}`;
+const playgroundHeaders = (): Record<string, string> =>
+  PLAYGROUND_API_KEY ? { 'x-api-key': PLAYGROUND_API_KEY, 'x-acdp-client-ip': SEED_CLIENT_IP } : {};
+
+/** A keyless playground call must be refused once enforcement is on; fail fast if the stack isn't enforcing. */
+async function requireKeyEnforced(): Promise<void> {
+  const res = await fetch(`${PLAYGROUND_URL}/scenarios`, { signal: AbortSignal.timeout(5_000) });
+  await res.body?.cancel();
+  if (res.status !== 401) {
+    throw new Error(
+      `acdp-ui-console integration suite: a keyless GET ${PLAYGROUND_URL}/scenarios answered ${res.status}, expected 401.\n` +
+        `Boot the stack with the key enforced, using the same key as playwright.config.ts:\n` +
+        `  cd ../acdp-playground && LLM_PROVIDER=mock PLAYGROUND_API_KEY=<key> PLAYGROUND_REQUIRE_API_KEY=true make up-full`,
+    );
+  }
+}
+
 async function seedRealData(): Promise<void> {
   for (const scenarioId of SEED_SCENARIOS) {
     const startRes = await fetch(`${PLAYGROUND_URL}/runs`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...playgroundHeaders() },
       body: JSON.stringify({ scenario_id: scenarioId }),
     });
     if (!startRes.ok) {
@@ -53,7 +74,7 @@ async function seedRealData(): Promise<void> {
 
     const deadline = Date.now() + 60_000;
     for (;;) {
-      const pollRes = await fetch(`${PLAYGROUND_URL}/runs/${runId}`);
+      const pollRes = await fetch(`${PLAYGROUND_URL}/runs/${runId}`, { headers: playgroundHeaders() });
       if (!pollRes.ok) {
         throw new Error(`seed: failed to poll run ${runId} for ${scenarioId}: ${pollRes.status}`);
       }
@@ -92,12 +113,13 @@ async function saveAuthenticatedSession(baseURL: string): Promise<void> {
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
   await Promise.all([
-    requireReachable('playground', `${PLAYGROUND_URL}/scenarios`),
+    requireReachable('playground', `${PLAYGROUND_URL}/healthz`),
     requireReachable('control-plane', `${CONTROL_PLANE_URL}/healthz`),
     requireReachable('registry-a', `${REGISTRY_A_URL}/healthz`),
     requireReachable('registry-b', `${REGISTRY_B_URL}/healthz`),
   ]);
 
+  await requireKeyEnforced();
   await seedRealData();
 
   const { baseURL } = config.projects[0].use;

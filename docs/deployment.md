@@ -64,7 +64,7 @@ per environment:
 | Config | Holds |
 | --- | --- |
 | `prd` | The Vercel Production variables listed in [`deploy/doppler-keys.txt`](../deploy/doppler-keys.txt). |
-| `stg` | Only `prd`'s non-secret config keys (the four service URLs and the demo flag). There is no staging deployment; it exists to match the other ACDP projects' layout. |
+| `stg` | Only `prd`'s non-secret config keys (the service URLs and the demo flag). There is no staging deployment; it exists to match the other ACDP projects' layout. |
 | `dev` | The local `.env` values, for `doppler run --` during development. |
 | `dev_personal` | A branch of `dev` with no overrides of its own; use it for per-developer changes. |
 
@@ -88,8 +88,7 @@ deploy/doppler-sync.sh --apply --no-redeploy   # set variables; the next merge's
   as a sensitive variable.
 - An entry that is **shared with Preview** is reported and never modified, because
   updating it would change Preview too. Every variable that existed before the
-  migration is sensitive, and all but `ACDP_UI_CONSOLE_PASSWORD` are shared with
-  Preview. Doppler holds the same values;
+  migration is sensitive. Doppler holds the same values;
   they were checked by behaviour against production at migration time (service
   `/healthz` and registry DID through the console versus direct, an admin-only
   control-plane read with the key, and a sign-in with the passphrase).
@@ -99,6 +98,24 @@ deploy/doppler-sync.sh --apply --no-redeploy   # set variables; the next merge's
 - It needs `git`, `jq`, `curl` and the `doppler` and `vercel` CLIs, logged in, and it
   refuses a dirty working tree. No `vercel link` is needed: the script pins the CLI to
   the project by id, whatever the shell or checkout is linked to.
+
+#### Preview has its own, smaller set
+
+Doppler owns Production. Preview deployments get only what a preview needs,
+and never the admin control-plane key or the passphrase:
+
+| Preview variable | Value |
+| --- | --- |
+| `CONTROL_PLANE_BASE_URL`, `PLAYGROUND_BASE_URL` | Production's URLs |
+| `CONTROL_PLANE_READ_API_KEY` | The non-admin control-plane key (sensitive) |
+| `PLAYGROUND_API_KEY` | The playground key (sensitive), so previews keep working once the playground enforces it |
+| `NEXT_PUBLIC_ACDP_UI_DEMO_MODE` | `true` |
+
+These are separate Preview-only entries, set by hand with `vercel env add … preview`;
+the sync never touches them. Without `ACDP_UI_CONSOLE_PASSWORD`, a preview's
+proxy fails closed (503) outside demo mode, which is the intended state.
+`REGISTRY_A/B_BASE_URL` and `NEXT_PUBLIC_APP_VERSION` are older shared entries no
+code path uses on Vercel; they can be removed.
 
 `smoke.yml` checks the deployed console every night (see
 [Testing](testing.md#ci-workflows)).

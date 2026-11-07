@@ -159,6 +159,21 @@ SMOKE_BASE_URL=http://localhost:3000 node scripts/run-scenarios.mjs
   contacted. The logic lives in `scripts/smoke-checks.mjs`, tested by
   `test/__tests__/smoke-checks.test.ts` against the real `middleware.ts`.
   `smoke.yml` runs it every night.
+  - **Public mode.** It first reads `GET /api/auth/session`. When the
+    deployment reports `publicMode: true`, the 401 probes are replaced by three
+    sets: anonymous reads that must answer 2xx (control-plane `/healthz`,
+    playground `/scenarios`, registry-a `/healthz`, `/api/stream/events`),
+    operator-only routes that must answer 403
+    `CONSOLE_OPERATOR_SESSION_REQUIRED` (`/metrics`, `/webhooks`,
+    `/auth/revocations`), an unknown path and an unknown service, which must
+    be refused (400/403/404), never 2xx, and an encoded traversal
+    (`contexts/%2E%2E%2Fmetrics`, which the URL parser leaves intact) that must
+    get the proxy's own traversal 403. A deployment
+    without `/api/auth/session` counts as off. `SMOKE_EXPECT_PUBLIC_MODE=on|off`
+    makes a different reported mode a failure.
+  - **Direct backends.** `SMOKE_DIRECT_BACKEND_URLS` (comma-separated playground
+    base URLs) also checks each one refuses a keyless `GET /scenarios` with 401.
+    That only holds once the playground enforces `PLAYGROUND_REQUIRE_API_KEY`.
 - `run-scenarios.mjs` runs every scenario in the playground catalog through the
   console's proxy (`/api/proxy/playground/...`) and fails on any run that doesn't
   reach `complete`, exiting non-zero in that case. It sends no session cookie, so
@@ -174,9 +189,11 @@ and **no CI workflow runs it either**. `ci.yml` stops at lint, typecheck, covera
 and build.
 
 ```bash
-cd ../acdp-playground && LLM_PROVIDER=mock make up-full    # in another terminal
+cd ../acdp-playground && LLM_PROVIDER=mock PLAYGROUND_API_KEY=acdp-ui-console-integration-playground-key PLAYGROUND_REQUIRE_API_KEY=true make up-full    # in another terminal
 npm run test:integration                                    # playwright test
 ```
+
+The key is the test-only constant `PLAYGROUND_API_KEY` in `playwright.config.ts`.
 
 `LLM_PROVIDER=mock` is enough, because the suite checks protocol shapes moving
 through the real proxy and pages, not model output. How the playground stack is
@@ -190,17 +207,27 @@ The short setup version lives in
 
 ### What it does
 
-- **Production build, not dev.** `webServer` runs
+- **Production build, not dev.** The first `webServer` runs
   `npm run build && npx next start -p ${ACDP_UI_INTEGRATION_PORT:-3100}` with
   `NEXT_PUBLIC_ACDP_UI_DEMO_MODE=false`, so real mode is really baked in and the
   passphrase gate really enforces. It reuses an already-running server unless `CI`
   is set.
-- **Fails fast when the stack is down.** `global-setup.ts` checks the playground's
-  `/scenarios` and the `/healthz` of the control plane and both registries. If any
-  of them is unreachable, it stops and prints the `make up-full` command.
+- **Two servers, one build.** Playwright starts its web servers in order, so the
+  second (`next start` on the next port, with `ACDP_UI_PUBLIC_MODE=on`,
+  `ACDP_UI_CLIENT_IP_HEADER=x-real-ip` and `CONTROL_PLANE_READ_API_KEY` set to the
+  stack's non-admin key) reuses the first one's build. The `chromium` project runs
+  every top-level spec against the gated server; the `public` project runs
+  `public/**` against the public one, with no session cookie and a random
+  `x-real-ip` from `198.18.0.0/15` per run, so per-IP limits never carry over.
+  Both servers send the playground key; neither sets registry base URLs, since
+  registry reads go through the playground's passthrough.
+- **Fails fast when the stack is down.** `global-setup.ts` checks the `/healthz`
+  of the playground, the control plane and both registries, and that a keyless
+  playground `GET /scenarios` answers 401 (the key is enforced). If not, it stops
+  and prints the `make up-full` command.
 - **Seeds real data.** It starts `s1_single_publish`, `s5_cross_registry` and
-  `s22_receipts` through the playground, and waits up to 60 seconds for each to
-  reach `complete`.
+  `s22_receipts` through the playground, keyed and from a random
+  `X-ACDP-Client-IP`, and waits up to 60 seconds for each to reach `complete`.
 - **Signs in for real.** It fills in the actual `/login` form in Chromium and saves
   the resulting cookie as `storageState` in `test/integration/.auth/session.json`
   (gitignored), which every spec then uses.
@@ -213,7 +240,8 @@ The short setup version lives in
 | `registries.spec.ts` | The observed-registries list shows its real empty state, not an error. Enrollment management renders from the real control plane |
 | `security.spec.ts` | The revocation feed authenticates as admin (empty state, not 403). Both JWKS cards load. The witness alert worklist renders |
 | `auth-gate.spec.ts` | With no session, the control-plane proxy and both SSE relays answer an unstamped 401, and pages are not gated. Forged and tampered cookies are refused. The cookie is `HttpOnly` and `SameSite=Lax`. With a valid session, a cross-origin write and an off-allow-list or percent-encoded traversal route answer an unstamped 403. In the browser: a 401 bounces to `/login`, a wrong passphrase sets no cookie, and sign-out locks the proxy again |
-| `client-secrets.spec.ts` | No file under `.next/static` contains `CONTROL_PLANE_API_KEY`, the passphrase, or the control-plane/playground base URL. A browser session across every page makes no off-origin request, sends no `authorization` header, and receives neither secret in any header or body |
+| `client-secrets.spec.ts` | No file under `.next/static` contains `CONTROL_PLANE_API_KEY`, `CONTROL_PLANE_READ_API_KEY`, `PLAYGROUND_API_KEY`, the passphrase, or the control-plane/playground base URL. A browser session across every page, signed in on the gated server and anonymous on the public one, makes no off-origin request, sends no `authorization` header, and receives none of those secrets in any header, body or the live DOM |
+| `public/public-mode.spec.ts` | On the public server, with no session: `/api/auth/session` reports public mode, the sidebar offers Sign in, and the dashboard, `/runs` and `/contexts` render real data (registry reads through the playground passthrough). s1 launched from the UI completes, confirmed against the control plane. `/metrics`, `/webhooks` and `/auth/revocations` answer an unstamped 403 `CONSOLE_OPERATOR_SESSION_REQUIRED`, enrol and an off-allow-list path an unstamped 403, and `/security` says to sign in. Repeated launches reach an unstamped 429 `CONSOLE_RATE_LIMITED` with `Retry-After`, and the launch modal shows the plain-words limit message. The LLM quota badge test runs only with `ACDP_INTEGRATION_LLM_QUOTA=1` on a real-provider stack with `LLM_QUOTA_PER_IP_PER_DAY=1` |
 | `live-data.spec.ts` | `/runs` lists each seeded run by its real id. A seeded run opens to its persisted terminal record, and its contexts figure matches what the control plane observed: the observed count, or, when nothing was observed but the run reported contexts, the reported-but-unobserved label (#197). An unknown run id renders the not-found copy. A real registry-a search hit for the s1 publish opens to what the control plane actually answered: the body, or, in this stack, the `REGISTRY_NOT_FOUND` copy rather than "no body was returned". `/trust` reaches its final render |
 
 ### Honest emptiness
