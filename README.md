@@ -26,6 +26,12 @@ service URLs, and run:
 npm run dev:real
 ```
 
+Doppler (project `acdp-ui-console`) is the source of truth for configuration. `doppler setup` once
+(config `dev`), then `doppler run -- npm run dev:real` or `doppler run -- npm run test:integration`.
+`.env.local` / `.env` remain a fallback. Production values are pushed from Doppler `prd` into Vercel
+with `deploy/doppler-sync.sh` (dry run by default; see
+[docs/deployment.md](docs/deployment.md#doppler-the-source-of-truth-for-production-variables)).
+
 ## Services
 
 | Service        | Default URL             | Role                                      |

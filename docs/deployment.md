@@ -53,9 +53,52 @@ else comes from Vercel's standard Next.js build.
   conflicts with Vercel's `onBuildComplete` step: the build finishes, then packaging
   fails with `ENOENT: .next/next-server.js.nft.json`. The comment in that file links
   the upstream report.
-- Set the build-time variables (`NEXT_PUBLIC_*`) and the runtime variables in the
-  Vercel project's environment settings. Changing a `NEXT_PUBLIC_*` value needs a
-  redeploy, not just a restart.
+- Production variables come from Doppler (next section). Changing a `NEXT_PUBLIC_*`
+  value needs a redeploy, not just a restart.
+
+### Doppler: the source of truth for production variables
+
+The Doppler project `acdp-ui-console` holds the console's configuration, one config
+per environment:
+
+| Config | Holds |
+| --- | --- |
+| `prd` | The Vercel Production variables listed in [`deploy/doppler-keys.txt`](../deploy/doppler-keys.txt). |
+| `stg` | Only `prd`'s non-secret config keys (the four service URLs and the demo flag). There is no staging deployment; it exists to match the other ACDP projects' layout. |
+| `dev` | The local `.env` values, for `doppler run --` during development. |
+| `dev_personal` | A branch of `dev` with no overrides of its own; use it for per-developer changes. |
+
+[`deploy/doppler-sync.sh`](../deploy/doppler-sync.sh) pushes `prd` into the Vercel
+project `zer07labs/acdp-ui-console`, Production environment only:
+
+```bash
+deploy/doppler-sync.sh                         # dry run: key names and states, nothing changes
+deploy/doppler-sync.sh --apply                 # add new keys, update changed readable keys, redeploy if any changed
+deploy/doppler-sync.sh --apply --push KEY      # also overwrite KEY, which Vercel stores as sensitive (write-only)
+deploy/doppler-sync.sh --apply --no-redeploy   # set variables; the next merge's deployment picks them up
+```
+
+- It manages only the keys in `deploy/doppler-keys.txt`. It never removes a Vercel
+  variable and never touches Preview or Development.
+- Values are piped from Doppler into `vercel env` and are never printed or written to
+  disk. Vercel holds no Doppler token.
+- Vercel never returns the value of a **sensitive** variable, so the script can't
+  compare one. It reports the key as `sensitive-unverifiable` and leaves it alone
+  unless you name it with `--push`. A key marked `sensitive` in the list is created
+  as a sensitive variable.
+- An entry that is **shared with Preview** is reported and never modified, because
+  updating it would change Preview too. Every variable that existed before the
+  migration is sensitive, and all but `ACDP_UI_CONSOLE_PASSWORD` are shared with
+  Preview. Doppler holds the same values;
+  they were checked by behaviour against production at migration time (service
+  `/healthz` and registry DID through the console versus direct, an admin-only
+  control-plane read with the key, and a sign-in with the passphrase).
+- At the start and the end of a run, it prints a hash of the production entries' metadata
+  (ids, keys, types, targets, `updatedAt`; never values). If nothing changed, the two
+  hashes are equal.
+- It needs `git`, `jq`, `curl` and the `doppler` and `vercel` CLIs, logged in, and it
+  refuses a dirty working tree. No `vercel link` is needed: the script pins the CLI to
+  the project by id, whatever the shell or checkout is linked to.
 
 `smoke.yml` checks the deployed console every night (see
 [Testing](testing.md#ci-workflows)).

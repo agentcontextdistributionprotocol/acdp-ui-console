@@ -1,0 +1,25 @@
+# Keys deploy/doppler-sync.sh pushes from Doppler (acdp-ui-console/prd) into
+# the Vercel project zer07labs/acdp-ui-console, Production environment.
+# Doppler owns exactly these; the script never touches any other Vercel
+# variable, never removes one, and leaves Preview and Development alone.
+#
+# One key per line. "KEY sensitive" creates the key as a Vercel sensitive
+# (write-only) variable when it is new. Every key below already exists in
+# Vercel as a sensitive entry, all but ACDP_UI_CONSOLE_PASSWORD shared with
+# Preview, so the sync reports them and leaves them alone (see the script
+# header); Doppler holds the same values, checked by behaviour against
+# production at migration time.
+#
+# Left out on purpose: NEXT_PUBLIC_APP_VERSION (no app code reads it on
+# Vercel, it is a Docker build arg, and its Vercel value is unreadable).
+
+# config (NEXT_PUBLIC_* are inlined at build time)
+CONTROL_PLANE_BASE_URL
+PLAYGROUND_BASE_URL
+REGISTRY_A_BASE_URL
+REGISTRY_B_BASE_URL
+NEXT_PUBLIC_ACDP_UI_DEMO_MODE
+
+# secret
+ACDP_UI_CONSOLE_PASSWORD sensitive
+CONTROL_PLANE_API_KEY sensitive

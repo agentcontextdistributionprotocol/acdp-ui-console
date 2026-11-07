@@ -5,6 +5,12 @@ The console is configured with environment variables. Copy
 automatically, `.gitignore` excludes it, and `.dockerignore` keeps every `.env.*`
 except `.env.example` out of the Docker build context.
 
+Doppler (project `acdp-ui-console`) is the source of truth. `doppler setup` (choose
+`dev`), then `doppler run -- npm run dev:real` or
+`doppler run -- npm run test:integration`. A local `.env.local` / `.env` still works
+as a fallback. Production values live in Doppler `prd` and reach Vercel through
+`deploy/doppler-sync.sh` (see [Deployment](deployment.md#doppler-the-source-of-truth-for-production-variables)).
+
 The variables fall into two groups, and the difference matters for deployment:
 
 - **Server-side runtime variables** are read by the route handlers and `middleware.ts`
