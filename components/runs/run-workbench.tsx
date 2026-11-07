@@ -8,6 +8,8 @@ import { RunSummary } from './run-summary';
 import { RunTrustPanel } from './run-trust-panel';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { useLiveRun } from '@/lib/hooks/use-live-run';
+import { unobservedContextsLabel } from '@/lib/utils/run-contexts';
+import { C } from '@/lib/colors';
 import type { CpRun, LineageGraph } from '@/lib/types';
 
 export function RunWorkbench({
@@ -43,10 +45,19 @@ export function RunWorkbench({
   }, [lineage, fallbackLineage, events]);
 
   const contextsCount = graph.nodes.length;
+  // #197: an empty observed graph next to a run that reported contexts is
+  // labelled as such, never drawn from the self-reported list.
+  const unobserved = unobservedContextsLabel(contextsCount, run);
 
   return (
     <>
-      <RunSummary run={run} scenarioName={scenarioName} liveStatus={status} contextsCount={contextsCount} />
+      <RunSummary
+        run={run}
+        scenarioName={scenarioName}
+        liveStatus={status}
+        contextsCount={contextsCount}
+        unobservedLabel={unobserved}
+      />
       {run.trust && <RunTrustPanel trust={run.trust} />}
       <div className="workbench">
         <ErrorBoundary>
@@ -55,14 +66,34 @@ export function RunWorkbench({
         <div className="dag-panel">
           <div className="feed-header">
             <h2>Lineage DAG</h2>
-            <span className="card-sub">
-              {graph.nodes.length} context{graph.nodes.length === 1 ? '' : 's'} · {graph.edges.length} edge
-              {graph.edges.length === 1 ? '' : 's'}
-            </span>
+            {!unobserved && (
+              <span className="card-sub">
+                {graph.nodes.length} context{graph.nodes.length === 1 ? '' : 's'} · {graph.edges.length} edge
+                {graph.edges.length === 1 ? '' : 's'}
+              </span>
+            )}
           </div>
-          <ErrorBoundary>
-            <LineageDag graph={graph} activeCtx={activeCtx ?? undefined} onSelectCtx={setActiveCtx} />
-          </ErrorBoundary>
+          {unobserved ? (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 240,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
+                padding: 16,
+                color: C.muted,
+                fontSize: 12,
+              }}
+            >
+              {unobserved}
+            </div>
+          ) : (
+            <ErrorBoundary>
+              <LineageDag graph={graph} activeCtx={activeCtx ?? undefined} onSelectCtx={setActiveCtx} />
+            </ErrorBoundary>
+          )}
           <ContextInspector ctxId={activeCtx} />
         </div>
       </div>

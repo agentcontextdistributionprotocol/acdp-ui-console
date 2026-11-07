@@ -97,6 +97,13 @@ route returns, see that service's own docs ([links below](#upstream-reference)).
   the `lineage_graph` carried on stream frames, then the stored
   `getRunLineageGraph` result, then a minimal graph built from the
   `acdp.publish` events seen so far.
+- **Reported but unobserved contexts (#197).** The control plane's
+  `contextsCount` and run lineage come only from registry-forwarded events. When
+  both are empty but the run's own `result.contexts` is not (registry webhooks
+  off), `RunSummary`, the DAG panel, the `/runs` table and the dashboard's Recent
+  Runs say "N contexts reported by the run; none observed via registry events"
+  instead of `0` or "No lineage yet". The self-reported list is never drawn as a
+  graph. `lib/utils/run-contexts.ts` holds the rule.
 - **Live vs finished runs.** A run that is still active is streamed; a
   finished run loads its stored timeline. See
   [Architecture → SSE relays](architecture.md#sse-relays).

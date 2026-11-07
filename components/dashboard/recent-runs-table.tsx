@@ -7,6 +7,8 @@ import { TableScroll } from '@/components/ui/table-scroll';
 import { timeAgo } from '@/lib/utils/format';
 import { pressable } from '@/lib/utils/a11y';
 import type { CpRun } from '@/lib/types';
+import { unobservedContextsLabel } from '@/lib/utils/run-contexts';
+import { C } from '@/lib/colors';
 
 export function RecentRunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName: (id: string) => string }) {
   const router = useRouter();
@@ -30,7 +32,9 @@ export function RecentRunsTable({ runs, scenarioName }: { runs: CpRun[]; scenari
               <td>
                 <StatusBadge status={run.status} />
               </td>
-              <td>{run.contextsCount}</td>
+              <td>
+                <ContextsCell run={run} />
+              </td>
               <td style={{ color: 'var(--muted)' }}>{timeAgo(run.startedAt)}</td>
             </tr>
           ))}
@@ -38,4 +42,11 @@ export function RecentRunsTable({ runs, scenarioName }: { runs: CpRun[]; scenari
       </table>
     </TableScroll>
   );
+}
+
+/** #197: the observed count, or the reported-but-unobserved label in its place. */
+function ContextsCell({ run }: { run: CpRun }) {
+  const label = unobservedContextsLabel(run.contextsCount, run);
+  if (!label) return <>{run.contextsCount}</>;
+  return <span style={{ fontSize: 11, color: C.muted }}>{label}</span>;
 }
