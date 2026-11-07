@@ -372,15 +372,16 @@ describe('the clause after the lead names who failed', () => {
     expect(el.textContent).toContain('CONTROL_PLANE_API_KEY');
   });
 
-  it('does NOT accuse a registry of rejecting credentials it was never sent', async () => {
-    // The registries take no credential from this console at all, so "registry A
-    // rejected this console's credentials" would be false in both halves — the
-    // exact over-claim this whole issue is about, committed by its own fix.
+  it('names the playground key, not the registry, for a registry 401', async () => {
+    // A registry is reached through the playground's key-gated passthrough, so
+    // the party that refused the key is the playground. "registry A rejected
+    // this console's credentials" would blame a service that checked nothing.
     listRegistries.mockRejectedValue(apiError(401, '', 'registry-a', '/registries'));
     mount(<RegistriesPage />);
     const el = await screen.findByText(/Could not load the observed registries/);
-    expect(el.textContent).toContain('registry A requires credentials this console does not send');
-    expect(el.textContent).not.toContain('rejected');
+    expect(el.textContent).toContain("the playground, which relays registry A, rejected this console's key");
+    expect(el.textContent).toContain('PLAYGROUND_API_KEY');
+    expect(el.textContent).not.toContain("rejected this console's credentials");
   });
 
   it('blames this console, not the upstream, for an UNSTAMPED failure', async () => {

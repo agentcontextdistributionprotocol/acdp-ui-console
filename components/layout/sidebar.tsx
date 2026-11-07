@@ -15,6 +15,7 @@ import {
   GitBranch,
   ShieldCheck,
   BadgeCheck,
+  LogIn,
   LogOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -22,6 +23,8 @@ import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import { useMounted } from '@/lib/hooks/use-mounted';
 import { SCENARIO_COUNT } from '@/lib/data/mock-data';
 import { LOGIN_ROUTE } from '@/lib/routes';
+import { CONSOLE_SESSION_KEY, useConsoleSession } from '@/lib/hooks/use-console-session';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface NavItem {
   href: string;
@@ -76,6 +79,12 @@ export function Sidebar() {
   // the first client paint agree.
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const showDemo = !mounted || demoMode;
+  // "Sign in" only when the server says public mode is on and this browser
+  // holds no session. While loading, on error, and with the flag off it stays
+  // "Sign out", exactly as before public mode existed.
+  const session = useConsoleSession();
+  const queryClient = useQueryClient();
+  const offerSignIn = session.data?.publicMode === true && session.data.signedIn === false;
 
   // Best-effort: the operator session cookie is HttpOnly, so this can't check
   // whether one exists before rendering. Clearing a cookie that was never set
@@ -83,6 +92,9 @@ export function Sidebar() {
   // middleware fail-open/closed behavior in middleware.ts is unaffected.
   const signOut = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    // The sidebar outlives client navigation, so its session read must be
+    // dropped explicitly or it keeps showing the pre-logout state.
+    await queryClient.invalidateQueries({ queryKey: CONSOLE_SESSION_KEY });
     router.push(LOGIN_ROUTE);
     router.refresh();
   };
@@ -127,10 +139,17 @@ export function Sidebar() {
           <div className={`dot ${showDemo ? 'warn' : 'ok'} pulse`} />
           <span>{showDemo ? 'Demo mode' : 'Live backend'}</span>
         </div>
-        <button type="button" className="nav-item sidebar-signout" onClick={signOut}>
-          <LogOut />
-          Sign out
-        </button>
+        {offerSignIn ? (
+          <Link href={LOGIN_ROUTE} className="nav-item sidebar-signout">
+            <LogIn />
+            Sign in
+          </Link>
+        ) : (
+          <button type="button" className="nav-item sidebar-signout" onClick={signOut}>
+            <LogOut />
+            Sign out
+          </button>
+        )}
       </div>
     </aside>
   );

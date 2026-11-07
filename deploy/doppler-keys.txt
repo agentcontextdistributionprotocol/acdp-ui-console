@@ -4,22 +4,29 @@
 # variable, never removes one, and leaves Preview and Development alone.
 #
 # One key per line. "KEY sensitive" creates the key as a Vercel sensitive
-# (write-only) variable when it is new. Every key below already exists in
-# Vercel as a sensitive entry, all but ACDP_UI_CONSOLE_PASSWORD shared with
-# Preview, so the sync reports them and leaves them alone (see the script
-# header); Doppler holds the same values, checked by behaviour against
-# production at migration time.
+# (write-only) variable when it is new. The keys that existed before the
+# Doppler migration are sensitive Production-only entries (Preview has its
+# own, smaller set: docs/deployment.md), so the sync reports them and leaves
+# them alone (see the script header); Doppler holds the same values, checked
+# by behaviour against production at migration time.
 #
 # Left out on purpose: NEXT_PUBLIC_APP_VERSION (no app code reads it on
-# Vercel, it is a Docker build arg, and its Vercel value is unreadable).
+# Vercel, it is a Docker build arg, and its Vercel value is unreadable), and
+# REGISTRY_A/B_BASE_URL (unused since registry reads go through the
+# playground's passthrough; the sync never deletes, so their Vercel entries
+# remain until removed by hand).
 
 # config (NEXT_PUBLIC_* are inlined at build time)
 CONTROL_PLANE_BASE_URL
 PLAYGROUND_BASE_URL
-REGISTRY_A_BASE_URL
-REGISTRY_B_BASE_URL
 NEXT_PUBLIC_ACDP_UI_DEMO_MODE
+# Public live mode (docs/authentication.md). Stays "off" until the owner flips it.
+ACDP_UI_PUBLIC_MODE
 
 # secret
 ACDP_UI_CONSOLE_PASSWORD sensitive
 CONTROL_PLANE_API_KEY sensitive
+# Non-admin control-plane key for anonymous reads in public mode.
+CONTROL_PLANE_READ_API_KEY sensitive
+# The playground's shared key, sent as x-api-key (piped from acdp-playground/prd).
+PLAYGROUND_API_KEY sensitive

@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
+import { CONSOLE_SESSION_KEY } from '@/lib/hooks/use-console-session';
 import { KeyRound } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/section-title';
 import { Button } from '@/components/ui/button';
@@ -9,6 +11,7 @@ import { C } from '@/lib/colors';
 
 export default function LoginPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [passphrase, setPassphrase] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +32,8 @@ export default function LoginPage() {
         setSubmitting(false);
         return;
       }
+      // The sidebar outlives this navigation; drop its stale "Sign in".
+      await queryClient.invalidateQueries({ queryKey: CONSOLE_SESSION_KEY });
       router.push('/');
       router.refresh();
     } catch {

@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
-import { buildUpstreamUrl, getIntegrationConfig } from '@/lib/server/integrations';
-import { relayEventStream } from '@/lib/server/sse-relay';
+import { buildUpstreamUrl, upstreamAuthHeaders, type ControlPlaneCredential } from '@/lib/server/integrations';
+import { relayEventStream, releaseWhenClosed } from '@/lib/server/sse-relay';
+import { controlPlaneCredential, decideAccess, logCredentialFallback, rateLimitedResponse } from '@/lib/server/access';
+import { consoleStreamGate, rateLimitKey } from '@/lib/server/rate-limit';
 
 export const dynamic = 'force-dynamic';
 // Keep the SSE relay alive past Vercel's default function timeout. Only
@@ -9,19 +11,32 @@ export const maxDuration = 60;
 
 /** Relays the control-plane global SSE firehose (/events/stream). */
 export async function GET(request: NextRequest) {
+  // Public in public mode (one `read` token per open, plus the anonymous
+  // control-plane budget and a concurrent stream slot); the operator session
+  // with the flag off. See `lib/server/access.ts`.
+  const decision = await decideAccess(request, {
+    service: 'control-plane',
+    method: 'GET',
+    path: '/events/stream',
+    access: 'public',
+    limit: 'read',
+  });
+  if (!decision.ok) return decision.response;
+  let release = () => {};
+  if (decision.publicMode) {
+    const slot = consoleStreamGate.acquire(rateLimitKey(decision.clientIp));
+    if (!slot.allowed) return rateLimitedResponse(slot.retryAfterSeconds, slot.limit);
+    release = slot.release;
+  }
   const upstreamUrl = buildUpstreamUrl('control-plane', '/events/stream', request.nextUrl.search);
 
   // The control-plane firehose is auth-guarded; inject the server-side bearer
-  // token the same way the proxy route does (never inherited from the client).
-  const config = getIntegrationConfig('control-plane');
-  const headers: Record<string, string> = { accept: 'text/event-stream' };
-  if (config.authHeaderName === 'authorization' && config.authToken) {
-    headers.authorization = `Bearer ${config.authToken}`;
-  }
-
-  try {
-    const upstream = await fetch(upstreamUrl, {
-      headers,
+  // the same way the proxy route does (never inherited from the client): the
+  // admin key for the operator, the read key for an anonymous visitor.
+  const credential: ControlPlaneCredential = controlPlaneCredential(decision.operator || !decision.publicMode);
+  const open = (credential: ControlPlaneCredential) =>
+    fetch(upstreamUrl, {
+      headers: { accept: 'text/event-stream', ...upstreamAuthHeaders('control-plane', { credential }) },
       cache: 'no-store',
       signal: request.signal,
       // LOAD-BEARING. The default is `follow`, and it costs us two things.
@@ -49,6 +64,16 @@ export async function GET(request: NextRequest) {
       redirect: 'manual',
     });
 
+  try {
+    let upstream = await open(credential);
+    // Same read-key fallback as the proxy route: retry a 401 once with the
+    // admin key, and log it.
+    if (credential === 'read' && upstream.status === 401) {
+      await upstream.body?.cancel().catch(() => undefined);
+      logCredentialFallback('rejected');
+      upstream = await open('admin');
+    }
+
     // Explicit, before the generic bail, so an operator gets the sentence that
     // names the fix rather than a bare "upstream returned 302". Mirrors the
     // proxy route's redirect refusal so both perimeter surfaces answer alike —
@@ -65,8 +90,9 @@ export async function GET(request: NextRequest) {
     // upstream misconfiguration; relaying one as a stream would be worse than
     // refusing it with slightly off advice. `relayEventStream` also refuses a
     // 200 whose content-type is not `text/event-stream` — see its own doc.
-    return relayEventStream('control-plane', upstreamUrl, upstream);
+    return releaseWhenClosed(relayEventStream('control-plane', upstreamUrl, upstream), release, request.signal);
   } catch (err) {
+    release();
     return new Response(`stream relay failed: ${String(err)}`, { status: 502 });
   }
 }

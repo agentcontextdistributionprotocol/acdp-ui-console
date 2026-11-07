@@ -258,10 +258,38 @@ describe('per-run SSE relay', () => {
     expect(init.signal).toBe(req.signal);
   });
 
-  // This relay sends no credential, so the 3xx exposure here is the target's
-  // bytes arriving under the playground's identity rather than a leak. Pinned
-  // identically so the asymmetry cannot trap whoever adds auth upstream.
-  it("pins redirect: 'manual' even though it injects no bearer", async () => {
+  it('sends the playground key and one trusted client IP, never a bearer', async () => {
+    vi.stubEnv('PLAYGROUND_API_KEY', 'pg-key');
+    vi.stubEnv('CONTROL_PLANE_API_KEY', 'cp-secret');
+    vi.stubEnv('VERCEL', '1');
+    const fetchMock = mockFetch(() => upstream({ body: sseBody('') }));
+    await runGet(
+      new NextRequest('http://localhost/api/stream/runs/r1', {
+        headers: { 'x-forwarded-for': '6.6.6.6, 203.0.113.4', 'x-api-key': 'visitor-guess' },
+      }),
+      runCtx('r1'),
+    );
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers.accept).toBe('text/event-stream');
+    expect(headers['x-api-key']).toBe('pg-key');
+    expect(headers['x-acdp-client-ip']).toBe('203.0.113.4');
+    expect(headers.authorization).toBeUndefined();
+  });
+
+  it('omits the key and the IP when neither is available', async () => {
+    vi.stubEnv('PLAYGROUND_API_KEY', '');
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('ACDP_UI_CLIENT_IP_HEADER', '');
+    const fetchMock = mockFetch(() => upstream({ body: sseBody('') }));
+    await runGet(new NextRequest('http://localhost/api/stream/runs/r1', { headers: { 'x-real-ip': '1.2.3.4' } }), runCtx('r1'));
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    expect(headers['x-api-key']).toBeUndefined();
+    expect(headers['x-acdp-client-ip']).toBeUndefined();
+  });
+
+  // This relay now carries the playground key, so a followed same-origin
+  // redirect would hand it to a path the playground chose.
+  it("pins redirect: 'manual'", async () => {
     const fetchMock = mockFetch(() => upstream({ body: sseBody('') }));
     await runGet(new NextRequest('http://localhost/api/stream/runs/r1'), runCtx('r1'));
     expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');

@@ -122,10 +122,11 @@ separate from the Vitest tree and is **not** run by `npm test`. `npm run test:in
 production build of this app against a real `acdp-playground` stack, which must already be up:
 
 ```bash
-cd ../acdp-playground && LLM_PROVIDER=mock make up-full
+cd ../acdp-playground && LLM_PROVIDER=mock PLAYGROUND_API_KEY=acdp-ui-console-integration-playground-key PLAYGROUND_REQUIRE_API_KEY=true make up-full
 ```
 
-The suite seeds real runs through the playground and asserts the stack's real, honest emptiness for
+It builds once and starts two servers: one with the password gate, one with `ACDP_UI_PUBLIC_MODE` on for the
+anonymous-visitor specs. The suite seeds real runs through the playground and asserts the stack's real, honest emptiness for
 pages fed by registry webhooks (that stack ships with webhooks disabled).
 
 House style: mock upstreams with `vi.stubGlobal('fetch', …)` and env with `vi.stubEnv`, cleaned up in

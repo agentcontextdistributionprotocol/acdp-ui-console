@@ -4,6 +4,7 @@
 // ══════════════════════════════════════════════════════════════════════
 
 import { ApiError, fetchJson, fetchText } from '@/lib/api/fetcher';
+import { CONSOLE_RATE_LIMITED } from '@/lib/utils/api-error-messages';
 import {
   COMPLETED_RUN_ID,
   FAILED_RUN_ID,
@@ -34,6 +35,7 @@ import { KEY_REVOCATION_TYPE_ALIASES, isKeyRevocationFacet } from '@/lib/utils/r
 import { REGISTRY_AUTHORITIES } from '@/lib/types';
 import type {
   CpContextEvent,
+  HealthFailureWord,
   CpDashboardOverview,
   CpLineageDag,
   ContextSearchParams,
@@ -151,6 +153,32 @@ function extractHealthOk(body: unknown): boolean {
   return true;
 }
 
+/** What `GET /api/auth/session` reports. */
+export interface ConsoleSession {
+  /** ACDP_UI_PUBLIC_MODE is on: anonymous visitors may use the public routes. */
+  publicMode: boolean;
+  /** The caller holds a valid operator session. */
+  signedIn: boolean;
+}
+
+/**
+ * The deployment's access mode and whether this browser is signed in, for the
+ * UI chrome (the sidebar's Sign in / Sign out). Read from the server per
+ * request, never from a `NEXT_PUBLIC_*` variable, which is fixed at build time
+ * and could disagree with the server after the flag is flipped.
+ *
+ * A direct `fetch`, like the other two `/api/auth/*` calls: it is not a
+ * proxied backend call, so `fetchJson` (which builds `/api/proxy/...` URLs)
+ * does not apply. Demo mode has no gate and reports the operator chrome.
+ */
+export async function getConsoleSession(demoMode: boolean): Promise<ConsoleSession> {
+  if (demoMode) return { publicMode: false, signedIn: true };
+  const res = await fetch('/api/auth/session', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`GET /api/auth/session answered ${res.status}`);
+  const body = (await res.json()) as Partial<ConsoleSession>;
+  return { publicMode: body.publicMode === true, signedIn: body.signedIn === true };
+}
+
 export async function pingHealth(service: ProxyService, demoMode: boolean): Promise<HealthResult> {
   if (demoMode) return delay({ ok: true, latencyMs: 4 + Math.floor(Math.random() * 12) }, 80);
   const start = performance.now();
@@ -233,9 +261,12 @@ function failureVersion(err: unknown): string | undefined {
  * upstream 404 from a build with no `/healthz`. It does NOT claim the service
  * diagnosed itself; only that the bytes came from out there.
  */
-export function failureKind(err: unknown): 'degraded' | 'unreachable' {
+export function failureKind(err: unknown): HealthFailureWord {
   if (!(err instanceof ApiError)) return 'unreachable';
-  return err.fromUpstream ? 'degraded' : 'unreachable';
+  if (err.fromUpstream) return 'degraded';
+  // The console's own public-mode limiter refused the request before it left
+  // the box: the service is unknown, not unreachable.
+  return err.errorCode === CONSOLE_RATE_LIMITED && err.status === 429 ? 'rate limited' : 'unreachable';
 }
 
 /** Most error bodies are not JSON (plain text, an upstream's own 502 page). */
@@ -814,7 +845,7 @@ export async function getRegistryJwks(authority: RegistryAuthority, demoMode: bo
 
 /**
  * A registry's OWN did:web DID document (`GET /.well-known/did.json` on the
- * registry this console is configured to use — `REGISTRY_*_BASE_URL`), which
+ * registry this console is configured to use, via the playground's registry passthrough), which
  * carries its receipt / checkpoint verification keys.
  *
  * Returned as `unknown` on purpose: these are registry-controlled bytes, and the

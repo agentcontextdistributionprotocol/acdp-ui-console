@@ -1,11 +1,14 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   ACDP_UI_CONSOLE_PASSWORD,
   CONTROL_PLANE_API_KEY,
+  CONTROL_PLANE_READ_API_KEY,
   CONTROL_PLANE_URL,
+  PLAYGROUND_API_KEY,
   PLAYGROUND_URL,
+  PUBLIC_BASE_URL,
 } from '../../playwright.config';
 
 // CONTROL_PLANE_API_KEY is injected by the proxy route server-side and must
@@ -21,7 +24,10 @@ import {
 
 const SECRETS: Record<string, string> = {
   CONTROL_PLANE_API_KEY,
+  CONTROL_PLANE_READ_API_KEY,
   ACDP_UI_CONSOLE_PASSWORD,
+  // Sent to the playground as x-api-key on every proxied/streamed call.
+  PLAYGROUND_API_KEY,
 };
 // Server-side upstream addresses. Only these two: the registry URLs collide
 // with lib/data/mock-data.ts's demo dataset (`http://localhost:8100` is a
@@ -74,7 +80,21 @@ test.describe('Client bundle never carries server-side secrets (real production 
     page,
     baseURL,
   }) => {
-    const origin = new URL(baseURL!).origin;
+    await sweep(page, baseURL!);
+  });
+
+  test('so does an anonymous visitor on the public-mode server', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: PUBLIC_BASE_URL, storageState: { cookies: [], origins: [] } });
+    try {
+      await sweep(await context.newPage(), PUBLIC_BASE_URL);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+async function sweep(page: Page, baseURL: string): Promise<void> {
+    const origin = new URL(baseURL).origin;
     const offOrigin = new Set<string>();
     const leaks: string[] = [];
     const pending: Promise<void>[] = [];
@@ -120,8 +140,9 @@ test.describe('Client bundle never carries server-side secrets (real production 
 
     expect([...offOrigin]).toEqual([]);
     expect(leaks).toEqual([]);
-    // Nor in the live DOM, e.g. echoed into the Config page.
-    const inDom = await page.evaluate((needle) => document.documentElement.outerHTML.includes(needle), CONTROL_PLANE_API_KEY);
-    expect(inDom).toBe(false);
-  });
-});
+  // Nor in the live DOM, e.g. echoed into the Config page.
+  for (const [name, secret] of Object.entries(SECRETS)) {
+    const inDom = await page.evaluate((needle) => document.documentElement.outerHTML.includes(needle), secret);
+    expect(inDom, name).toBe(false);
+  }
+}

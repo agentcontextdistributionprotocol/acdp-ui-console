@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SESSION_COOKIE_NAME, verifySessionToken } from '@/lib/server/session';
+import { isPublicMode } from '@/lib/server/public-mode';
 
 // Gates exactly the two server routes that attach the server-side
 // CONTROL_PLANE_API_KEY bearer (or, for the playground stream, carry no
@@ -45,11 +46,42 @@ function resolveRequestHost(request: NextRequest): string | null {
   return request.headers.get('host');
 }
 
+// CSRF backstop for state-changing methods: if the browser sent an Origin, it
+// must match this request's own host. `SameSite=Lax` already withholds the
+// cookie from most cross-site requests; this is a belt-and-suspenders check.
+// In public mode it also stops a third-party page from launching runs through
+// its visitors' browsers (each charged to a fresh visitor IP).
+function crossOriginMutation(request: NextRequest): boolean {
+  if (!MUTATING_METHODS.has(request.method.toUpperCase())) return false;
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  let originHost: string | null;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    originHost = null;
+  }
+  return originHost !== resolveRequestHost(request);
+}
+
+function forbiddenOrigin() {
+  return jsonError(403, 'Forbidden: Origin does not match this host.');
+}
+
 export async function middleware(request: NextRequest) {
   const password = process.env.ACDP_UI_CONSOLE_PASSWORD;
+  // ACDP_UI_PUBLIC_MODE on: anonymous visitors may use the public routes, so
+  // a request without a session passes through to the route handler, which
+  // owns the decision (`lib/server/access.ts`): it alone sees the decoded path
+  // the allow-list matches, so classifying here would need a second parser
+  // that an encoded variant could defeat. The route also re-checks the
+  // session for admin routes, and for everything with the flag off, so a
+  // skew between this edge read of the env and the route's cannot open
+  // anything. Off: exactly the gate below, unchanged.
+  const publicMode = isPublicMode();
 
   if (!password) {
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production' && !publicMode) {
       // Misconfigured, not "unauthenticated" — there is no passphrase to
       // check a session against, so 401 (which implies "sign in and you'll
       // get through") would be misleading. Fail closed at REQUEST time
@@ -58,6 +90,11 @@ export async function middleware(request: NextRequest) {
       // isn't forced to configure a password it doesn't need; the unused
       // privileged surface stays sealed either way.
       return jsonError(503, 'ACDP_UI_CONSOLE_PASSWORD is not configured on this deployment.');
+    }
+    // Production, public mode, no passphrase: public routes still work, and
+    // the route handler answers every operator-only route with 503.
+    if (process.env.NODE_ENV === 'production') {
+      return crossOriginMutation(request) ? forbiddenOrigin() : NextResponse.next();
     }
     // Fail-open in development: on localhost, anyone who can reach the
     // console can reach the backends directly, so a dev password protects
@@ -70,24 +107,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // CSRF backstop for state-changing methods: if the browser sent an
-  // Origin, it must match this request's own host. `SameSite=Lax` already
-  // withholds the cookie from most cross-site requests; this is a
-  // belt-and-suspenders check appropriate for a single-operator tool.
-  if (MUTATING_METHODS.has(request.method.toUpperCase())) {
-    const origin = request.headers.get('origin');
-    if (origin) {
-      let originHost: string | null;
-      try {
-        originHost = new URL(origin).host;
-      } catch {
-        originHost = null;
-      }
-      if (originHost !== resolveRequestHost(request)) {
-        return jsonError(403, 'Forbidden: Origin does not match this host.');
-      }
-    }
-  }
+  if (crossOriginMutation(request)) return forbiddenOrigin();
+
+  if (publicMode) return NextResponse.next();
 
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!(await verifySessionToken(token, password))) {

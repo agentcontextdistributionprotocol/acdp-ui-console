@@ -9,6 +9,7 @@ import { RunTrustPanel } from './run-trust-panel';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
 import { useLiveRun } from '@/lib/hooks/use-live-run';
 import { unobservedContextsLabel } from '@/lib/utils/run-contexts';
+import { runLlmQuota } from '@/lib/utils/acdp';
 import { C } from '@/lib/colors';
 import type { CpRun, LineageGraph } from '@/lib/types';
 
@@ -21,7 +22,8 @@ export function RunWorkbench({
   scenarioName: string;
   fallbackLineage?: LineageGraph;
 }) {
-  const { events, status, lineage } = useLiveRun(run.runId, run.status);
+  const { events, status, lineage, replaySummary } = useLiveRun(run.runId, run.status);
+  const llmQuota = useMemo(() => runLlmQuota(run, events, replaySummary), [run, events, replaySummary]);
   const [activeCtx, setActiveCtx] = useState<string | null>(null);
 
   const graph: LineageGraph = useMemo(() => {
@@ -57,6 +59,7 @@ export function RunWorkbench({
         liveStatus={status}
         contextsCount={contextsCount}
         unobservedLabel={unobserved}
+        llmQuota={llmQuota}
       />
       {run.trust && <RunTrustPanel trust={run.trust} />}
       <div className="workbench">

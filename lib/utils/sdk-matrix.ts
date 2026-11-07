@@ -1,5 +1,5 @@
 import { MOCK_SDK_MATRIX } from '@/lib/data/mock-data';
-import type { HealthResult, ProxyService } from '@/lib/types';
+import type { HealthFailureWord, HealthResult, ProxyService } from '@/lib/types';
 
 /**
  * Component -> backing proxy service, for the rows that map to a running
@@ -61,9 +61,9 @@ export interface SdkMatrixRowView {
    * growing a fourth arm for something that is not a fourth state.
    *
    * Sourced from `HealthResult.detail`, whose own docblock defines the two
-   * words, so the table cannot invent a third.
+   * words (degraded / unreachable / rate limited), so the table cannot invent its own.
    */
-  detail?: 'degraded' | 'unreachable';
+  detail?: HealthFailureWord;
 }
 
 /**

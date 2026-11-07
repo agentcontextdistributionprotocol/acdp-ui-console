@@ -129,6 +129,21 @@ const CP_KEY_PREAMBLE =
 export const CONTROL_PLANE_KEY_REJECTED = `${CP_KEY_PREAMBLE}check that it is set and current.`;
 
 /**
+ * For a 401 from the playground family: the playground (which also fronts both
+ * registries through its passthrough) rejected the `x-api-key` this console
+ * injects server-side, or got none because `PLAYGROUND_API_KEY` is unset while
+ * the playground enforces its key. Same remedy shape as the control plane's.
+ */
+export const PLAYGROUND_KEY_REJECTED =
+  "The key is server-side (PLAYGROUND_API_KEY in this console's deployment), so the browser can't see it: check that it is set and matches the playground's PLAYGROUND_API_KEY.";
+
+function playgroundKeyRejected(service: ProxyService): string {
+  return service === 'playground'
+    ? `the playground rejected this console's key. ${PLAYGROUND_KEY_REJECTED}`
+    : `the playground, which relays ${SERVICE_LABEL[service]}, rejected this console's key. ${PLAYGROUND_KEY_REJECTED}`;
+}
+
+/**
  * For a 403: the key authenticated but lacks the scope. The remedy half of
  * `ADMIN_ROUTE_FORBIDDEN`'s likeliest cause; exported so the parity suite can
  * assert every admin-gated surface renders it rather than a near-copy.
@@ -520,6 +535,8 @@ export function operatorErrorMessage(
     const mapped = opts.codes.get(error.errorCode);
     if (mapped) return `${lead}. ${mapped}`;
   }
+  const limited = rateLimitMessage(error);
+  if (limited) return `${lead}. ${limited}`;
   if (error.errorCode && error.service === 'control-plane') {
     const mapped = CONTROL_PLANE_ERROR_CODES.get(error.errorCode);
     if (mapped) return `${lead}. ${mapped}`;
@@ -531,22 +548,22 @@ export function operatorErrorMessage(
   const svc = SERVICE_LABEL[error.service];
 
   if (status === 401) {
-    // Only the control plane carries an injected credential: `integrations.ts`
-    // returns auth material for that service alone, and the proxy injects a
-    // bearer only when that config is present — the browser's own cookie and
-    // `authorization` are stripped by the header allow-list.
-    //
-    // So the two branches are not the same sentence with a hint bolted on, and
-    // an earlier version of this code got that wrong: it told an operator that
-    // `registry A rejected this console's credentials`, which is false in both
-    // halves — nothing was presented, so nothing was rejected — and it implied
-    // a fix (repair the console's registry credential) that does not exist in
-    // this product. That is this module's own documented defect class: blaming
-    // a service for refusing something it was never offered.
+    // Two different credentials, injected server-side by `integrations.ts`
+    // (the browser's own cookie and `authorization` are stripped by the header
+    // allow-list): the control plane's bearer, and the playground's `x-api-key`,
+    // which also covers both registries because they are reached through the
+    // playground's passthrough. Name the one that was refused and where it is
+    // configured. An earlier version blamed a registry for rejecting a
+    // credential it was never offered; the registry branch below names the
+    // playground, which is what actually checked the key.
     if (error.service === 'control-plane') {
       return `${lead} — the control plane rejected this console's credentials. ${CONTROL_PLANE_KEY_REJECTED}`;
     }
-    return `${lead} — ${svc} requires credentials this console does not send.`;
+    // Every other service is the playground family: the registries are reached
+    // through the playground's key-gated passthrough, so this console now does
+    // present a credential (`x-api-key`), and a 401 means the playground
+    // refused it.
+    return `${lead} — ${playgroundKeyRejected(error.service)}`;
   }
   if (status === 403) return `${lead} — not authorized by ${svc}.`;
   if (status === 404) return `${lead} — ${opts?.notFound ?? `${svc} has no record of it.`}`;
@@ -554,6 +571,47 @@ export function operatorErrorMessage(
     return `${lead} — ${svc} is unavailable or rate limiting right now. Wait and retry.`;
   if (status >= 500) return `${lead} — ${svc} did not answer successfully (${status}).`;
   return `${lead} — ${svc} answered ${status}.`;
+}
+
+/**
+ * Public-mode refusals and the playground's run limiter (ACDP_UI_PUBLIC_MODE,
+ * `lib/server/access.ts`; playground `rate_limit.py`).
+ *
+ * The two console codes are only honoured on an UNSTAMPED response: the console
+ * minted them, and an upstream echoing the same string is not this console's
+ * statement. The playground codes are honoured only on a STAMPED playground 429,
+ * for the mirror reason. A time phrase appears only when the response gave a
+ * usable `Retry-After` (header or body); a limit only when it reported one.
+ */
+export const CONSOLE_RATE_LIMITED = 'CONSOLE_RATE_LIMITED';
+export const CONSOLE_OPERATOR_SESSION_REQUIRED = 'CONSOLE_OPERATOR_SESSION_REQUIRED';
+export const OPERATOR_SIGN_IN_REQUIRED = 'This action needs the operator sign-in. Sign in at /login.';
+
+function retryPhrase(error: ApiError): string {
+  if (error.retryAfterSeconds === undefined) return '';
+  return error.retryAfterSeconds > 0 ? ` Try again in ${error.retryAfterSeconds} s.` : ' Try again now.';
+}
+
+export function rateLimitMessage(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  if (!error.fromUpstream) {
+    if (error.errorCode === CONSOLE_RATE_LIMITED) return `Too many requests from your network.${retryPhrase(error)}`;
+    if (error.errorCode === CONSOLE_OPERATOR_SESSION_REQUIRED) return OPERATOR_SIGN_IN_REQUIRED;
+    return undefined;
+  }
+  if (error.service !== 'playground' || error.status !== 429) return undefined;
+  if (error.errorCode === 'run_rate_limited') {
+    const limit = error.limit !== undefined ? ` (${error.limit} per window)` : '';
+    return `Run launch limit reached${limit}.${retryPhrase(error)}`;
+  }
+  if (error.errorCode === 'max_concurrent_runs') {
+    const running =
+      error.limit !== undefined
+        ? `The playground is already running ${error.limit} scenarios.`
+        : 'The playground is already running as many scenarios as it allows.';
+    return `${running}${retryPhrase(error)}`;
+  }
+  return undefined;
 }
 
 /**
@@ -655,7 +713,8 @@ export function contextErrorFallback(error: ApiError): string {
   if (status === 401) {
     if (error.service === 'control-plane')
       return `The control plane rejected this console's credentials. ${CONTROL_PLANE_KEY_REJECTED}`;
-    return `${SERVICE_LABEL[error.service]} requires credentials this console does not send.`;
+    const sentence = playgroundKeyRejected(error.service);
+    return sentence.charAt(0).toUpperCase() + sentence.slice(1);
   }
   if (status === 403) return 'Not authorized to read this context.';
   // 429 is the registry answering this console directly; 503 is the control

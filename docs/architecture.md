@@ -99,10 +99,11 @@ flowchart TD
   C -- yes --> E403a["403 path traversal"]
   C -- no --> D{"(method, path) in<br/>ALLOWED_ROUTES[service]?"}
   D -- no --> E403b["403 not an allowed proxy route"]
-  D -- yes --> G["copy only FORWARD_HEADERS;<br/>control-plane: inject<br/>Bearer CONTROL_PLANE_API_KEY"]
+  D -- yes --> G["copy only FORWARD_HEADERS;<br/>control-plane: inject Bearer CONTROL_PLANE_API_KEY;<br/>playground + registries: inject x-api-key<br/>and X-ACDP-Client-IP"]
   G --> H["fetch upstream<br/>redirect: 'manual', cache: 'no-store'"]
   H -- throws --> E502a["502 upstream unreachable"]
   H -- "3xx / opaqueredirect" --> E502b["502 refusing to relay a redirect"]
+  H -- "registry: playground 502 registry_unreachable" --> E502c["502 upstream unreachable (unstamped)"]
   H -- any other status --> I["re-stream body + status<br/>set x-acdp-ui-proxy: service<br/>cache-control: no-store, no-transform"]
 ```
 
@@ -118,9 +119,19 @@ flowchart TD
   `content-type`, `accept`, `accept-language`, `idempotency-key`, `x-run-id`
   and `x-acdp-event-id`. The browser's cookies and `authorization` header are
   never forwarded. `x-tenant-id` is dropped on purpose.
-- **Credential.** Only `control-plane` gets an `authorization` header, filled
-  server-side from `CONTROL_PLANE_API_KEY` (`getIntegrationConfig`). The key
-  never reaches the browser.
+- **Credentials.** `control-plane` gets an `authorization` header, filled
+  server-side from `CONTROL_PLANE_API_KEY`. The playground and both registries
+  get `x-api-key: PLAYGROUND_API_KEY` plus `X-ACDP-Client-IP`, the end user's
+  address from a trusted header (`lib/server/client-ip.ts`; Vercel's edge
+  headers, or `ACDP_UI_CLIENT_IP_HEADER` self-hosted). All of it is set in
+  `upstreamAuthHeaders` (`lib/server/integrations.ts`), and none of it reaches
+  the browser.
+- **Registries go through the playground.** `registry-a`/`registry-b` resolve
+  to `${PLAYGROUND_BASE_URL}/registries/{a,b}`, the playground's GET-only
+  passthrough. They stay separate services so the stamp names the registry
+  asked about. When the playground cannot reach a registry it answers its own
+  502 `registry_unreachable`; the proxy turns that into an unstamped 502, so
+  the registry reads as unreachable rather than degraded.
 - **Error bodies are relayed as-is.** A non-2xx upstream response is
   re-streamed with its original status and body bytes, never wrapped. The
   operator-facing error copy reads the structured `errorCode` out of that body

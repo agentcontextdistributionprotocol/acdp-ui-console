@@ -72,3 +72,47 @@ export function relayEventStream(
     },
   });
 }
+
+/**
+ * Calls `release` exactly once, when the relayed stream ends, the browser
+ * cancels it, the request aborts, or reading it fails. Used to hand back a
+ * `StreamGate` slot (`lib/server/rate-limit.ts`); a slot whose function is
+ * killed at `maxDuration` runs none of these and lapses on its own.
+ */
+export function releaseWhenClosed(response: Response, release: () => void, signal?: AbortSignal): Response {
+  let done = false;
+  const once = () => {
+    if (done) return;
+    done = true;
+    release();
+  };
+  // A refusal (non-200, e.g. relayEventStream's 502) is not a live stream:
+  // hand the slot back now rather than when the browser drains the body.
+  if (!response.body || response.status !== 200) {
+    once();
+    return response;
+  }
+  signal?.addEventListener('abort', once, { once: true });
+  const reader = response.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done: end, value } = await reader.read();
+        if (end) {
+          once();
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (err) {
+        once();
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      once();
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+  return new Response(body, { status: response.status, headers: response.headers });
+}

@@ -258,3 +258,47 @@ describe('the state holds the error, not a string', () => {
     expect(src).toContain("String(v ?? '')");
   });
 });
+
+describe('launch limits (public live mode, 2d)', () => {
+  it('the playground run_rate_limited 429 shows the limit and retry time', async () => {
+    startRun.mockRejectedValue(
+      new ApiError(
+        429,
+        '{"detail":{"code":"run_rate_limited","limit":5,"retry_after":120,"detail":"at most 5 runs per 600 s per client"}}',
+        'playground',
+        '/runs',
+        true,
+        '120',
+      ),
+    );
+    const container = await launch();
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        'Could not start this scenario. Run launch limit reached (5 per window). Try again in 120 s.',
+      ),
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('the playground max_concurrent_runs 429 says how many are running', async () => {
+    startRun.mockRejectedValue(
+      new ApiError(429, '{"detail":{"code":"max_concurrent_runs","limit":3,"retry_after":10}}', 'playground', '/runs', true, '10'),
+    );
+    const container = await launch();
+    await waitFor(() =>
+      expect(container.textContent).toContain(
+        'Could not start this scenario. The playground is already running 3 scenarios. Try again in 10 s.',
+      ),
+    );
+  });
+
+  it("the console's own 429 says the network is over its limit", async () => {
+    startRun.mockRejectedValue(
+      new ApiError(429, '{"errorCode":"CONSOLE_RATE_LIMITED","retryAfterSeconds":42,"limit":5}', 'playground', '/runs', false, '42'),
+    );
+    const container = await launch();
+    await waitFor(() =>
+      expect(container.textContent).toContain('Could not start this scenario. Too many requests from your network. Try again in 42 s.'),
+    );
+  });
+});

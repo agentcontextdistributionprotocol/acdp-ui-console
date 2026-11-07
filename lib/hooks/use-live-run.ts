@@ -62,6 +62,9 @@ export function useLiveRun(runId: string, runStatus?: RunStatus) {
   const [events, setEvents] = useState<StepEvent[]>([]);
   const [status, setStatus] = useState<LiveStatus>(initialStatus);
   const [lineage, setLineage] = useState<LineageGraph | undefined>(undefined);
+  // The playground's replay frame (`RunResult.summary`), when the stream was
+  // opened after the run already ended. Summary data, never a feed event.
+  const [replaySummary, setReplaySummary] = useState<Record<string, unknown> | null>(null);
   const esRef = useRef<EventSource | null>(null);
   const retriesRef = useRef(0);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -73,6 +76,7 @@ export function useLiveRun(runId: string, runStatus?: RunStatus) {
     setEvents([]);
     setStatus(initialStatus());
     setLineage(undefined);
+    setReplaySummary(null);
   }
 
   useEffect(() => {
@@ -137,11 +141,27 @@ export function useLiveRun(runId: string, runStatus?: RunStatus) {
       };
 
       es.onmessage = (e: MessageEvent) => {
+        let frame: unknown;
         try {
-          append(JSON.parse(e.data) as StepEvent);
+          frame = JSON.parse(e.data);
         } catch {
-          /* ignore non-JSON keepalive frames */
+          return; /* ignore non-JSON keepalive frames */
         }
+        if (!frame || typeof frame !== 'object') return;
+        const f = frame as Record<string, unknown>;
+        if (typeof f.type === 'string') {
+          append(f as unknown as StepEvent);
+          return;
+        }
+        // No `type`: the playground's replay of a finished run — its whole
+        // `RunResult` (`acdp-playground/playground/api/runs.py`, `replay()`),
+        // sent when the terminal event was lost to a disconnect. Appending it
+        // as an event put a type-less row in the feed (and `eventTypeColor`
+        // threw on it); its summary and status are honoured instead.
+        if (f.summary && typeof f.summary === 'object') setReplaySummary(f.summary as Record<string, unknown>);
+        if (f.lineage_graph && typeof f.lineage_graph === 'object') setLineage(f.lineage_graph as LineageGraph);
+        if (f.status === 'failed') setStatus('error');
+        else if (f.status === 'complete') setStatus('complete');
       };
 
       es.addEventListener('end', () => {
@@ -193,5 +213,5 @@ export function useLiveRun(runId: string, runStatus?: RunStatus) {
     };
   }, [runId, runStatus, demoMode]);
 
-  return { events, status, lineage };
+  return { events, status, lineage, replaySummary };
 }

@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
-import { buildUpstreamUrl } from '@/lib/server/integrations';
-import { relayEventStream } from '@/lib/server/sse-relay';
+import { buildUpstreamUrl, upstreamAuthHeaders } from '@/lib/server/integrations';
+import { relayEventStream, releaseWhenClosed } from '@/lib/server/sse-relay';
+import { decideAccess, rateLimitedResponse } from '@/lib/server/access';
+import { consoleStreamGate, rateLimitKey } from '@/lib/server/rate-limit';
 
 export const dynamic = 'force-dynamic';
 // Keep the SSE relay alive past Vercel's default function timeout. Only
@@ -13,18 +15,34 @@ export const maxDuration = 60;
  */
 export async function GET(request: NextRequest, context: { params: Promise<{ runId: string }> }) {
   const { runId } = await context.params;
-  const upstreamUrl = buildUpstreamUrl('playground', `/runs/${encodeURIComponent(runId)}/events`);
+  const path = `/runs/${encodeURIComponent(runId)}/events`;
+  // Public in public mode (one `read` token per open, plus a concurrent
+  // stream slot); the operator session with the flag off. See
+  // `lib/server/access.ts`.
+  const decision = await decideAccess(request, { service: 'playground', method: 'GET', path, access: 'public', limit: 'read' });
+  if (!decision.ok) return decision.response;
+  let release = () => {};
+  if (decision.publicMode) {
+    const slot = consoleStreamGate.acquire(rateLimitKey(decision.clientIp));
+    if (!slot.allowed) return rateLimitedResponse(slot.retryAfterSeconds, slot.limit);
+    release = slot.release;
+  }
+  const upstreamUrl = buildUpstreamUrl('playground', path);
 
   try {
     const upstream = await fetch(upstreamUrl, {
-      headers: { accept: 'text/event-stream' },
+      // The playground key and the end user's IP, like every playground call
+      // through the proxy route; never inherited from the client.
+      headers: {
+        accept: 'text/event-stream',
+        ...upstreamAuthHeaders('playground', { clientIp: decision.clientIp }),
+      },
       cache: 'no-store',
       signal: request.signal,
-      // This relay injects no bearer today, so its exposure is not a credential
-      // leak but the other half of the same defect: the redirect target's bytes
-      // relayed to the browser as though the playground had sent them. Pinned
-      // here anyway, and deliberately identical to the control-plane relay —
-      // the asymmetry would be a trap for whoever adds auth to the playground.
+      // This relay now carries the playground key, so following a same-origin
+      // redirect would hand it to a path the playground chose; and any
+      // redirect would relay the target's bytes as though the playground had
+      // sent them. Deliberately identical to the control-plane relay.
       redirect: 'manual',
     });
 
@@ -34,8 +52,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ run
     // see the longer note there for why that arm exists and why the whole 3xx
     // range, 304 included, is refused. `relayEventStream` also refuses a 200
     // whose content-type is not `text/event-stream` — see its own doc.
-    return relayEventStream('playground', upstreamUrl, upstream);
+    return releaseWhenClosed(relayEventStream('playground', upstreamUrl, upstream), release, request.signal);
   } catch (err) {
+    release();
     return new Response(`stream relay failed: ${String(err)}`, { status: 502 });
   }
 }

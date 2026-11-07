@@ -2,7 +2,7 @@
 // Acceptance gate for a registry's own did:web DID document.
 //
 // Real mode fetches `/.well-known/did.json` from the registry this console is
-// configured to use (`REGISTRY_*_BASE_URL`, via the proxy). That is NOT did:web
+// configured to use (via the proxy and the playground's registry passthrough). That is NOT did:web
 // resolution: did:web says to fetch `https://<authority>/.well-known/did.json`
 // over DNS + TLS, and this console instead asks the configured base URL. So the
 // document is only accepted when it is CONSISTENT with that registry — its id

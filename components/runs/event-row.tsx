@@ -17,6 +17,7 @@ import {
   StickyNote,
   Ban,
   RotateCcw,
+  Gauge,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { eventTypeColor } from '@/lib/colors';
@@ -42,6 +43,7 @@ const ICONS: Record<string, LucideIcon> = {
   'run.complete': CheckCircle2,
   'run.error': XCircle,
   'webhook.received': Webhook,
+  'llm.quota_exceeded': Gauge,
 };
 
 function detailFor(ev: StepEvent): string {

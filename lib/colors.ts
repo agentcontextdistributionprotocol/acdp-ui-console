@@ -39,6 +39,7 @@ export function eventTypeColor(type: string): string {
   if (type.startsWith('acdp.verify')) return C.success;
   if (type.startsWith('auth')) return C.warning;
   if (type.startsWith('policy')) return '#f97316';
+  if (type === 'llm.quota_exceeded') return C.warning;
   if (type.startsWith('llm')) return '#84cc16';
   if (type.startsWith('agent')) return C.muted;
   if (type === 'run.complete') return C.success;

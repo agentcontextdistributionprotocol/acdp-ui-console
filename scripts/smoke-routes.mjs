@@ -12,17 +12,26 @@
 // A `next dev` server without ACDP_UI_CONSOLE_PASSWORD fails the gate probes
 // by design (development fail-open); set the variable to smoke a local server.
 
-import { GATE_PROBES, PAGE_ROUTES, runSmoke } from './smoke-checks.mjs';
+// Public mode is detected from GET /api/auth/session; SMOKE_EXPECT_PUBLIC_MODE
+// (on/off) makes a mismatch fail. SMOKE_DIRECT_BACKEND_URLS (comma-separated
+// playground base URLs) additionally checks each refuses a keyless request.
+
+import { runSmoke } from './smoke-checks.mjs';
 
 const base = (process.env.SMOKE_BASE_URL ?? 'https://console.agentcontextdistributionprotocol.io').replace(
   /\/$/,
   '',
 );
 
-const total = PAGE_ROUTES.length + GATE_PROBES.length;
-const failures = await runSmoke(base);
+const failures = await runSmoke(base, {
+  expectPublicMode: process.env.SMOKE_EXPECT_PUBLIC_MODE,
+  directBackendUrls: (process.env.SMOKE_DIRECT_BACKEND_URLS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+});
 if (failures > 0) {
-  console.error(`\n${failures}/${total} checks failed`);
+  console.error(`\n${failures} check(s) failed`);
   process.exit(1);
 }
-console.log(`\nAll ${total} checks passed`);
+console.log('\nAll checks passed');

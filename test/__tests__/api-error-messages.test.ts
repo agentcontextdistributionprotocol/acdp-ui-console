@@ -416,19 +416,21 @@ describe('operatorErrorMessage — the generic surface copy', () => {
     expect(reg).toContain('registry A');
   });
 
-  // The console sends a registry nothing: `integrations.ts` returns auth
-  // material for `control-plane` alone, and the proxy strips the browser's own
-  // cookie and `authorization`. So a registry 401 cannot be a REJECTION — there
-  // was nothing to reject. Saying otherwise blames a service for refusing
-  // something it was never offered, and implies a fix (repair the console's
-  // registry credential) that does not exist in this product.
+  // The playground family carries the playground key (`integrations.ts`), and
+  // both registries are reached through the playground's passthrough, so the
+  // party that can refuse it is the playground.
   it.each(['registry-a', 'registry-b', 'playground'] as const)(
-    'does not claim %s rejected credentials it was never sent',
+    'names the playground key, not the control-plane key, for a %s 401',
     (service) => {
+      // The playground family now receives a credential (`x-api-key`), and the
+      // registries are reached through the playground, so a 401 means the
+      // PLAYGROUND refused the key — never the control plane's key, and never
+      // the registry itself, which checked nothing.
       const msg = operatorErrorMessage(svcError(401, service), LEAD);
-      expect(msg).toContain('requires credentials this console does not send');
-      expect(msg).not.toContain('rejected');
+      expect(msg).toContain("rejected this console's key");
+      expect(msg).toContain('PLAYGROUND_API_KEY');
       expect(msg).not.toContain('CONTROL_PLANE_API_KEY');
+      if (service !== 'playground') expect(msg).toContain('the playground, which relays');
     },
   );
 
@@ -574,11 +576,13 @@ describe("contextErrorFallback gains #91's other half", () => {
   // correct without a gate — but `/contexts` already talks to registries for
   // search, and an ungated arm would silently tell an operator that a registry
   // rejected credentials this console never sends it.
-  it('does not claim a registry rejected credentials, if one ever reaches this function', () => {
+  it('attributes a registry 401 to the playground key, not the registry or the CP key', () => {
     const regErr = new ApiError(401, '', 'registry-a', '/contexts/x', true);
     const msg = contextErrorFallback(regErr);
-    expect(msg).toContain('requires credentials this console does not send');
-    expect(msg).not.toContain('rejected');
+    expect(msg).toBe(
+      "The playground, which relays registry A, rejected this console's key. " +
+        "The key is server-side (PLAYGROUND_API_KEY in this console's deployment), so the browser can't see it: check that it is set and matches the playground's PLAYGROUND_API_KEY.",
+    );
     expect(msg).not.toContain('CONTROL_PLANE_API_KEY');
   });
 
@@ -859,14 +863,14 @@ describe('contextErrorMessage consults the registry map', () => {
     expect(msg).toBe('Could not load context.');
   });
 
-  it('does not let a registry 401 become "rejected this console\'s credentials"', () => {
+  it('does not let a registry 401 become "rejected this console\'s credentials" (the CP sentence)', () => {
     // The lookup misses, so this lands in `contextErrorFallback`'s 401 arm —
     // which is service-gated for exactly this reason. Asserted here because
     // routing registry errors into this function is what made a registry 401
     // reachable on a context surface for the first time.
     const msg = contextErrorMessage(registrySearchError(401, 'not_authenticated'));
-    expect(msg).toBe('registry A requires credentials this console does not send.');
-    expect(msg).not.toContain('rejected');
+    expect(msg).toMatch(/^The playground, which relays registry A, rejected this console's key\./);
+    expect(msg).not.toContain("rejected this console's credentials");
   });
 });
 

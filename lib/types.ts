@@ -34,7 +34,23 @@ export type StepEventType =
   | 'run.started'
   | 'run.complete'
   | 'run.error'
-  | 'webhook.received';
+  | 'webhook.received'
+  // The playground's per-IP / global LLM quota refused a real model call; the
+  // run continues on the deterministic mock LLM (playground `quota.py`).
+  | 'llm.quota_exceeded';
+
+/**
+ * The playground's LLM quota denial as it travels on the wire: on the
+ * `llm.quota_exceeded` event (top level), and as `llm_quota` on `run.complete`
+ * and `RunResult.summary`. `limit`/`resets_at` are null when the quota store
+ * itself was unavailable (`quota: 'quota_store_unavailable'`, fail closed).
+ */
+export interface LlmQuotaWire {
+  quota: string;
+  limit: number | null;
+  /** RFC 3339, UTC. */
+  resets_at: string | null;
+}
 
 export interface StepEvent {
   type: StepEventType;
@@ -56,6 +72,15 @@ export interface StepEvent {
   // ACDP 0.2 trust signals carried on the playground step stream (snake_case).
   key_fingerprint?: string;
   receipt_present?: boolean;
+  // LLM quota (playground `quota.py`): `llm.quota_exceeded` carries
+  // quota/limit/resets_at; `run.complete` carries the summary trio.
+  status?: string;
+  quota?: string;
+  limit?: number | null;
+  resets_at?: string | null;
+  llm_quota_exceeded?: boolean;
+  llm_quota?: LlmQuotaWire;
+  llm_calls_on_mock?: number;
 }
 
 export interface PlaygroundRunResponse {
@@ -871,6 +896,9 @@ export const REGISTRY_LABELS: Record<RegistryAuthority, string> = {
  */
 export type CapabilityAuthority = RegistryAuthority;
 
+/** The words a failed health probe may report. See `HealthResult.detail`. */
+export type HealthFailureWord = 'degraded' | 'unreachable' | 'rate limited';
+
 export interface HealthResult {
   /**
    * Whether the service is serving, NOT whether the request succeeded.
@@ -903,8 +931,12 @@ export interface HealthResult {
    *
    * A union rather than a free string because two surfaces render it verbatim
    * to operators; a typo would reach the screen as a label.
+   *
+   * `'rate limited'`: the console's own public-mode limiter refused the probe
+   * (an unstamped 429 `CONSOLE_RATE_LIMITED`), so nothing about the service is
+   * known — saying `unreachable` would assert it is down.
    */
-  detail?: 'degraded' | 'unreachable';
+  detail?: HealthFailureWord;
   /**
    * The service's own `/healthz` version string, when the response carried one
    * and could be parsed (registry-rs/control-plane/playground all now expose

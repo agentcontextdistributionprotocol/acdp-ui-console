@@ -5,6 +5,9 @@ import {
   createSessionToken,
   passphraseMatches,
 } from '@/lib/server/session';
+import { getClientIp, UNKNOWN_CLIENT_IP } from '@/lib/server/client-ip';
+import { consoleRateLimiter, rateLimitKey } from '@/lib/server/rate-limit';
+import { rateLimitedResponse } from '@/lib/server/access';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +17,16 @@ export const dynamic = 'force-dynamic';
  * IS the gate's entry point, so it can't be gated by itself.
  */
 export async function POST(request: NextRequest) {
+  // Per-IP attempt limit (10 per 10 min), in every mode: public mode
+  // advertises sign-in to every visitor. Skipped when the client IP is
+  // unknown (self-hosted without ACDP_UI_CLIENT_IP_HEADER), since everyone
+  // would share that one bucket and anyone could lock the operator out.
+  const ip = getClientIp(request.headers);
+  if (ip !== UNKNOWN_CLIENT_IP) {
+    const result = consoleRateLimiter.consume([{ policy: 'login', key: rateLimitKey(ip) }]);
+    if (!result.allowed) return rateLimitedResponse(result.retryAfterSeconds, result.limit);
+  }
+
   const password = process.env.ACDP_UI_CONSOLE_PASSWORD;
   if (!password) {
     // No passphrase configured anywhere to check against — misconfigured,

@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { pingHealth } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import type { HealthResult, ProxyService } from '@/lib/types';
+import type { HealthFailureWord, HealthResult, ProxyService } from '@/lib/types';
 
 /**
  * What an operator is told about one service, as a discriminated union rather
@@ -26,7 +26,7 @@ import type { HealthResult, ProxyService } from '@/lib/types';
 export type HealthView =
   | { kind: 'checking'; word: 'checking…' }
   | { kind: 'healthy'; word: 'healthy'; latencyMs?: number; version?: string }
-  | { kind: 'failing'; word: 'degraded' | 'unreachable'; latencyMs?: number };
+  | { kind: 'failing'; word: HealthFailureWord; latencyMs?: number };
 
 /**
  * The single definition of what an operator is told about one service's health.
@@ -134,7 +134,7 @@ export function settledHealthView(data: HealthResult): Extract<HealthView, { kin
   // result, where `unreachable` was the only word these surfaces ever said.
   return {
     kind: 'failing',
-    word: (data.detail ?? 'unreachable') as 'degraded' | 'unreachable',
+    word: (data.detail ?? 'unreachable') as HealthFailureWord,
     latencyMs: data.latencyMs,
   };
 }

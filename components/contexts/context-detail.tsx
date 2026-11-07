@@ -219,7 +219,7 @@ export function ContextDetail({
   //    so the did:web-signed surfaces verify offline;
   //  - real mode: it returns ONLY the issuing registry's own DID document,
   //    fetched from the registry this console is configured to use
-  //    (`REGISTRY_*_BASE_URL`, via the proxy) and accepted only if its id is
+  //    (via the proxy and the playground's registry passthrough) and accepted only if its id is
   //    exactly `did:web:<authority>` for the authority both the registry's
   //    capabilities and this ctx_id name. That is consistency with the
   //    configured registry, not did:web's DNS/TLS lookup, and the disclosure
@@ -408,14 +408,16 @@ export function ContextDetail({
       {/* Where live did:web key material came from (real mode only). Visible
           text, never a tooltip: it qualifies every registry-signed verdict
           below. Deliberately not worded as did:web resolution — the document
-          came from the configured base URL, not the authority's own domain. */}
+          came from the configured registry (via the playground passthrough),
+          not the authority's own domain. */}
       {!demoMode && liveRegistryDids.length > 0 && (
         <div role="note" style={{ color: C.muted, fontSize: 10.5, lineHeight: 1.5 }}>
           {liveRegistryDids.map(({ registry, did }) => (
             <div key={did}>
               Registry key material: the DID document for <span className="did">{did}</span> was fetched from{' '}
-              {REGISTRY_LABELS[registry]}, the registry this console is configured to use (
-              {`REGISTRY_${registry.toUpperCase()}_BASE_URL`}), and checked against the authority named in this ctx_id. It is
+              {REGISTRY_LABELS[registry]}, the registry this console is configured to use (reached through the
+              playground&apos;s registry passthrough, at the playground&apos;s{' '}
+              {`REGISTRY_${registry.toUpperCase()}_URL`}), and checked against the authority named in this ctx_id. It is
               consistent with that registry; it was not looked up from the authority&apos;s own domain over DNS/TLS.
             </div>
           ))}

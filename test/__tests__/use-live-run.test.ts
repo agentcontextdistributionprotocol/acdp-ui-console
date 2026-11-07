@@ -119,6 +119,31 @@ describe('useLiveRun', () => {
     await waitFor(() => expect(result.current.status).toBe('complete'));
   });
 
+  it('a replay frame with no type is summary data, never a feed event (2e)', async () => {
+    const { result } = renderHook(() => useLiveRun('run-1'));
+    const es = FakeEventSource.instances[0];
+    const summary = { llm_quota_exceeded: true, llm_quota: { quota: 'ip_daily', limit: 20, resets_at: '2026-11-08T00:00:00Z' }, llm_calls_on_mock: 2 };
+    act(() =>
+      es.emitMessage({ run_id: 'run-1', scenario_id: 's1', status: 'complete', contexts: [], lineage_graph: { nodes: [], edges: [] }, summary }),
+    );
+    await waitFor(() => expect(result.current.status).toBe('complete'));
+    expect(result.current.events).toHaveLength(0);
+    expect(result.current.replaySummary).toEqual(summary);
+    expect(result.current.lineage).toEqual({ nodes: [], edges: [] });
+  });
+
+  it('a failed replay frame ends as error; non-object frames are ignored', async () => {
+    const { result } = renderHook(() => useLiveRun('run-1'));
+    const es = FakeEventSource.instances[0];
+    act(() => {
+      es.emitMessage(42);
+      es.emitMessage(null);
+      es.emitMessage({ run_id: 'run-1', status: 'failed', summary: {} });
+    });
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.events).toHaveLength(0);
+  });
+
   it('changing runId resets events/status/lineage, closes the old stream, and opens a new one', async () => {
     const { result, rerender } = renderHook(({ runId }) => useLiveRun(runId), {
       initialProps: { runId: 'run-1' },
