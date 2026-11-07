@@ -13,11 +13,14 @@ export function RunSummary({
   scenarioName,
   liveStatus,
   contextsCount,
+  unobservedLabel,
 }: {
   run: CpRun;
   scenarioName: string;
   liveStatus: LiveStatus;
   contextsCount: number;
+  /** #197: replaces the count when nothing was observed but the run reported contexts. */
+  unobservedLabel?: string | null;
 }) {
   const running = run.status === 'running' && liveStatus !== 'complete' && liveStatus !== 'error';
   const [, tick] = useState(0);
@@ -61,8 +64,8 @@ export function RunSummary({
         <StatusBadge status={status} />
       </span>
       <span style={{ fontSize: 12, color: C.muted }}>{elapsed(run.startedAt, running ? null : run.completedAt)}</span>
-      <span style={{ fontSize: 12, color: C.text }}>
-        {contextsCount} context{contextsCount === 1 ? '' : 's'}
+      <span style={{ fontSize: 12, color: unobservedLabel ? C.muted : C.text }}>
+        {unobservedLabel ?? `${contextsCount} context${contextsCount === 1 ? '' : 's'}`}
       </span>
     </div>
   );

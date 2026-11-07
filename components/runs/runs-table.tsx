@@ -8,6 +8,8 @@ import { shortId, timeAgo, elapsed } from '@/lib/utils/format';
 import { shortAuthority } from '@/lib/utils/acdp';
 import { pressable } from '@/lib/utils/a11y';
 import type { CpRun } from '@/lib/types';
+import { unobservedContextsLabel } from '@/lib/utils/run-contexts';
+import { C } from '@/lib/colors';
 
 export function RunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName: (id: string) => string }) {
   const router = useRouter();
@@ -35,7 +37,9 @@ export function RunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName:
               <td>
                 <StatusBadge status={run.status} />
               </td>
-              <td>{run.contextsCount}</td>
+              <td>
+                <ContextsCell run={run} />
+              </td>
               <td>
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                   {run.registries.map((r) => (
@@ -55,4 +59,11 @@ export function RunsTable({ runs, scenarioName }: { runs: CpRun[]; scenarioName:
       </table>
     </TableScroll>
   );
+}
+
+/** #197: the observed count, or the reported-but-unobserved label in its place. */
+function ContextsCell({ run }: { run: CpRun }) {
+  const label = unobservedContextsLabel(run.contextsCount, run);
+  if (!label) return <>{run.contextsCount}</>;
+  return <span style={{ fontSize: 11, color: C.muted }}>{label}</span>;
 }

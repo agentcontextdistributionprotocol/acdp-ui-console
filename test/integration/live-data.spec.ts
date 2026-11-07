@@ -54,6 +54,23 @@ test.describe('Live pages render real backend records', () => {
     // stream that no longer exists, so its feed reads as ended, never live.
     await expect(page.locator('.badge').filter({ hasText: /^\W*ended$/ })).toBeVisible();
     await expect(page.locator('.badge').filter({ hasText: /running|live/ })).toHaveCount(0);
+
+    // #197: what the page may say about the run's contexts depends on what the
+    // control plane OBSERVED. With registry webhooks off (this stack's
+    // default) its lineage is empty while the run itself reported a publish;
+    // the page must then say so, never "0 contexts" or "No lineage yet".
+    const reported = run.result?.contexts ?? [];
+    const lineage = await page.request.get(`/api/proxy/control-plane/runs/${run.runId}/lineage`);
+    expect(lineage.status()).toBe(200);
+    const observed = ((await lineage.json()) as { nodes: unknown[] }).nodes.length;
+    if (observed === 0 && reported.length > 0) {
+      const label = `${reported.length} context${reported.length === 1 ? '' : 's'} reported by the run; none observed via registry events`;
+      await expect(page.getByText(label)).toHaveCount(2);
+      await expect(page.getByText(/^0 contexts$/)).toHaveCount(0);
+      await expect(page.getByText('No lineage yet')).toHaveCount(0);
+    } else {
+      await expect(page.getByText(`${observed} context${observed === 1 ? '' : 's'}`, { exact: true })).toBeVisible();
+    }
   });
 
   test('a nonexistent run id renders the not-found copy, not a crash or a blank page', async ({ page }) => {
