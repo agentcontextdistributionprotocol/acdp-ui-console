@@ -114,8 +114,10 @@ and never the admin control-plane key or the passphrase:
 These are separate Preview-only entries, set by hand with `vercel env add … preview`;
 the sync never touches them. Without `ACDP_UI_CONSOLE_PASSWORD`, a preview's
 proxy fails closed (503) outside demo mode, which is the intended state.
-`REGISTRY_A/B_BASE_URL` and `NEXT_PUBLIC_APP_VERSION` are older shared entries no
-code path uses on Vercel; they can be removed.
+The old shared `REGISTRY_A/B_BASE_URL` and `NEXT_PUBLIC_APP_VERSION` entries were
+deleted from Vercel (Production and Preview) by hand with `vercel env rm` on
+2026-11-07, and the two registry keys from Doppler `prd`/`stg`: no code reads them
+on Vercel, and the sync never deletes. Don't re-add them.
 
 `smoke.yml` checks the deployed console every night (see
 [Testing](testing.md#ci-workflows)).

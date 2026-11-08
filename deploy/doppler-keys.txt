@@ -10,11 +10,10 @@
 # them alone (see the script header); Doppler holds the same values, checked
 # by behaviour against production at migration time.
 #
-# Left out on purpose: NEXT_PUBLIC_APP_VERSION (no app code reads it on
-# Vercel, it is a Docker build arg, and its Vercel value is unreadable), and
-# REGISTRY_A/B_BASE_URL (unused since registry reads go through the
-# playground's passthrough; the sync never deletes, so their Vercel entries
-# remain until removed by hand).
+# Left out on purpose: NEXT_PUBLIC_APP_VERSION (a Docker build arg only; no
+# app code reads it) and REGISTRY_A/B_BASE_URL (registry reads go through the
+# playground's passthrough). All three were deleted from Vercel and the two
+# registry keys from Doppler prd/stg on 2026-11-07; do not re-add them.
 
 # config (NEXT_PUBLIC_* are inlined at build time)
 CONTROL_PLANE_BASE_URL
