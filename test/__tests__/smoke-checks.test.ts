@@ -109,7 +109,9 @@ describe('runSmoke', () => {
       return new Response('<html></html>', { status: 200 });
     });
   }
-  const quiet = { log: () => {}, error: () => {} };
+  // These model a password-gated deployment, so they say so: the default
+  // expectation is public mode on.
+  const quiet = { log: () => {}, error: () => {}, expectPublicMode: 'off' };
 
   it('is red on the incident deployment: every page 200, every gate probe 503', async () => {
     const failures = await runSmoke(BASE, {
@@ -144,6 +146,7 @@ import {
   PUBLIC_DENY_PROBES,
   PUBLIC_OPEN_PROBES,
   PUBLIC_TRAVERSAL_PROBE,
+  DEFAULT_EXPECTED_PUBLIC_MODE,
   checkDirectBackend,
   classifyTraversal,
   classifyAdminDenied,
@@ -279,6 +282,14 @@ describe('runSmoke in public mode', () => {
   it('is red when a public read fails', async () => {
     const f = publicDeployment({ '/api/proxy/playground/scenarios': new Response('{}', { status: 502 }) });
     expect(await runSmoke(BASE, { fetchImpl: f, ...quiet })).toBe(1);
+  });
+
+  it('expects public mode on by default: a deployment reporting off is red, detect accepts it', async () => {
+    expect(DEFAULT_EXPECTED_PUBLIC_MODE).toBe('on');
+    const off = publicDeployment({ '/api/auth/session': new Response('{"publicMode":false,"signedIn":false}') });
+    expect(await runSmoke(BASE, { fetchImpl: off, ...quiet })).toBeGreaterThan(0);
+    const reason = await detectMode(BASE, off, 'detect');
+    expect(reason).toMatchObject({ ok: true, publicMode: false });
   });
 
   it('is red when the expected mode differs', async () => {

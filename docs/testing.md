@@ -168,9 +168,12 @@ SMOKE_BASE_URL=http://localhost:3000 node scripts/run-scenarios.mjs
     `/auth/revocations`), an unknown path and an unknown service, which must
     be refused (400/403/404), never 2xx, and an encoded traversal
     (`contexts/%2E%2E%2Fmetrics`, which the URL parser leaves intact) that must
-    get the proxy's own traversal 403. A deployment
-    without `/api/auth/session` counts as off. `SMOKE_EXPECT_PUBLIC_MODE=on|off`
-    makes a different reported mode a failure.
+    get the proxy's own traversal 403. Public mode **on** is the expected
+    mode by default (production runs with it on), so a deployment reporting
+    off is a failure. `SMOKE_EXPECT_PUBLIC_MODE=off` smokes a password-gated
+    deployment; `detect` accepts whichever mode it reports, and a deployment
+    without `/api/auth/session` then counts as off. `smoke.yml`'s
+    `expect_public_mode` input defaults to `on`.
   - **Direct backends.** `SMOKE_DIRECT_BACKEND_URLS` (comma-separated playground
     base URLs) also checks each one refuses a keyless `GET /scenarios` with 401.
     That only holds once the playground enforces `PLAYGROUND_REQUIRE_API_KEY`.

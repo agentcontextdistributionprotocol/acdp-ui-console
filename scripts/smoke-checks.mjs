@@ -188,6 +188,13 @@ export function classifyTraversal(status, bodyText) {
  * @param {string | undefined} expect
  * @returns {Promise<{ publicMode: boolean, ok: boolean, reason: string }>}
  */
+/**
+ * The mode a smoke run expects when none is given: production runs with public
+ * mode on. Pass `off` to smoke a password-gated deployment, or `detect` (or an
+ * empty string) to accept whatever the deployment reports.
+ */
+export const DEFAULT_EXPECTED_PUBLIC_MODE = 'on';
+
 export async function detectMode(base, fetchImpl = fetch, expect = undefined) {
   let reported;
   try {
@@ -197,7 +204,7 @@ export async function detectMode(base, fetchImpl = fetch, expect = undefined) {
   } catch {
     reported = undefined;
   }
-  const want = expect === undefined || expect === '' ? undefined : /^(on|true|1)$/i.test(expect);
+  const want = expect === undefined || expect === '' || /^detect$/i.test(expect) ? undefined : /^(on|true|1)$/i.test(expect);
   if (want !== undefined && reported !== undefined && want !== reported) {
     return { publicMode: reported, ok: false, reason: `expected public mode ${want ? 'on' : 'off'}, deployment reports ${reported ? 'on' : 'off'}` };
   }
@@ -268,7 +275,7 @@ export async function checkDirectBackend(url, fetchImpl = fetch) {
  */
 export async function runSmoke(
   base,
-  { fetchImpl = fetch, log = console.log, error = console.error, expectPublicMode = undefined, directBackendUrls = [] } = {},
+  { fetchImpl = fetch, log = console.log, error = console.error, expectPublicMode = DEFAULT_EXPECTED_PUBLIC_MODE, directBackendUrls = [] } = {},
 ) {
   let failures = 0;
   const mode = await detectMode(base, fetchImpl, expectPublicMode);

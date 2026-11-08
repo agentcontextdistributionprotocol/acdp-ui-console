@@ -32,6 +32,7 @@ declare module '@/scripts/smoke-checks.mjs' {
   export function classifyPublicOpen(status: number): CheckResult;
   export function classifyAdminDenied(status: number, bodyText: string): CheckResult;
   export function classifyDenied(status: number): CheckResult;
+  export const DEFAULT_EXPECTED_PUBLIC_MODE: string;
   export function detectMode(
     base: string,
     fetchImpl?: typeof fetch,
