@@ -43,9 +43,8 @@ describe('acceptRegistryDidDocument', () => {
   it('accepts the bundled demo registry document against the demo capabilities', () => {
     const caps = MOCK_CAPABILITIES.a;
     const doc = MOCK_DID_DOCS[caps.registry_did];
-    expect(
-      acceptRegistryDidDocument(doc, { authority: caps.authority, registryDid: caps.registry_did, ctxAuthority: caps.authority }),
-    ).toBe(doc);
+    const authority = caps.registry_did.replace(/^did:web:/, '');
+    expect(acceptRegistryDidDocument(doc, { authority, registryDid: caps.registry_did, ctxAuthority: authority })).toBe(doc);
   });
 
   it('accepts a JWK-encoded verification method', () => {

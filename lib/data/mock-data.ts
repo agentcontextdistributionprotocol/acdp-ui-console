@@ -1170,8 +1170,9 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
   // `profiles` are capability flags. They move independently.
   a: {
     acdp_version: '0.5.0',
+    // No `authority`: the real capabilities document has none (RFC-ACDP-0007
+    // §3.1). A fixture carrying one hid that the DID-document gate keyed on it.
     registry_did: 'did:web:registry-a.playground.local',
-    authority: AUTH_A,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
     profiles: [
       'acdp-registry-core',
@@ -1222,7 +1223,6 @@ export const MOCK_CAPABILITIES: Record<CapabilityAuthority, RegistryCapabilities
   b: {
     acdp_version: '0.1.0',
     registry_did: 'did:web:registry-b.playground.local',
-    authority: AUTH_B,
     supported_signature_algorithms: ['ed25519', 'ecdsa-p256'],
     profiles: ['acdp-registry-core', 'acdp-registry-discovery'],
     anonymous_public_reads: true,
