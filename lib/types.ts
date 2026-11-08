@@ -659,7 +659,9 @@ export interface SearchResponse {
 export interface RegistryCapabilities {
   acdp_version: string;
   registry_did: string;
-  authority: string;
+  /** Not an RFC-ACDP-0007 §3.1 field and not sent by acdp-registry-rs; the
+   *  registry is named by `registry_did`. Kept optional for fixtures. */
+  authority?: string;
   supported_signature_algorithms: string[];
   profiles: string[];
   anonymous_public_reads: boolean;

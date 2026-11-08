@@ -6,9 +6,9 @@
 // resolution: did:web says to fetch `https://<authority>/.well-known/did.json`
 // over DNS + TLS, and this console instead asks the configured base URL. So the
 // document is only accepted when it is CONSISTENT with that registry — its id
-// equals the DID the registry advertises in its capabilities, which equals
-// `did:web:<authority>` for the authority the registry advertises, which must
-// equal the authority named in the context's ctx_id. Anything else returns
+// equals the DID the registry advertises in its capabilities (`registry_did`),
+// which equals `did:web:<authority>` for the authority named in the context's
+// ctx_id. Anything else returns
 // `null`, and the surfaces it would have fed stay honestly `unavailable`.
 //
 // Pure, no React, no network — the hook (`lib/hooks/use-registry-did-docs.ts`)
@@ -54,8 +54,10 @@ function isVerificationMethod(vm: unknown, did: string): boolean {
  * Accept a fetched registry DID document, or return `null`.
  *
  * @param raw the parsed `/.well-known/did.json` body (registry-controlled).
- * @param expected.authority the authority the registry advertises in its
- *   capabilities (`/.well-known/acdp.json` `authority`).
+ * @param expected.authority the authority the registry is taken to serve. The
+ *   capabilities document has no `authority` field (RFC-ACDP-0007 §3.1), so
+ *   `useRegistryDidDocs` passes the ctx_id authority once the probe's
+ *   `registry_did` has matched it.
  * @param expected.registryDid the DID the registry advertises there
  *   (`registry_did`).
  * @param expected.ctxAuthority the authority parsed from the context's ctx_id.

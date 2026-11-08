@@ -38,10 +38,11 @@ vi.mock('@/lib/verify/wasm', () => ({
 
 const caps = MOCK_CAPABILITIES.a;
 const REGISTRY_DID = caps.registry_did;
+const AUTHORITY = REGISTRY_DID.replace(/^did:web:/, '');
 const accepted = acceptRegistryDidDocument(MOCK_DID_DOCS[REGISTRY_DID], {
-  authority: caps.authority,
+  authority: AUTHORITY,
   registryDid: caps.registry_did,
-  ctxAuthority: caps.authority,
+  ctxAuthority: AUTHORITY,
 });
 // What `useRegistryDidDocs` returns in real mode for a registry-a context.
 const LIVE_MAP: Record<string, unknown> = { [REGISTRY_DID]: accepted };
@@ -61,7 +62,7 @@ describe('live registry DID map — exact-DID keying', () => {
     expect(accepted).not.toBeNull();
     for (const c of [ATTESTED, DIDWEB]) {
       expect(c).toBeDefined();
-      expect(c.body.ctx_id.startsWith(`acdp://${caps.authority}/`)).toBe(true);
+      expect(c.body.ctx_id.startsWith(`acdp://${AUTHORITY}/`)).toBe(true);
       expect(c.registry_receipt!.signature.key_id.split('#')[0]).toBe(REGISTRY_DID);
     }
     expect(ATTESTED.body.signature?.key_id.startsWith('did:key:')).toBe(true);

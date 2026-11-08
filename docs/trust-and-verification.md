@@ -107,16 +107,17 @@ only ever pass (see the comment in `app/lineage/page.tsx`).
   - **Demo mode:** the bundled `MOCK_DID_DOCS`.
   - **Real mode:** at most the **issuing registry's own** DID document, and
     nothing else. For each configured registry (`a`, `b`), the capabilities
-    probe (`/.well-known/acdp.json`) gives the registry's `authority` and
-    `registry_did`. If that authority equals the authority in the context's
-    ctx_id, the console fetches `GET /.well-known/did.json` from that
+    probe (`/.well-known/acdp.json`) gives the registry's `registry_did` (the
+    capabilities document has no `authority` field, RFC-ACDP-0007 §3.1). If
+    that DID is exactly `did:web:` + the authority in the context's ctx_id, the
+    console fetches `GET /.well-known/did.json` from that
     registry's configured base URL (`REGISTRY_*_BASE_URL`, through the proxy).
     `acceptRegistryDidDocument` (`lib/verify/did-docs.ts`) then accepts the
     document only if its shape is valid (at most `MAX_VERIFICATION_METHODS`
     keys, each controlled by and fragment-scoped to the document's DID) and
     `doc.id === registry_did === "did:web:" + authority` (with a port's `:`
     written as `%3A`). A 404, a fetch error or any mismatch leaves the map
-    empty. If both registries advertise the same authority, neither document
+    empty. If both registries advertise the same DID, neither document
     is trusted (nothing binds a document to the registry that served the
     context), and the map is empty.
   - The map is keyed by the document's **exact** DID, so a producer DID on the

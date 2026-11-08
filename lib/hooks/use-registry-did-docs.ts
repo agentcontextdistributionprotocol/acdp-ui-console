@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getRegistryCapabilities, getRegistryDidDocument } from '@/lib/api/client';
 import { MOCK_DID_DOCS } from '@/lib/data/mock-data';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
-import { acceptRegistryDidDocument } from '@/lib/verify/did-docs';
+import { acceptRegistryDidDocument, authorityToDidWeb } from '@/lib/verify/did-docs';
 import type { DidDocMap } from '@/lib/verify/resolve';
 import type { RegistryAuthority } from '@/lib/types';
 
@@ -35,8 +35,8 @@ const DEMO: RegistryDidDocs = { docs: MOCK_DID_DOCS, fetched: NONE };
 const EMPTY: RegistryDidDocs = { docs: undefined, fetched: NONE };
 
 /**
- * One registry: capabilities probe → (only if it advertises the ctx_id's
- * authority) `/.well-known/did.json` → acceptance gate. Returns the accepted
+ * One registry: capabilities probe → (only if its `registry_did` is
+ * `did:web:<ctx_id authority>`) `/.well-known/did.json` → acceptance gate. Returns the accepted
  * document (the fetched object itself, so its identity is React Query's) or
  * `null`.
  */
@@ -54,9 +54,23 @@ function useAcceptedRegistryDoc(
     retry: false,
     enabled: !demoMode && ctxAuthority !== '',
   });
-  const capsAuthority = caps.data?.authority;
+  // The capabilities document names its registry through `registry_did`, a
+  // required field (RFC-ACDP-0007 §3.1). There is no `authority` field in the
+  // spec or in acdp-rs `Capabilities`, so gating on one (as this did until it
+  // was found on prod) meant no real registry ever matched and the receipt
+  // surfaces stayed amber. A registry matches when it advertises exactly
+  // `did:web:<ctx_id authority>`; a non-standard `authority`, if a registry
+  // sends one anyway, must agree too. A literal `%` in the ctx_id authority is
+  // refused: `authorityToDidWeb` writes a port's `:` as `%3A`, so without this
+  // `host%3A8100` would match the registry at `host:8100`.
   const capsDid = caps.data?.registry_did;
-  const matches = typeof capsAuthority === 'string' && capsAuthority !== '' && capsAuthority === ctxAuthority;
+  const capsAuthority = caps.data?.authority;
+  const matches =
+    ctxAuthority !== '' &&
+    !ctxAuthority.includes('%') &&
+    typeof capsDid === 'string' &&
+    capsDid === authorityToDidWeb(ctxAuthority) &&
+    (capsAuthority === undefined || capsAuthority === ctxAuthority);
 
   const doc = useQuery({
     queryKey: ['registry-did-document', registry, demoMode],
@@ -69,11 +83,11 @@ function useAcceptedRegistryDoc(
   return useMemo(() => {
     if (demoMode || !matches || raw === undefined || raw === null) return null;
     return acceptRegistryDidDocument(raw, {
-      authority: capsAuthority,
+      authority: ctxAuthority,
       registryDid: typeof capsDid === 'string' ? capsDid : '',
       ctxAuthority,
     });
-  }, [demoMode, matches, raw, capsAuthority, capsDid, ctxAuthority]);
+  }, [demoMode, matches, raw, capsDid, ctxAuthority]);
 }
 
 /**
@@ -81,7 +95,8 @@ function useAcceptedRegistryDoc(
  * that registry's own DID document.
  *
  * Real mode: for each configured registry (`a`, `b`), the capabilities probe
- * names the registry's authority; if it equals the authority in the ctx_id,
+ * names the registry's DID (`registry_did`); if it is exactly
+ * `did:web:<authority in the ctx_id>`,
  * that registry's `/.well-known/did.json` is fetched through the proxy and
  * accepted only if its id is exactly `did:web:<authority>` (see
  * `acceptRegistryDidDocument`). A 404, a fetch error, or a mismatch leaves the

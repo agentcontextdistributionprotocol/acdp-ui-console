@@ -32,9 +32,11 @@ function regDoc(id = DID_A) {
   };
 }
 
-const caps: Record<string, { authority: string; registry_did: string }> = {
-  a: { authority: AUTH_A, registry_did: DID_A },
-  b: { authority: AUTH_B, registry_did: `did:web:${AUTH_B}` },
+// The real capabilities shape (RFC-ACDP-0007 §3.1, acdp-rs `Capabilities`):
+// the registry is named by `registry_did` alone, with no `authority` field.
+const caps: Record<string, { authority?: string; registry_did: string }> = {
+  a: { registry_did: DID_A },
+  b: { registry_did: `did:web:${AUTH_B}` },
 };
 let didDocs: Record<string, unknown> = {};
 
@@ -133,7 +135,7 @@ describe('useRegistryDidDocs', () => {
 
   it('two registries advertising the same authority are ambiguous: neither is trusted', async () => {
     fresh();
-    caps.b = { authority: AUTH_A, registry_did: DID_A };
+    caps.b = { registry_did: DID_A };
     try {
       didDocs = { a: regDoc(), b: regDoc() };
       const { result } = renderHook(() => useRegistryDidDocs(AUTH_A), { wrapper });
@@ -142,7 +144,73 @@ describe('useRegistryDidDocs', () => {
       expect(result.current.docs).toBeUndefined();
       expect(result.current.fetched).toEqual([]);
     } finally {
-      caps.b = { authority: AUTH_B, registry_did: `did:web:${AUTH_B}` };
+      caps.b = { registry_did: `did:web:${AUTH_B}` };
+    }
+  });
+
+  it('a registry_did that is not did:web:<ctx authority> fetches no did.json', async () => {
+    fresh();
+    caps.a = { registry_did: 'did:web:evil.example' };
+    try {
+      didDocs = { a: regDoc() };
+      const { result } = renderHook(() => useRegistryDidDocs(AUTH_A), { wrapper });
+      await waitFor(() => expect(getRegistryCapabilities).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      expect(getRegistryDidDocument).not.toHaveBeenCalled();
+      expect(result.current.docs).toBeUndefined();
+    } finally {
+      caps.a = { registry_did: DID_A };
+    }
+  });
+
+  it('a ported authority matches its %3A-encoded registry_did', async () => {
+    fresh();
+    const did = 'did:web:localhost%3A8100';
+    caps.a = { registry_did: did };
+    didDocs = { a: regDoc(did) };
+    try {
+      const { result } = renderHook(() => useRegistryDidDocs('localhost:8100'), { wrapper });
+      await waitFor(() => expect(result.current.fetched).toEqual([{ registry: 'a', did }]));
+    } finally {
+      caps.a = { registry_did: DID_A };
+    }
+  });
+
+  it('a literal %3A in the ctx_id authority does not match the ported registry', async () => {
+    fresh();
+    const did = 'did:web:localhost%3A8100';
+    caps.a = { registry_did: did };
+    didDocs = { a: regDoc(did) };
+    try {
+      const { result } = renderHook(() => useRegistryDidDocs('localhost%3A8100'), { wrapper });
+      await waitFor(() => expect(getRegistryCapabilities).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      expect(getRegistryDidDocument).not.toHaveBeenCalled();
+      expect(result.current.docs).toBeUndefined();
+    } finally {
+      caps.a = { registry_did: DID_A };
+    }
+  });
+
+  it('a non-standard authority field is honoured only as a cross-check', async () => {
+    // Agreeing: still accepted.
+    fresh();
+    caps.a = { authority: AUTH_A, registry_did: DID_A };
+    didDocs = { a: regDoc() };
+    try {
+      const ok = renderHook(() => useRegistryDidDocs(AUTH_A), { wrapper });
+      await waitFor(() => expect(ok.result.current.fetched).toEqual([{ registry: 'a', did: DID_A }]));
+      ok.unmount();
+      // Disagreeing with the matched registry_did: refused, nothing fetched.
+      fresh();
+      getRegistryDidDocument.mockClear();
+      caps.a = { authority: 'elsewhere.example', registry_did: DID_A };
+      const bad = renderHook(() => useRegistryDidDocs(AUTH_A), { wrapper });
+      await waitFor(() => expect(client.isFetching()).toBe(0));
+      expect(getRegistryDidDocument).not.toHaveBeenCalled();
+      expect(bad.result.current.docs).toBeUndefined();
+    } finally {
+      caps.a = { registry_did: DID_A };
     }
   });
 
