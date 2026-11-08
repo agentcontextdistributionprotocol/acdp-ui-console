@@ -109,11 +109,16 @@ and never the admin control-plane key or the passphrase:
 | `CONTROL_PLANE_BASE_URL`, `PLAYGROUND_BASE_URL` | Production's URLs |
 | `CONTROL_PLANE_READ_API_KEY` | The non-admin control-plane key (sensitive) |
 | `PLAYGROUND_API_KEY` | The playground key (sensitive), so previews keep working once the playground enforces it |
-| `NEXT_PUBLIC_ACDP_UI_DEMO_MODE` | `true` |
+| `NEXT_PUBLIC_ACDP_UI_DEMO_MODE` | `false` |
+| `ACDP_UI_PUBLIC_MODE` | `on` |
 
 These are separate Preview-only entries, set by hand with `vercel env add … preview`;
-the sync never touches them. Without `ACDP_UI_CONSOLE_PASSWORD`, a preview's
-proxy fails closed (503) outside demo mode, which is the intended state.
+the sync never touches them. Previews run live, in public mode, with no
+`ACDP_UI_CONSOLE_PASSWORD`: anonymous reads and run launches work through the
+allow-list and the per-IP limits, using the read key only, and every
+operator-only route answers 503 `CONSOLE_AUTH_NOT_CONFIGURED`, because nobody can
+sign in. Previews also sit behind Vercel Authentication. Set
+`NEXT_PUBLIC_ACDP_UI_DEMO_MODE=true` again to take previews back to demo data.
 The old shared `REGISTRY_A/B_BASE_URL` and `NEXT_PUBLIC_APP_VERSION` entries were
 deleted from Vercel (Production and Preview) by hand with `vercel env rm` on
 2026-11-07, and the two registry keys from Doppler `prd`/`stg`: no code reads them
