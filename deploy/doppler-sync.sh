@@ -23,9 +23,13 @@
 # changed.
 #
 # Values are piped from Doppler into Vercel and are never printed or written
-# to disk. Vercel holds no Doppler token. Needs git, jq, curl and the doppler
-# and vercel CLIs, logged in. Refuses to run on a dirty working tree, so what
-# runs is what is committed.
+# to disk: writes go to the Vercel REST API with the value built inside jq and
+# sent on curl's stdin, and the token on a file descriptor, never in argv
+# (`vercel env update` cannot change a sensitive variable). Every read must
+# succeed: a failed Doppler or Vercel read stops the run with nothing changed,
+# rather than looking like "no entry". Vercel holds no Doppler token. Needs
+# git, jq, curl and the doppler and vercel CLIs, logged in. Refuses to run on
+# a dirty working tree, so what runs is what is committed.
 set -euo pipefail
 
 VERCEL_TEAM=zer07labs
@@ -46,7 +50,7 @@ while [ $# -gt 0 ]; do
     --push)
       [ $# -ge 2 ] || { echo "--push needs a key name" >&2; exit 2; }
       push="$push$2 "; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -101,20 +105,23 @@ vercel_api() {
 # {KEY: {id, value, type, shared}}. The list endpoint returns encrypted values,
 # so each non-sensitive entry is read back decrypted by id; a sensitive entry
 # has no readable value (null). shared is true when the entry also targets
-# Preview or Development.
+# Preview or Development. Fails (non-zero) if any read fails: the callers run
+# it as `x="$(vercel_vars)" || die`, where set -e is suspended, so every step
+# checks its own status.
 production_entries() {
   vercel_api "/v9/projects/$VERCEL_PROJECT_ID/env?teamId=$VERCEL_TEAM_ID" |
     jq -c '[.envs[] | select((.target // []) | index("production")) | select(.gitBranch == null)
             | {id, key, type, updatedAt, target: ((.target // []) | sort), shared: ((.target | length) > 1)}]'
 }
 vercel_vars() {
-  local entries id
-  entries="$(production_entries)"
+  local entries ids id
+  entries="$(production_entries)" || return 1
+  ids="$(jq -r '.[] | select(.type != "sensitive") | .id' <<<"$entries")" || return 1
   {
-    for id in $(jq -r '.[] | select(.type != "sensitive") | .id' <<<"$entries"); do
-      vercel_api "/v1/projects/$VERCEL_PROJECT_ID/env/$id?teamId=$VERCEL_TEAM_ID" | jq -c '{id, value}'
+    for id in $ids; do
+      vercel_api "/v1/projects/$VERCEL_PROJECT_ID/env/$id?teamId=$VERCEL_TEAM_ID" | jq -ce '{id, value}' || exit 1
     done
-  } | jq -sc --argjson e "$entries" '
+  } | jq -sce --argjson e "$entries" '
     (map({(.id): .value}) | add // {}) as $v |
     $e | map({(.key): {id, value: $v[.id], type, shared}}) | add // {}'
 }
@@ -132,9 +139,17 @@ doppler_vars() {
   doppler secrets download --no-file --format json --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG"
 }
 
-# One line per key: "<KEY> <state>". Values stay inside jq.
+# One line per key: "<KEY> <state>". Both sides are read into shell variables
+# first, each with its own check, so a failed read stops the run instead of
+# reading as "no entry" (set -e cannot see a failure inside <(...)). Values
+# reach jq only through printf pipes, never argv or disk.
 plan() {
-  jq -nr --slurpfile d <(doppler_vars) --slurpfile v <(vercel_vars) --arg keys "$keys" --arg push "$push" '
+  local d v
+  d="$(doppler_vars)" || die "reading Doppler $DOPPLER_PROJECT/$DOPPLER_CONFIG failed; nothing changed"
+  v="$(vercel_vars)" || die "reading Vercel environment variables failed; nothing changed"
+  printf '%s' "$d" | jq -e 'type == "object"' >/dev/null || die "unexpected Doppler response; nothing changed"
+  printf '%s' "$v" | jq -e 'type == "object"' >/dev/null || die "unexpected Vercel response; nothing changed"
+  jq -nr --slurpfile d <(printf '%s' "$d") --slurpfile v <(printf '%s' "$v") --arg keys "$keys" --arg push "$push" '
     $d[0] as $d | $v[0] as $v |
     $keys | split("\n")[] | . as $k |
     if ($d | has($k) | not) then "\($k) missing-in-doppler"
@@ -146,9 +161,9 @@ plan() {
     else "\($k) changed" end'
 }
 
-before="$(metadata_hash)"
+before="$(metadata_hash)" || die "reading Vercel environment variables failed; nothing changed"
 say "  production metadata hash: $before"
-result="$(plan)"
+result="$(plan)" || exit 1
 while read -r k state; do say "  $k: $state"; done <<<"$result"
 grep -q ' missing-in-doppler$' <<<"$result" && die "listed keys are missing from Doppler; nothing changed"
 for k in $push; do
@@ -164,28 +179,39 @@ if [ -z "$todo" ]; then
 fi
 if [ "$mode" = dry-run ]; then say "dry run: $(wc -l <<<"$todo" | tr -d ' ') key(s) would change; --apply to push"; exit 0; fi
 
+# Writes go to the REST API: the body is built in jq from Doppler's output and
+# sent on curl's stdin, the token on a file descriptor.
+vercel_write() {
+  curl -fsS -o /dev/null -X "$1" "https://api.vercel.com$2" \
+    -H @<(printf 'Authorization: Bearer %s\n' "$(vercel_token)") -H 'content-type: application/json' --data-binary @-
+}
 while read -r k state; do
   class="$(awk -v k="$k" '$1 == k {print $2}' <<<"$entries")"
-  flags=()
-  [ "$class" = sensitive ] && flags+=(--sensitive)
+  type=encrypted
+  { [ "$class" = sensitive ] || [ "$state" = push-sensitive ]; } && type=sensitive
+  doppler_vars </dev/null | jq -e --arg k "$k" '(.[$k] // "") != ""' >/dev/null ||
+    die "Doppler value for $k is empty or unreadable; nothing written"
   case "$state" in
-    new) verb=add ;;
-    push-sensitive) verb=update; flags=(--sensitive) ;;
-    *) verb=update ;;
+    new)
+      say "setting $k (add, $type)"
+      doppler_vars </dev/null | jq -c --arg k "$k" --arg t "$type" '{key: $k, value: .[$k], type: $t, target: ["production"]}' |
+        vercel_write POST "/v10/projects/$VERCEL_PROJECT_ID/env?teamId=$VERCEL_TEAM_ID" || die "adding $k failed"
+      ;;
+    *)
+      # Only a production-only entry is ever updated (plan() already reports shared ones).
+      id="$(production_entries | jq -r --arg k "$k" '[.[] | select(.key == $k and (.shared | not))] | if length == 1 then .[0].id else empty end')" ||
+        die "reading Vercel environment variables failed; nothing written for $k"
+      [ -n "$id" ] || die "$k: expected exactly one production-only entry; nothing written"
+      say "setting $k (update, $type)"
+      # A plain update keeps the entry's type; only --push sends type sensitive.
+      doppler_vars </dev/null | jq -c --arg k "$k" --arg t "$type" --arg s "$state" \
+        '{value: .[$k]} + (if $s == "push-sensitive" then {type: $t} else {} end)' |
+        vercel_write PATCH "/v9/projects/$VERCEL_PROJECT_ID/env/$id?teamId=$VERCEL_TEAM_ID" || die "updating $k failed"
+      ;;
   esac
-  say "setting $k ($verb${flags[*]:+ ${flags[*]}})"
-  # Read the value first (a builtin printf then feeds it, so it is never in
-  # argv or on disk): the CLI gives stdin only a short window before it falls
-  # back to a prompt. --non-interactive makes a missed read fail, not prompt.
-  value="$(doppler_vars | jq -j --arg k "$k" '.[$k]')"
-  [ -n "$value" ] || die "Doppler value for $k is empty; nothing written"
-  printf '%s' "$value" |
-    vercel_cli env "$verb" "$k" production ${flags[@]+"${flags[@]}"} --yes --non-interactive >/dev/null 2>&1 ||
-    die "vercel env $verb $k failed"
-  unset value
 done <<<"$todo"
 
-after_plan="$(plan)"
+after_plan="$(plan)" || exit 1
 while read -r k state; do say "  $k: $state"; done <<<"$after_plan"
 if grep -Eq ' (changed|new|missing-in-doppler)$' <<<"$after_plan"; then
   die "Vercel does not match Doppler after --apply; not redeploying"

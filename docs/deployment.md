@@ -80,8 +80,13 @@ deploy/doppler-sync.sh --apply --no-redeploy   # set variables; the next merge's
 
 - It manages only the keys in `deploy/doppler-keys.txt`. It never removes a Vercel
   variable and never touches Preview or Development.
-- Values are piped from Doppler into `vercel env` and are never printed or written to
-  disk. Vercel holds no Doppler token.
+- Values are piped from Doppler into the Vercel REST API (the request body is built
+  in `jq` and sent on `curl`'s stdin, the token on a file descriptor) and are never
+  printed, written to disk or put in argv. `vercel env update` is not used: it
+  cannot change a sensitive variable, so `--push` would always fail. Vercel holds
+  no Doppler token.
+- Every read must succeed. If reading Doppler or Vercel fails, the run stops with
+  "nothing changed" instead of treating the key as new or changed.
 - Vercel never returns the value of a **sensitive** variable, so the script can't
   compare one. It reports the key as `sensitive-unverifiable` and leaves it alone
   unless you name it with `--push`. A key marked `sensitive` in the list is created
