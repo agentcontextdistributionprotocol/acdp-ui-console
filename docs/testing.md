@@ -168,9 +168,12 @@ SMOKE_BASE_URL=http://localhost:3000 node scripts/run-scenarios.mjs
     `/auth/revocations`), an unknown path and an unknown service, which must
     be refused (400/403/404), never 2xx, and an encoded traversal
     (`contexts/%2E%2E%2Fmetrics`, which the URL parser leaves intact) that must
-    get the proxy's own traversal 403. A deployment
-    without `/api/auth/session` counts as off. `SMOKE_EXPECT_PUBLIC_MODE=on|off`
-    makes a different reported mode a failure.
+    get the proxy's own traversal 403. Public mode **on** is the expected
+    mode by default (production runs with it on), so a deployment reporting
+    off is a failure. `SMOKE_EXPECT_PUBLIC_MODE=off` smokes a password-gated
+    deployment; `detect` accepts whichever mode it reports, and a deployment
+    without `/api/auth/session` then counts as off. `smoke.yml`'s
+    `expect_public_mode` input defaults to `on`.
   - **Direct backends.** `SMOKE_DIRECT_BACKEND_URLS` (comma-separated playground
     base URLs) also checks each one refuses a keyless `GET /scenarios` with 401.
     That only holds once the playground enforces `PLAYGROUND_REQUIRE_API_KEY`.
@@ -241,7 +244,7 @@ The short setup version lives in
 | `security.spec.ts` | The revocation feed authenticates as admin (empty state, not 403). Both JWKS cards load. The witness alert worklist renders |
 | `auth-gate.spec.ts` | With no session, the control-plane proxy and both SSE relays answer an unstamped 401, and pages are not gated. Forged and tampered cookies are refused. The cookie is `HttpOnly` and `SameSite=Lax`. With a valid session, a cross-origin write and an off-allow-list or percent-encoded traversal route answer an unstamped 403. In the browser: a 401 bounces to `/login`, a wrong passphrase sets no cookie, and sign-out locks the proxy again |
 | `client-secrets.spec.ts` | No file under `.next/static` contains `CONTROL_PLANE_API_KEY`, `CONTROL_PLANE_READ_API_KEY`, `PLAYGROUND_API_KEY`, the passphrase, or the control-plane/playground base URL. A browser session across every page, signed in on the gated server and anonymous on the public one, makes no off-origin request, sends no `authorization` header, and receives none of those secrets in any header, body or the live DOM |
-| `public/public-mode.spec.ts` | On the public server, with no session: `/api/auth/session` reports public mode, the sidebar offers Sign in, and the dashboard, `/runs` and `/contexts` render real data (registry reads through the playground passthrough). s1 launched from the UI completes, confirmed against the control plane. `/metrics`, `/webhooks` and `/auth/revocations` answer an unstamped 403 `CONSOLE_OPERATOR_SESSION_REQUIRED`, enrol and an off-allow-list path an unstamped 403, and `/security` says to sign in. Repeated launches reach an unstamped 429 `CONSOLE_RATE_LIMITED` with `Retry-After`, and the launch modal shows the plain-words limit message. The LLM quota badge test runs only with `ACDP_INTEGRATION_LLM_QUOTA=1` on a real-provider stack with `LLM_QUOTA_PER_IP_PER_DAY=1` |
+| `public/public-mode.spec.ts` | On the public server, with no session: `/api/auth/session` reports public mode, the sidebar offers Sign in, and the dashboard, `/runs` and `/contexts` render real data (registry reads through the playground passthrough). s1 launched from the UI completes, confirmed against the control plane. `/metrics`, `/webhooks` and `/auth/revocations` answer an unstamped 403 `CONSOLE_OPERATOR_SESSION_REQUIRED`, enrol and an off-allow-list path an unstamped 403, and `/security`, `/registries` and `/config` show their operator-only notices with no Enroll button. Repeated launches reach an unstamped 429 `CONSOLE_RATE_LIMITED` with `Retry-After`, and the launch modal shows the plain-words limit message. The LLM quota badge test runs only with `ACDP_INTEGRATION_LLM_QUOTA=1` on a real-provider stack with `LLM_QUOTA_PER_IP_PER_DAY=1` |
 | `live-data.spec.ts` | `/runs` lists each seeded run by its real id. A seeded run opens to its persisted terminal record, and its contexts figure matches what the control plane observed: the observed count, or, when nothing was observed but the run reported contexts, the reported-but-unobserved label (#197). An unknown run id renders the not-found copy. A real registry-a search hit for the s1 publish opens to what the control plane actually answered: the body, or, in this stack, the `REGISTRY_NOT_FOUND` copy rather than "no body was returned". `/trust` reaches its final render |
 
 ### Honest emptiness

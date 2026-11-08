@@ -11,9 +11,9 @@ on:
         required: false
         default: https://console.agentcontextdistributionprotocol.io
       expect_public_mode:
-        description: Fail unless the deployment reports this public mode (on/off); empty = detect it
+        description: Fail unless the deployment reports this public mode (on/off); detect = accept either
         required: false
-        default: ''
+        default: 'on'
 
 concurrency:
   group: smoke-${{ github.ref }}
@@ -33,5 +33,5 @@ jobs:
       - name: Check routes
         env:
           SMOKE_BASE_URL: ${{ github.event.inputs.base_url || 'https://console.agentcontextdistributionprotocol.io' }}
-          SMOKE_EXPECT_PUBLIC_MODE: ${{ github.event.inputs.expect_public_mode || '' }}
+          SMOKE_EXPECT_PUBLIC_MODE: ${{ github.event.inputs.expect_public_mode || 'on' }}
         run: node scripts/smoke-routes.mjs

@@ -12,8 +12,9 @@
 // A `next dev` server without ACDP_UI_CONSOLE_PASSWORD fails the gate probes
 // by design (development fail-open); set the variable to smoke a local server.
 
-// Public mode is detected from GET /api/auth/session; SMOKE_EXPECT_PUBLIC_MODE
-// (on/off) makes a mismatch fail. SMOKE_DIRECT_BACKEND_URLS (comma-separated
+// Public mode is read from GET /api/auth/session and expected to be ON unless
+// SMOKE_EXPECT_PUBLIC_MODE says otherwise: `off` for a password-gated
+// deployment, `detect` to accept whichever mode it reports. A mismatch fails. SMOKE_DIRECT_BACKEND_URLS (comma-separated
 // playground base URLs) additionally checks each refuses a keyless request.
 
 import { runSmoke } from './smoke-checks.mjs';
@@ -24,7 +25,7 @@ const base = (process.env.SMOKE_BASE_URL ?? 'https://console.agentcontextdistrib
 );
 
 const failures = await runSmoke(base, {
-  expectPublicMode: process.env.SMOKE_EXPECT_PUBLIC_MODE,
+  expectPublicMode: process.env.SMOKE_EXPECT_PUBLIC_MODE || undefined,
   directBackendUrls: (process.env.SMOKE_DIRECT_BACKEND_URLS ?? '')
     .split(',')
     .map((s) => s.trim())

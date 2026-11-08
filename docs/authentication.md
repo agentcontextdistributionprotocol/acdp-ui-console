@@ -205,6 +205,15 @@ operator-only routes stay behind the passphrase.
   the playground's own launch 429s (`run_rate_limited`, `max_concurrent_runs`)
   with their limit and retry time. A health probe the console throttled reads
   `rate limited`, not `unreachable`.
+- **Operator-only sections.** The console knows its own gate, so for
+  `{publicMode: true, signedIn: false}` (`useOperatorAccess`,
+  `lib/hooks/use-console-session.ts`) the sections backed by admin routes —
+  registry enrollments, the revocation feed, outbound webhooks and control-plane
+  metrics — send no request and render an "operator-only" notice with a Sign in
+  link instead of their controls. The witness-alert worklist stays (it is a
+  public read) but shows "Sign in to acknowledge" in place of each Acknowledge
+  button. Admin queries wait for the session answer; if that read fails, the
+  section fetches as before and shows whatever the route answers.
 - **Logging.** Each console 403, 429 or 503 is logged with the service,
   method, path, reason and an `ipTag`: a truncated HMAC of the IP under a key
   derived from the passphrase, never the IP itself.

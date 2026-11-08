@@ -7,6 +7,9 @@ import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
+import { useOperatorAccess } from '@/lib/hooks/use-console-session';
+import { LOGIN_ROUTE } from '@/lib/routes';
+import Link from 'next/link';
 import { Modal } from '@/components/ui/modal';
 import { TableScroll } from '@/components/ui/table-scroll';
 import { useLogWitnessAlerts } from '@/lib/hooks/use-security';
@@ -313,12 +316,16 @@ export function ackOutcome(stage: AckStage, error: unknown): AckOutcome {
  * detected as dishonest. So the dialog states all three as facts rather than
  * asking "are you sure?", which conveys nothing.
  *
- * The control is rendered UNCONDITIONALLY and the 403 is handled after the
- * fact. No control-plane endpoint reports the caller's own scope — `features`
- * carries deployment flags, not permissions — so a pre-disabled button would be
- * guessing. Nor is it gated on the revocation feed's 403: that is a DIFFERENT
- * route's guard, and inferring this one from it would hide a control that works
- * (or offer one that does not) on the strength of an unrelated answer.
+ * The control is rendered for every caller except one the CONSOLE ITSELF will
+ * refuse: a signed-out public-mode visitor (`useOperatorAccess`), to whom the
+ * console answers every admin route with 403 `CONSOLE_OPERATOR_SESSION_REQUIRED`
+ * and so the column is not rendered at all. For everyone else the 403 is
+ * handled after the fact: no control-plane endpoint reports the caller's own
+ * scope — `features` carries deployment flags, not permissions — so a
+ * pre-disabled button would be guessing. Nor is it gated on the revocation
+ * feed's 403: that is a DIFFERENT route's guard, and inferring this one from it
+ * would hide a control that works (or offer one that does not) on the strength
+ * of an unrelated answer.
  */
 function AcknowledgeDialog({
   openedOn,
@@ -666,6 +673,7 @@ export function LogWitnessAlerts() {
   // claims the other's scope.
   const [showAcknowledged, setShowAcknowledged] = useState(true);
   const alerts = useLogWitnessAlerts(showAcknowledged);
+  const canAcknowledge = !useOperatorAccess().anonymous;
   const rows = alerts.data?.data ?? [];
   // The row the dialog OPENED on. Two requirements pull in opposite directions
   // here, and each was shipped alone before this shape existed.
@@ -868,6 +876,7 @@ export function LogWitnessAlerts() {
                         <AcknowledgedCell row={row} />
                       </td>
                       <td>
+                        {canAcknowledge ? (
                         <Button
                           variant="secondary"
                           onClick={() => setConfirming(row)}
@@ -883,6 +892,11 @@ export function LogWitnessAlerts() {
                               does not read as an action with no effect. */}
                           {row.acknowledgedAt === null ? 'Acknowledge' : 'Re-acknowledge'}
                         </Button>
+                        ) : (
+                          <Link href={LOGIN_ROUTE} style={{ fontSize: 11, color: C.muted }}>
+                            Sign in to acknowledge
+                          </Link>
+                        )}
                       </td>
                     </tr>
                   );

@@ -67,6 +67,7 @@ vi.mock('@/lib/api/client', () => ({
   listRevocations: (...a: unknown[]) => listRevocations(...a),
   getRegistryJwks: vi.fn(async () => ({ keys: [] })),
   getRegistryCapabilities: vi.fn(async () => ({})),
+  getConsoleSession: vi.fn(async () => ({ publicMode: false, signedIn: true })),
 }));
 
 vi.mock('@/lib/stores/preferences-store', () => ({
