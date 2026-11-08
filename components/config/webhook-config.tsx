@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
+import { OperatorOnly } from '@/components/ui/operator-only';
+import { useOperatorAccess } from '@/lib/hooks/use-console-session';
 import { ErrorDetail, ErrorPanel } from '@/components/ui/error-panel';
 import { TableScroll } from '@/components/ui/table-scroll';
 import {
@@ -30,10 +32,12 @@ export function WebhookConfig() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Editing>(null);
+  const access = useOperatorAccess();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['webhooks', demoMode],
     queryFn: () => listWebhooks(demoMode),
+    enabled: access.ready && !access.anonymous,
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['webhooks', demoMode] });
@@ -42,6 +46,20 @@ export function WebhookConfig() {
     mutationFn: (id: string) => deleteWebhook(id, demoMode),
     onSuccess: invalidate,
   });
+
+  if (access.anonymous) {
+    return (
+      <Card>
+        <CardHeader title="Outbound Webhooks" sub="operator-only" />
+        <div style={{ padding: 14 }}>
+          <OperatorOnly
+            title="Outbound webhooks are operator-only"
+            description="Sign in as the operator to view, add or change webhooks."
+          />
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -54,7 +72,7 @@ export function WebhookConfig() {
           </Button>
         }
       />
-      {isLoading ? (
+      {!access.ready || isLoading ? (
         <div style={{ padding: 14 }}>
           <LoadingSkeleton rows={2} height={32} />
         </div>

@@ -10,6 +10,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorDetail, ErrorPanel } from '@/components/ui/error-panel';
 import { TableScroll } from '@/components/ui/table-scroll';
+import { OperatorOnly } from '@/components/ui/operator-only';
+import { useOperatorAccess } from '@/lib/hooks/use-console-session';
 import { listEnrollments, enrollRegistry } from '@/lib/api/client';
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import {
@@ -48,10 +50,12 @@ export function Enrollments() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Editing>(null);
+  const access = useOperatorAccess();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['enrollments', demoMode],
     queryFn: () => listEnrollments(demoMode),
+    enabled: access.ready && !access.anonymous,
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['enrollments', demoMode] });
@@ -73,6 +77,20 @@ export function Enrollments() {
   });
 
   const toggleForbidden = isUpstreamForbidden(toggleMut.error);
+
+  if (access.anonymous) {
+    return (
+      <Card>
+        <CardHeader title="Registry Enrollments" sub="operator-only" />
+        <div style={{ padding: 14 }}>
+          <OperatorOnly
+            title="Registry enrollments are operator-only"
+            description="Sign in as the operator to view, enroll or change registries."
+          />
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -109,16 +127,18 @@ export function Enrollments() {
           />
         </div>
       )}
-      {isLoading ? (
+      {!access.ready || isLoading ? (
         <div style={{ padding: 14 }}>
           <LoadingSkeleton rows={2} height={32} />
         </div>
       ) : error ? (
         <div style={{ padding: 14 }}>
-          {/* The LIST query, which is a plain read and carries no 403 arm —
-              `GET /registries/enrollments` is not admin-gated, only the enroll
-              write is. This one does get a disclosure: it replaces the table
-              rather than sitting above it, so nothing reflows. */}
+          {/* The LIST query carries no 403 arm of its own: upstream does not
+              admin-gate `GET /registries/enrollments` (only the enroll write).
+              The console's allow-list does, but a signed-out public visitor
+              never reaches this branch (the operator-only notice above).
+              This one does get a disclosure: it replaces the table rather
+              than sitting above it, so nothing reflows. */}
           <ErrorPanel
             message={operatorErrorMessage(error, 'Could not load the registry enrollments')}
             details={errorDiagnostic(error)}

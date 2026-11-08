@@ -8,16 +8,27 @@ import { ErrorPanel } from '@/components/ui/error-panel';
 import { errorDiagnostic, operatorErrorMessage } from '@/lib/utils/api-error-messages';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatNumber } from '@/lib/utils/format';
+import { OperatorOnly } from '@/components/ui/operator-only';
+import { useOperatorAccess } from '@/lib/hooks/use-console-session';
 
 export function MetricsPanel() {
   const demoMode = usePreferencesStore((s) => s.demoMode);
+  const access = useOperatorAccess();
   const { data, isLoading, error } = useQuery({
     queryKey: ['metrics', demoMode],
     queryFn: () => getCpMetrics(demoMode),
     refetchInterval: 20_000,
+    enabled: access.ready && !access.anonymous,
   });
 
-  if (isLoading) return <LoadingSkeleton rows={5} height={28} />;
+  if (access.anonymous)
+    return (
+      <OperatorOnly
+        title="Control-plane metrics are operator-only"
+        description="Sign in as the operator to view the control plane's Prometheus metrics."
+      />
+    );
+  if (!access.ready || isLoading) return <LoadingSkeleton rows={5} height={28} />;
   if (error)
     return (
       <ErrorPanel

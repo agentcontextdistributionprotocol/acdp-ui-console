@@ -10,9 +10,10 @@ import {
 import { usePreferencesStore } from '@/lib/stores/preferences-store';
 import type { RegistryAuthority } from '@/lib/types';
 
-export function useRevocations() {
+export function useRevocations({ enabled = true }: { enabled?: boolean } = {}) {
   const demoMode = usePreferencesStore((s) => s.demoMode);
   return useInfiniteQuery({
+    enabled,
     queryKey: ['revocations', demoMode],
     queryFn: ({ pageParam }) => listRevocations({ since: pageParam, limit: 50 }, demoMode),
     initialPageParam: undefined as number | undefined,

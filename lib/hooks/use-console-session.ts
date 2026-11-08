@@ -15,3 +15,24 @@ export function useConsoleSession() {
     staleTime: 0,
   });
 }
+
+/** True only for a public-mode visitor who is not signed in. */
+export function isAnonymousVisitor(session: { publicMode: boolean; signedIn: boolean } | undefined): boolean {
+  return session?.publicMode === true && session.signedIn === false;
+}
+
+/**
+ * Whether operator-only sections may fetch and offer their controls.
+ *
+ * `anonymous` is true only for a signed-out public-mode visitor, whom the
+ * console itself refuses on every admin route, so those sections render an
+ * operator-only notice instead. `ready` is false until the session answer is
+ * in: admin queries wait for it rather than firing a request that is certain
+ * to be refused. A failed session read counts as ready and not anonymous, so
+ * the section falls back to fetching and shows whatever the route answers.
+ */
+export function useOperatorAccess(): { ready: boolean; anonymous: boolean } {
+  const session = useConsoleSession();
+  const anonymous = isAnonymousVisitor(session.data);
+  return { ready: session.isSuccess || session.isError, anonymous };
+}

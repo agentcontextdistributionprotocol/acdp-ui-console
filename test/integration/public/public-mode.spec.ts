@@ -85,7 +85,7 @@ test.describe('Public mode: anonymous visitor (real production build)', () => {
     await expect(chip).toBeVisible();
   });
 
-  test('operator-only routes answer 403 CONSOLE_OPERATOR_SESSION_REQUIRED, and the page says to sign in', async ({ page, baseURL }) => {
+  test('operator-only routes answer 403 CONSOLE_OPERATOR_SESSION_REQUIRED, and their sections show an operator-only notice, not controls', async ({ page, baseURL }) => {
     for (const path of ['/api/proxy/control-plane/metrics', '/api/proxy/control-plane/webhooks', '/api/proxy/control-plane/auth/revocations']) {
       const res = await page.request.get(path);
       expectConsoleAnswer(res, 403);
@@ -101,7 +101,12 @@ test.describe('Public mode: anonymous visitor (real production build)', () => {
     expectConsoleAnswer(await page.request.get('/api/proxy/control-plane/admin/x'), 403);
 
     await page.goto('/security');
-    await expect(page.getByText('This action needs the operator sign-in. Sign in at /login.').first()).toBeVisible();
+    await expect(page.getByText('The revocation feed is operator-only')).toBeVisible();
+    await page.goto('/registries');
+    await expect(page.getByText('Registry enrollments are operator-only')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Enroll/ })).toHaveCount(0);
+    await page.goto('/config');
+    await expect(page.getByText('Outbound webhooks are operator-only')).toBeVisible();
   });
 
   test('the launch limit answers 429 with Retry-After, and the launch modal says so in plain words', async ({ page, baseURL }) => {

@@ -9,6 +9,8 @@ import { LoadingSkeleton } from '@/components/ui/loading-skeleton';
 import { ErrorPanel } from '@/components/ui/error-panel';
 import { EmptyState } from '@/components/ui/empty-state';
 import { TableScroll } from '@/components/ui/table-scroll';
+import { OperatorOnly } from '@/components/ui/operator-only';
+import { useOperatorAccess } from '@/lib/hooks/use-console-session';
 import { useRevocations, useRegistryJwks } from '@/lib/hooks/use-security';
 import { useRegistries } from '@/lib/hooks/use-registries';
 import { useDashboard } from '@/lib/hooks/use-dashboard';
@@ -53,9 +55,8 @@ export default function SecurityPage() {
 }
 
 function RevocationFeed() {
-  const revs = useRevocations();
-  const entries = revs.data?.pages.flatMap((p) => p.entries) ?? [];
-  const forbidden = isUpstreamForbidden(revs.error);
+  const access = useOperatorAccess();
+  const revs = useRevocations({ enabled: access.ready && !access.anonymous });
 
   return (
     <div className="card">
@@ -67,7 +68,25 @@ function RevocationFeed() {
         <span className="card-sub">Cross-issuer revoked tokens · admin-only</span>
       </div>
       <div className="card-body">
-        {revs.isLoading && <LoadingSkeleton rows={4} height={36} />}
+        {access.anonymous ? (
+          <OperatorOnly
+            title="The revocation feed is operator-only"
+            description="Sign in as the operator to view revoked tokens across issuers."
+          />
+        ) : (
+          <RevocationFeedBody revs={revs} ready={access.ready} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RevocationFeedBody({ revs, ready }: { revs: ReturnType<typeof useRevocations>; ready: boolean }) {
+  const entries = revs.data?.pages.flatMap((p) => p.entries) ?? [];
+  const forbidden = isUpstreamForbidden(revs.error);
+  return (
+    <>
+        {(!ready || revs.isLoading) && <LoadingSkeleton rows={4} height={36} />}
         {/* This page's 403 copy used to be a third, differently-worded
             near-copy of the sentence `enrollments.tsx` held twice. All three
             now compose the ONE exported resolver with their own subject, so a
@@ -92,7 +111,7 @@ function RevocationFeed() {
             details={errorDiagnostic(revs.error)}
           />
         )}
-        {!revs.isLoading && !revs.error && entries.length === 0 && (
+        {ready && !revs.isLoading && !revs.error && entries.length === 0 && (
           <EmptyState title="No revocations recorded" />
         )}
         {entries.length > 0 && (
@@ -129,8 +148,7 @@ function RevocationFeed() {
             </Button>
           </div>
         )}
-      </div>
-    </div>
+    </>
   );
 }
 
