@@ -179,22 +179,23 @@ export function classifyTraversal(status, bodyText) {
 }
 
 /**
- * The deployment's mode. `expect` ('on'/'off', from SMOKE_EXPECT_PUBLIC_MODE)
- * pins it: a mismatch with what the deployment reports is a failure. Without
- * it, an unreadable /api/auth/session (a deployment that predates it) counts
- * as off, which keeps the original gate probes.
- * @param {string} base
- * @param {typeof fetch} fetchImpl
- * @param {string | undefined} expect
- * @returns {Promise<{ publicMode: boolean, ok: boolean, reason: string }>}
- */
-/**
  * The mode a smoke run expects when none is given: production runs with public
  * mode on. Pass `off` to smoke a password-gated deployment, or `detect` (or an
  * empty string) to accept whatever the deployment reports.
  */
 export const DEFAULT_EXPECTED_PUBLIC_MODE = 'on';
 
+/**
+ * The deployment's mode. `expect` ('on'/'off') pins it: a mismatch with what
+ * the deployment reports is a failure, and an unreadable /api/auth/session (a
+ * deployment that predates it) is taken to be the expected mode. With
+ * `expect` 'detect', empty or undefined, the reported mode is accepted and an
+ * unreadable session counts as off, which keeps the original gate probes.
+ * @param {string} base
+ * @param {typeof fetch} fetchImpl
+ * @param {string | undefined} expect
+ * @returns {Promise<{ publicMode: boolean, ok: boolean, reason: string }>}
+ */
 export async function detectMode(base, fetchImpl = fetch, expect = undefined) {
   let reported;
   try {
